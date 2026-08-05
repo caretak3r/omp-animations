@@ -10,7 +10,7 @@ import {
 	CadenceEqualizerController,
 	type WallClock,
 } from "../src/cadence-equalizer/controller";
-import { MAX_REFERENCE_RATE, normalizeAmplitude, waveGlyph } from "../src/cadence-equalizer/scale";
+import { BUCKET_THEME_COLOR, MAX_REFERENCE_RATE, normalizeAmplitude, waveGlyph } from "../src/cadence-equalizer/scale";
 import { CadenceEqualizerState } from "../src/cadence-equalizer/state";
 import {
 	type CadenceEqualizerTheme,
@@ -353,6 +353,29 @@ describe("cadence equalizer widget lifecycle", () => {
 		expect(widget.animating).toBe(false);
 		expect(host.subscriberCount).toBe(0);
 		expect(widget.render(80)).toEqual([renderCompactEqualizer(state.snapshotBands(), idTheme)]);
+	});
+
+	it("an accent override recolors only the burst bucket, leaving cooler buckets on their fixed tokens", () => {
+		const scheduler = manualScheduler();
+		const wallClock = manualWallClock();
+		const policy = new MotionPolicy(fullEnv, "full");
+		const host = new AnimationHost({ policy, scheduler });
+		const state = new CadenceEqualizerState();
+		for (let i = 0; i < 5; i++) state.pushSample(1); // saturates the fast band into the burst bucket
+		const widget = new CadenceEqualizerWidget({
+			tui: noopTui,
+			host,
+			policy,
+			state,
+			theme: taggedTheme,
+			wallClock,
+			sampleRate: () => null,
+			accentColor: "success",
+		});
+		const row = widget.render(80)[0];
+		expect(row).toContain("success:");
+		expect(row).not.toContain(`${BUCKET_THEME_COLOR.burst}:`);
+		widget.dispose();
 	});
 });
 

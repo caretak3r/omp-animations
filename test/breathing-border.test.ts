@@ -14,6 +14,7 @@ import {
 import { type BreathingBorderContext, BreathingBorderController } from "../src/breathing-border/controller";
 import { BreathingBorderState } from "../src/breathing-border/state";
 import {
+	BREATHING_BORDER_COLORS,
 	type BreathingBorderTheme,
 	BreathingBorderWidget,
 	renderBreathingBorderIdleRow,
@@ -409,6 +410,29 @@ describe("BreathingBorderWidget", () => {
 		expect(widget.animating).toBe(false);
 		expect(host.subscriberCount).toBe(0);
 		expect(widget.render(20)[0]).toBe(renderBreathingBorderIdleRow(20, idTheme));
+	});
+
+	it("an accent override recolors only the peak brightness, leaving muted/base on their fixed tokens", () => {
+		const scheduler = manualScheduler();
+		const policy = new MotionPolicy(fullEnv, "full");
+		const host = new AnimationHost({ policy, scheduler });
+		const state = new BreathingBorderState();
+		state.applyAgentStart(0);
+		scheduler.advance(BASE_BREATH_PERIOD_MS / 2); // mid-cycle: the breath envelope peaks here
+		const widget = new BreathingBorderWidget({
+			tui: new ToggleTui(),
+			host,
+			policy,
+			state,
+			theme: taggedTheme,
+			clock: scheduler,
+			onSettled: () => {},
+			accentColor: "accent",
+		});
+		const row = widget.render(20)[0];
+		expect(row).toContain("accent:");
+		expect(row).not.toContain(`${BREATHING_BORDER_COLORS.peak}:`);
+		widget.dispose();
 	});
 });
 

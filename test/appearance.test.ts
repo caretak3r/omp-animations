@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import type { Rule } from "@oh-my-pi/pi-coding-agent/capability/rule";
 import type {
 	ExtensionContext,
 	ExtensionWidgetContent,
@@ -11,6 +12,7 @@ import type {
 	EditToolResultEvent,
 	MessageEndEvent,
 	MessageStartEvent,
+	ToolCallEvent,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 import type { Theme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import {
@@ -24,9 +26,21 @@ import {
 import { type AuditTrailBoxContext, AuditTrailBoxController } from "../src/audit-trail-box/controller";
 import { AuditLedgerState } from "../src/audit-trail-box/state";
 import { AUDIT_TRAIL_BOX_COLORS, AuditTrailBoxWidget, renderAuditMeterRow } from "../src/audit-trail-box/widget";
+import { BASE_BREATH_PERIOD_MS } from "../src/breathing-border/breath";
+import { type BreathingBorderContext, BreathingBorderController } from "../src/breathing-border/controller";
+import { BreathingBorderState } from "../src/breathing-border/state";
+import {
+	BREATHING_BORDER_COLORS,
+	BreathingBorderWidget,
+	renderBreathingBorderRow,
+} from "../src/breathing-border/widget";
 import { type CacheMeterContext, CacheMeterController } from "../src/cache-meter/controller";
 import { CacheMeterState } from "../src/cache-meter/state";
 import { CACHE_METER_COLORS, CacheMeterWidget, renderCacheMeterRow } from "../src/cache-meter/widget";
+import { type CadenceEqualizerContext, CadenceEqualizerController } from "../src/cadence-equalizer/controller";
+import { BUCKET_THEME_COLOR } from "../src/cadence-equalizer/scale";
+import { CadenceEqualizerState } from "../src/cadence-equalizer/state";
+import { CadenceEqualizerWidget, renderEqualizerRow } from "../src/cadence-equalizer/widget";
 import { AnimationHost, type FrameScheduler, MotionPolicy } from "../src/kit";
 import { type PalimpsestContext, PalimpsestController } from "../src/palimpsest/controller";
 import { PalimpsestState } from "../src/palimpsest/state";
@@ -34,7 +48,15 @@ import { PALIMPSEST_COLORS, PalimpsestWidget, renderPalimpsestRows } from "../sr
 import { RateLimitTidepoolController, type TidepoolContext } from "../src/rate-limit-tidepool/controller";
 import { RateLimitTidepoolState } from "../src/rate-limit-tidepool/state";
 import { renderTidepoolRow, TIDEPOOL_COLORS, TidepoolWidget } from "../src/rate-limit-tidepool/widget";
+import { type ReflectionRippleContext, ReflectionRippleController } from "../src/reflection-ripple/controller";
+import { ReflectionRippleState } from "../src/reflection-ripple/state";
+import {
+	REFLECTION_RIPPLE_COLORS,
+	ReflectionRippleWidget,
+	renderReflectionRippleRow,
+} from "../src/reflection-ripple/widget";
 import { ANIMATIONS, createAnimationsPlugin, resolveAnimationsConfig } from "../src/registrar";
+import { type ToolConstellationContext, ToolConstellationController } from "../src/tool-constellation/controller";
 
 const idTheme: Pick<Theme, "fg" | "underline" | "bold"> = {
 	fg: (_color, text) => text,
@@ -162,6 +184,19 @@ function assistantMessageStart(provider: string): MessageStartEvent {
 			timestamp: 0,
 		},
 	} as unknown as MessageStartEvent;
+}
+
+function rule(name: string): Rule {
+	return {
+		name,
+		path: `/rules/${name}.md`,
+		content: "",
+		_source: { provider: "test", providerName: "Test", path: `/rules/${name}.md`, level: "project" },
+	};
+}
+
+function toolCallEvent(toolName: string): ToolCallEvent {
+	return { type: "tool_call", toolCallId: "call-1", toolName, input: {} } as ToolCallEvent;
 }
 
 describe("resolveAnimationAppearance", () => {
@@ -299,6 +334,13 @@ describe("manifest appearance settings", () => {
 			expect(placement?.env).toBe(animationsEnvKey(entry.id, "PLACEMENT"));
 			expect(placement?.default).toBe(entry.defaultPlacement);
 
+			// toolConstellation has no AccentColor manifest key: its per-category rainbow
+			// palette has no single overridable slot (see tool-constellation/index.ts).
+			if (entry.id === "toolConstellation") {
+				expect(settings[accentColorKey(entry.id)]).toBeUndefined();
+				continue;
+			}
+
 			const accent = settings[accentColorKey(entry.id)];
 			expect(accent?.type).toBe("enum");
 			expect(accent?.values).toEqual([...ACCENT_SETTING_VALUES]);
@@ -370,6 +412,62 @@ describe("controller placement threading", () => {
 			const controller = new RateLimitTidepoolController({ scheduler: manualScheduler(), placement: "aboveEditor" });
 			controller.onAfterProviderResponse(afterProviderResponse(anthropicHeaders), ctx);
 			controller.onMessageStart(assistantMessageStart("anthropic"), ctx);
+			controller.dispose(ctx);
+			expectPlacement(recorder.calls, "aboveEditor");
+		}
+
+		{
+			const recorder = widgetRecorder();
+			const ctx: BreathingBorderContext = {
+				...fullEnv,
+				motionSetting: "full",
+				theme: idTheme,
+				setWidget: recorder.setWidget,
+			};
+			const controller = new BreathingBorderController({ scheduler: manualScheduler(), placement: "belowEditor" });
+			controller.onAgentStart({ type: "agent_start" }, ctx);
+			controller.dispose(ctx);
+			expectPlacement(recorder.calls, "belowEditor");
+		}
+
+		{
+			const recorder = widgetRecorder();
+			const ctx: CadenceEqualizerContext = {
+				...fullEnv,
+				motionSetting: "full",
+				theme: idTheme,
+				setWidget: recorder.setWidget,
+			};
+			const controller = new CadenceEqualizerController({ scheduler: manualScheduler(), placement: "aboveEditor" });
+			controller.onMessageStart(assistantMessageStart("anthropic"), ctx);
+			controller.dispose(ctx);
+			expectPlacement(recorder.calls, "aboveEditor");
+		}
+
+		{
+			const recorder = widgetRecorder();
+			const ctx: ReflectionRippleContext = {
+				...fullEnv,
+				motionSetting: "full",
+				theme: idTheme,
+				setWidget: recorder.setWidget,
+			};
+			const controller = new ReflectionRippleController({ scheduler: manualScheduler(), placement: "belowEditor" });
+			controller.onTtsrTriggered({ type: "ttsr_triggered", rules: [rule("no-console-log")] }, ctx);
+			controller.dispose(ctx);
+			expectPlacement(recorder.calls, "belowEditor");
+		}
+
+		{
+			const recorder = widgetRecorder();
+			const ctx: ToolConstellationContext = {
+				...fullEnv,
+				motionSetting: "full",
+				theme: idTheme,
+				setWidget: recorder.setWidget,
+			};
+			const controller = new ToolConstellationController({ scheduler: manualScheduler(), placement: "aboveEditor" });
+			controller.onToolCall(toolCallEvent("bash"), ctx);
 			controller.dispose(ctx);
 			expectPlacement(recorder.calls, "aboveEditor");
 		}
@@ -453,6 +551,36 @@ describe("renderer accent override", () => {
 		expect(sand).toContain("warning:");
 		expect(sand).not.toContain("syntaxString:");
 	});
+
+	it("recolors only Breathing Border's peak brightness, leaving the muted/base tokens fixed", () => {
+		const defaultRow = renderBreathingBorderRow(0.9, 10, taggedTheme, "full");
+		expect(defaultRow).toContain("borderAccent:");
+		const overriddenRow = renderBreathingBorderRow(0.9, 10, taggedTheme, "full", undefined, {
+			...BREATHING_BORDER_COLORS,
+			peak: "success",
+		});
+		expect(overriddenRow).toContain("success:");
+		expect(overriddenRow).not.toContain("borderAccent:");
+	});
+
+	it("recolors only Cadence Equalizer's burst bucket, leaving the cooler buckets fixed", () => {
+		const defaultRow = renderEqualizerRow([1], [1], taggedTheme);
+		expect(defaultRow).toContain("warning:");
+		const overriddenRow = renderEqualizerRow([1], [1], taggedTheme, { ...BUCKET_THEME_COLOR, burst: "success" });
+		expect(overriddenRow).toContain("success:");
+		expect(overriddenRow).not.toContain("warning:");
+	});
+
+	it("recolors only Reflection Ripple's ring, leaving the calm water on its fixed dim token", () => {
+		const defaultRow = renderReflectionRippleRow(0, 11, taggedTheme, "full");
+		expect(defaultRow).toContain("accent:");
+		const overriddenRow = renderReflectionRippleRow(0, 11, taggedTheme, "full", {
+			...REFLECTION_RIPPLE_COLORS,
+			ring: "success",
+		});
+		expect(overriddenRow).toContain("success:");
+		expect(overriddenRow).not.toContain("accent:");
+	});
 });
 
 describe("default byte-equality", () => {
@@ -493,6 +621,18 @@ describe("default byte-equality", () => {
 
 		expect(renderTidepoolRow(0.5, "anthropic", 0, 69, taggedTheme, "full")).toBe(
 			renderTidepoolRow(0.5, "anthropic", 0, 69, taggedTheme, "full", TIDEPOOL_COLORS),
+		);
+
+		expect(renderBreathingBorderRow(0.9, 10, taggedTheme, "full")).toBe(
+			renderBreathingBorderRow(0.9, 10, taggedTheme, "full", undefined, BREATHING_BORDER_COLORS),
+		);
+
+		expect(renderEqualizerRow([1], [1], taggedTheme)).toBe(
+			renderEqualizerRow([1], [1], taggedTheme, BUCKET_THEME_COLOR),
+		);
+
+		expect(renderReflectionRippleRow(0, 11, taggedTheme, "full")).toBe(
+			renderReflectionRippleRow(0, 11, taggedTheme, "full", REFLECTION_RIPPLE_COLORS),
 		);
 	});
 });
@@ -582,6 +722,64 @@ describe("widget accent threading", () => {
 				accentColor: "syntaxString",
 			});
 			expect(widget.renderFrame(69)[0]).toContain("syntaxString:");
+			widget.dispose();
+			host.dispose();
+		}
+
+		{
+			const { scheduler, policy, host } = makeWidgetHarness();
+			const state = new BreathingBorderState();
+			state.applyAgentStart(0);
+			scheduler.advance(BASE_BREATH_PERIOD_MS / 2); // mid-cycle: the breath envelope peaks here
+			const widget = new BreathingBorderWidget({
+				tui: noopTui,
+				host,
+				policy,
+				state,
+				theme: taggedTheme,
+				clock: scheduler,
+				onSettled: () => {},
+				accentColor: "success",
+			});
+			expect(widget.renderFrame(40)[0]).toContain("success:");
+			widget.dispose();
+			host.dispose();
+		}
+
+		{
+			const { policy, host } = makeWidgetHarness();
+			const state = new CadenceEqualizerState();
+			for (let i = 0; i < 5; i++) state.pushSample(1); // saturates the fast band into the burst bucket
+			const widget = new CadenceEqualizerWidget({
+				tui: noopTui,
+				host,
+				policy,
+				state,
+				theme: taggedTheme,
+				wallClock: { now: () => 0 },
+				sampleRate: () => null,
+				accentColor: "success",
+			});
+			expect(widget.renderFrame(80)[0]).toContain("success:");
+			widget.dispose();
+			host.dispose();
+		}
+
+		{
+			const { scheduler, policy, host } = makeWidgetHarness();
+			const state = new ReflectionRippleState();
+			state.applyTrigger(["r"], 0);
+			const widget = new ReflectionRippleWidget({
+				tui: noopTui,
+				host,
+				policy,
+				state,
+				theme: taggedTheme,
+				clock: scheduler,
+				onSettled: () => {},
+				accentColor: "success",
+			});
+			expect(widget.renderFrame(11)[0]).toContain("success:");
 			widget.dispose();
 			host.dispose();
 		}

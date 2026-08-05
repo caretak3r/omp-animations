@@ -14,6 +14,7 @@ import {
 } from "../src/reflection-ripple/ripple";
 import { ReflectionRippleState } from "../src/reflection-ripple/state";
 import {
+	REFLECTION_RIPPLE_COLORS,
 	type ReflectionRippleTheme,
 	ReflectionRippleWidget,
 	renderReflectionRippleIdleRow,
@@ -489,6 +490,28 @@ describe("ReflectionRippleWidget", () => {
 		expect(widget.animating).toBe(false);
 		expect(host.subscriberCount).toBe(0);
 		expect(widget.render(20)[0]).toBe(renderReflectionRippleIdleRow(20, idTheme));
+	});
+
+	it("an accent override recolors only the ring, leaving the calm water on its fixed dim token", () => {
+		const scheduler = manualScheduler();
+		const policy = new MotionPolicy(fullEnv, "full");
+		const host = new AnimationHost({ policy, scheduler });
+		const state = new ReflectionRippleState();
+		state.applyTrigger(["r"], 0);
+		const widget = new ReflectionRippleWidget({
+			tui: new ToggleTui(),
+			host,
+			policy,
+			state,
+			theme: taggedTheme,
+			clock: scheduler,
+			onSettled: () => {},
+			accentColor: "success",
+		});
+		const row = widget.render(11)[0];
+		expect(row).toContain("success:");
+		expect(row).not.toContain(`${REFLECTION_RIPPLE_COLORS.ring}:`);
+		widget.dispose();
 	});
 
 	it("disposing twice is a no-op the second time (idempotent teardown)", () => {

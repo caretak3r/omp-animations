@@ -308,9 +308,16 @@ describe("package.json#omp.settings — this package's native default", () => {
 		];
 		for (const id of excludedIds) expect(settings[id]).toBeUndefined();
 
-		// Exactly the tier setting + per shipped animation: the enable boolean and its
-		// Placement/AccentColor appearance settings. No leftover excluded keys.
-		const appearanceKeys = ALL_IDS.flatMap(id => [`${id}Placement`, `${id}AccentColor`]);
+		// Exactly the tier setting + per shipped animation: the enable boolean, a Placement
+		// appearance setting for every animation, and an AccentColor appearance setting for
+		// every animation except toolConstellation — its per-category rainbow palette has
+		// no single overridable slot (see `tool-constellation/index.ts`), so that key was
+		// dropped rather than left inert. No leftover excluded keys.
+		const accentCapableIds = ALL_IDS.filter(id => id !== "toolConstellation");
+		const appearanceKeys = [
+			...ALL_IDS.map(id => `${id}Placement`),
+			...accentCapableIds.map(id => `${id}AccentColor`),
+		];
 		expect(Object.keys(settings).sort()).toEqual(["animations", ...ALL_IDS, ...appearanceKeys].sort());
 	});
 });
