@@ -1,6 +1,7 @@
 import type {
 	ExtensionWidgetContent,
 	ExtensionWidgetOptions,
+	WidgetPlacement,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
 import type { ToolCallEvent } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 import type { BackpressureSignal, FrameScheduler, MotionSetting } from "../kit";
@@ -9,7 +10,7 @@ import { ConstellationState } from "./state";
 import { type ConstellationTheme, renderConstellationTally, ToolConstellationWidget } from "./widget";
 
 const WIDGET_KEY = "tool-constellation";
-const WIDGET_OPTIONS: ExtensionWidgetOptions = { placement: "belowEditor" };
+const DEFAULT_PLACEMENT: WidgetPlacement = "belowEditor";
 
 /**
  * Per-event surface the controller needs. Adapted from the extension
@@ -69,9 +70,11 @@ export class ToolConstellationController {
 	#scheduler: FrameScheduler;
 	#state = new ConstellationState();
 	#mount: Mount | undefined;
+	#widgetOptions: ExtensionWidgetOptions;
 
-	constructor(options: { scheduler?: FrameScheduler } = {}) {
+	constructor(options: { scheduler?: FrameScheduler; placement?: WidgetPlacement } = {}) {
 		this.#scheduler = options.scheduler ?? DEFAULT_FRAME_SCHEDULER;
+		this.#widgetOptions = { placement: options.placement ?? DEFAULT_PLACEMENT };
 	}
 
 	/** Read-only state accessor for tests/introspection. */
@@ -88,7 +91,11 @@ export class ToolConstellationController {
 			return;
 		}
 		if (this.#mount.mode === "static") {
-			ctx.setWidget(WIDGET_KEY, [renderConstellationTally(this.#state.categoryCounts(), ctx.theme)], WIDGET_OPTIONS);
+			ctx.setWidget(
+				WIDGET_KEY,
+				[renderConstellationTally(this.#state.categoryCounts(), ctx.theme)],
+				this.#widgetOptions,
+			);
 		}
 		// Animated mode: the shared AnimationHost's next tick re-renders from the mutated state.
 	}
@@ -98,13 +105,17 @@ export class ToolConstellationController {
 		if (!this.#mount) return;
 		if (this.#mount.mode === "animated") this.#mount.host.dispose();
 		this.#mount = undefined;
-		ctx.setWidget(WIDGET_KEY, undefined, WIDGET_OPTIONS);
+		ctx.setWidget(WIDGET_KEY, undefined, this.#widgetOptions);
 	}
 
 	#mountWidget(ctx: ToolConstellationContext): Mount {
 		const policy = new MotionPolicy({ hasUI: ctx.hasUI, isTTY: ctx.isTTY, env: ctx.env }, ctx.motionSetting);
 		if (policy.tier === "off") {
-			ctx.setWidget(WIDGET_KEY, [renderConstellationTally(this.#state.categoryCounts(), ctx.theme)], WIDGET_OPTIONS);
+			ctx.setWidget(
+				WIDGET_KEY,
+				[renderConstellationTally(this.#state.categoryCounts(), ctx.theme)],
+				this.#widgetOptions,
+			);
 			return { mode: "static" };
 		}
 
@@ -118,7 +129,7 @@ export class ToolConstellationController {
 				backpressure.attach(tui);
 				return new ToolConstellationWidget({ tui, host, policy, state, theme, clock });
 			},
-			WIDGET_OPTIONS,
+			this.#widgetOptions,
 		);
 		return { mode: "animated", host };
 	}

@@ -1,4 +1,9 @@
-import type { ExtensionContext, ExtensionFactory } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
+import type {
+	ExtensionContext,
+	ExtensionFactory,
+	WidgetPlacement,
+} from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
+import type { ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import type { MotionSetting } from "../kit";
 import { type BreathingBorderContext, BreathingBorderController } from "./controller";
 
@@ -40,11 +45,18 @@ function toBreathingBorderContext(
 export interface BreathingBorderExtensionOptions {
 	/** Motion tier injected by the registrar; defaults to "full" when unset. */
 	motionSetting?: MotionSetting;
+	/** Widget placement injected by the registrar; defaults to "aboveEditor" when unset. */
+	placement?: WidgetPlacement;
+	/** Accent override for the primary accent slot (the peak brightness); defaults to the built-in palette when unset. */
+	accentColor?: ThemeColor;
 }
 
 export function createBreathingBorderExtension(options: BreathingBorderExtensionOptions = {}): ExtensionFactory {
 	return api => {
-		const controller = new BreathingBorderController();
+		const controller = new BreathingBorderController({
+			placement: options.placement,
+			accentColor: options.accentColor,
+		});
 		api.on("agent_start", (event, ctx) => {
 			controller.onAgentStart(event, toBreathingBorderContext(ctx, options));
 		});

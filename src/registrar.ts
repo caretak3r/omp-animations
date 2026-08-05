@@ -80,15 +80,13 @@ export interface AnimationEntry {
  * oh-my-pi-animations suite. Every other animation's source was deliberately left out of
  * this package's copy rather than shipped here unregistered.
  *
- * Two of the eight (`auditTrailBox`, `cacheMeter`) plus `palimpsest` and
- * `rateLimitTidepool` shipped with per-animation `placement`/`accentColor` options
- * (see `appearance.ts`) and thread the resolved appearance record straight through.
- * The other four (`breathingBorder`, `cadenceEqualizer`, `reflectionRipple`,
- * `toolConstellation`) predate that appearance-settings machinery: their factories only
- * accept `motionSetting`, and their controllers hardcode their widget's placement — the
- * `<id>Placement`/`<id>AccentColor` manifest settings still resolve for them (for
- * uniformity with every other animation's settings shape) but are not currently wired to
- * anything.
+ * Every shipped animation threads the resolved `<id>Placement`/`<id>AccentColor`
+ * appearance record (see `appearance.ts`) straight through its factory.
+ * `toolConstellation` is the one exception on the accent half: its star field is
+ * colored by a seven-way per-category rainbow with no single overridable slot (see
+ * its `index.ts`), so its factory only accepts `placement` — the resolved
+ * `accentColor` still flows through the spread below for uniformity with every
+ * other entry, but the factory itself ignores it.
  */
 export const ANIMATIONS: readonly AnimationEntry[] = [
 	{
@@ -100,10 +98,9 @@ export const ANIMATIONS: readonly AnimationEntry[] = [
 	{
 		id: "breathingBorder",
 		title: "Breathing Border",
-		// The widget's placement is hardcoded in controller.ts (predates per-animation
-		// appearance settings) — this is that hardcoded side, not a configurable default.
 		defaultPlacement: "aboveEditor",
-		mount: (api, c) => createBreathingBorderExtension({ motionSetting: c.tier })(api),
+		mount: (api, c) =>
+			createBreathingBorderExtension({ motionSetting: c.tier, ...c.appearance.breathingBorder })(api),
 	},
 	{
 		id: "cacheMeter",
@@ -114,9 +111,9 @@ export const ANIMATIONS: readonly AnimationEntry[] = [
 	{
 		id: "cadenceEqualizer",
 		title: "Cadence Equalizer",
-		// Hardcoded in controller.ts, same as breathingBorder above.
 		defaultPlacement: "belowEditor",
-		mount: (api, c) => createCadenceEqualizerExtension({ motionSetting: c.tier })(api),
+		mount: (api, c) =>
+			createCadenceEqualizerExtension({ motionSetting: c.tier, ...c.appearance.cadenceEqualizer })(api),
 	},
 	{
 		id: "palimpsest",
@@ -134,16 +131,16 @@ export const ANIMATIONS: readonly AnimationEntry[] = [
 	{
 		id: "reflectionRipple",
 		title: "Reflection Ripple",
-		// Hardcoded in controller.ts, same as breathingBorder above.
 		defaultPlacement: "aboveEditor",
-		mount: (api, c) => createReflectionRippleExtension({ motionSetting: c.tier })(api),
+		mount: (api, c) =>
+			createReflectionRippleExtension({ motionSetting: c.tier, ...c.appearance.reflectionRipple })(api),
 	},
 	{
 		id: "toolConstellation",
 		title: "Tool Constellation",
-		// Hardcoded in controller.ts, same as breathingBorder above.
 		defaultPlacement: "belowEditor",
-		mount: (api, c) => createToolConstellationExtension({ motionSetting: c.tier })(api),
+		mount: (api, c) =>
+			createToolConstellationExtension({ motionSetting: c.tier, ...c.appearance.toolConstellation })(api),
 	},
 ];
 

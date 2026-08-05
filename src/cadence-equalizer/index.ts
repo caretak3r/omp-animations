@@ -1,4 +1,9 @@
-import type { ExtensionContext, ExtensionFactory } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
+import type {
+	ExtensionContext,
+	ExtensionFactory,
+	WidgetPlacement,
+} from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
+import type { ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import type { MotionSetting } from "../kit";
 import { type CadenceEqualizerContext, CadenceEqualizerController } from "./controller";
 
@@ -41,11 +46,18 @@ function toCadenceEqualizerContext(
 export interface CadenceEqualizerExtensionOptions {
 	/** Motion tier injected by the registrar; defaults to "full" when unset. */
 	motionSetting?: MotionSetting;
+	/** Widget placement injected by the registrar; defaults to "belowEditor" when unset. */
+	placement?: WidgetPlacement;
+	/** Accent override for the primary accent slot (the burst bucket); defaults to the built-in palette when unset. */
+	accentColor?: ThemeColor;
 }
 
 export function createCadenceEqualizerExtension(options: CadenceEqualizerExtensionOptions = {}): ExtensionFactory {
 	return api => {
-		const controller = new CadenceEqualizerController();
+		const controller = new CadenceEqualizerController({
+			placement: options.placement,
+			accentColor: options.accentColor,
+		});
 		api.on("message_start", (event, ctx) => {
 			controller.onMessageStart(event, toCadenceEqualizerContext(ctx, options));
 		});

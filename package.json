@@ -105,7 +105,7 @@
 			},
 			"breathingBorderPlacement": {
 				"type": "enum",
-				"description": "Reserved for a future Breathing Border placement override — its aboveEditor placement is currently hardcoded in the widget's controller, so this setting has no effect yet.",
+				"description": "Which side of the editor Breathing Border mounts on. Applied at wire time (restart to change).",
 				"values": [
 					"aboveEditor",
 					"belowEditor"
@@ -115,7 +115,7 @@
 			},
 			"breathingBorderAccentColor": {
 				"type": "enum",
-				"description": "Reserved for a future Breathing Border accent override — the widget's palette is currently fixed, so this setting has no effect yet.",
+				"description": "Breathing Border's primary accent — the border's peak brightness (the resting/mid-brightness tokens stay fixed). 'default' keeps the built-in palette. Applied at wire time (restart to change).",
 				"values": [
 					"default",
 					"accent",
@@ -177,7 +177,7 @@
 			},
 			"cadenceEqualizerPlacement": {
 				"type": "enum",
-				"description": "Reserved for a future Cadence Equalizer placement override — its belowEditor placement is currently hardcoded in the widget's controller, so this setting has no effect yet.",
+				"description": "Which side of the editor Cadence Equalizer mounts on. Applied at wire time (restart to change).",
 				"values": [
 					"aboveEditor",
 					"belowEditor"
@@ -187,7 +187,7 @@
 			},
 			"cadenceEqualizerAccentColor": {
 				"type": "enum",
-				"description": "Reserved for a future Cadence Equalizer accent override — the widget's palette is currently fixed, so this setting has no effect yet.",
+				"description": "Cadence Equalizer's primary accent — the burst bucket and the peak-hold cap (the cooler buckets stay fixed). 'default' keeps the built-in palette. Applied at wire time (restart to change).",
 				"values": [
 					"default",
 					"accent",
@@ -285,7 +285,7 @@
 			},
 			"reflectionRipplePlacement": {
 				"type": "enum",
-				"description": "Reserved for a future Reflection Ripple placement override — its aboveEditor placement is currently hardcoded in the widget's controller, so this setting has no effect yet.",
+				"description": "Which side of the editor Reflection Ripple mounts on. Applied at wire time (restart to change).",
 				"values": [
 					"aboveEditor",
 					"belowEditor"
@@ -295,7 +295,7 @@
 			},
 			"reflectionRippleAccentColor": {
 				"type": "enum",
-				"description": "Reserved for a future Reflection Ripple accent override — the widget's palette is currently fixed, so this setting has no effect yet.",
+				"description": "Reflection Ripple's primary accent — the ring (the calm-water background stays fixed dim). 'default' keeps the built-in palette. Applied at wire time (restart to change).",
 				"values": [
 					"default",
 					"accent",
@@ -321,33 +321,13 @@
 			},
 			"toolConstellationPlacement": {
 				"type": "enum",
-				"description": "Reserved for a future Tool Constellation placement override — its belowEditor placement is currently hardcoded in the widget's controller, so this setting has no effect yet.",
+				"description": "Which side of the editor Tool Constellation mounts on. Applied at wire time (restart to change).",
 				"values": [
 					"aboveEditor",
 					"belowEditor"
 				],
 				"default": "belowEditor",
 				"env": "OMP_ANIMATIONS_TOOL_CONSTELLATION_PLACEMENT"
-			},
-			"toolConstellationAccentColor": {
-				"type": "enum",
-				"description": "Reserved for a future Tool Constellation accent override — the widget's palette is currently fixed, so this setting has no effect yet.",
-				"values": [
-					"default",
-					"accent",
-					"success",
-					"warning",
-					"error",
-					"muted",
-					"syntaxKeyword",
-					"syntaxFunction",
-					"syntaxVariable",
-					"syntaxType",
-					"syntaxString",
-					"syntaxNumber"
-				],
-				"default": "default",
-				"env": "OMP_ANIMATIONS_TOOL_CONSTELLATION_ACCENT_COLOR"
 			}
 		}
 	}

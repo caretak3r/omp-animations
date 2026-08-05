@@ -1,4 +1,9 @@
-import type { ExtensionContext, ExtensionFactory } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
+import type {
+	ExtensionContext,
+	ExtensionFactory,
+	WidgetPlacement,
+} from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
+import type { ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import type { MotionSetting } from "../kit";
 import { type ReflectionRippleContext, ReflectionRippleController } from "./controller";
 
@@ -39,11 +44,18 @@ function toReflectionRippleContext(
 export interface ReflectionRippleExtensionOptions {
 	/** Motion tier injected by the registrar; defaults to "full" when unset. */
 	motionSetting?: MotionSetting;
+	/** Widget placement injected by the registrar; defaults to "aboveEditor" when unset. */
+	placement?: WidgetPlacement;
+	/** Accent override for the primary accent slot (the ring); defaults to the built-in palette when unset. */
+	accentColor?: ThemeColor;
 }
 
 export function createReflectionRippleExtension(options: ReflectionRippleExtensionOptions = {}): ExtensionFactory {
 	return api => {
-		const controller = new ReflectionRippleController();
+		const controller = new ReflectionRippleController({
+			placement: options.placement,
+			accentColor: options.accentColor,
+		});
 		api.on("ttsr_triggered", (event, ctx) => {
 			controller.onTtsrTriggered(event, toReflectionRippleContext(ctx, options));
 		});

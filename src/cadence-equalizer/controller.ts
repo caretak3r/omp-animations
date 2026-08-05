@@ -1,6 +1,7 @@
 import type {
 	ExtensionWidgetContent,
 	ExtensionWidgetOptions,
+	WidgetPlacement,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
 import type {
 	MessageEndEvent,
@@ -8,13 +9,14 @@ import type {
 	MessageUpdateEvent,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 import { calculateTokensPerSecond } from "@oh-my-pi/pi-coding-agent/modes/components/status-line/token-rate";
+import type { ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import type { BackpressureSignal, FrameScheduler, MotionSetting } from "../kit";
 import { AnimationHost, backpressureFromTui, DEFAULT_FRAME_SCHEDULER, MotionPolicy } from "../kit";
 import { CadenceEqualizerState } from "./state";
 import { type CadenceEqualizerTheme, CadenceEqualizerWidget, renderEqualizerText } from "./widget";
 
 const WIDGET_KEY = "cadence-equalizer";
-const WIDGET_OPTIONS: ExtensionWidgetOptions = { placement: "belowEditor" };
+const DEFAULT_PLACEMENT: WidgetPlacement = "belowEditor";
 
 /** Wall clock (epoch ms) seam — `token-rate.ts` compares against message `timestamp`, which is epoch-based. Mirrors Token Tide's `WallClock`. */
 export interface WallClock {
@@ -104,10 +106,21 @@ export class CadenceEqualizerController {
 	#current: AssistantSample | undefined;
 	#streaming = false;
 	#mount: Mount | undefined;
+	#widgetOptions: ExtensionWidgetOptions;
+	#accentColor: ThemeColor | undefined;
 
-	constructor(options: { scheduler?: FrameScheduler; wallClock?: WallClock } = {}) {
+	constructor(
+		options: {
+			scheduler?: FrameScheduler;
+			wallClock?: WallClock;
+			placement?: WidgetPlacement;
+			accentColor?: ThemeColor;
+		} = {},
+	) {
 		this.#scheduler = options.scheduler ?? DEFAULT_FRAME_SCHEDULER;
 		this.#wallClock = options.wallClock ?? defaultWallClock;
+		this.#widgetOptions = { placement: options.placement ?? DEFAULT_PLACEMENT };
+		this.#accentColor = options.accentColor;
 	}
 
 	/** Read-only state accessor for tests/introspection. */
@@ -156,17 +169,17 @@ export class CadenceEqualizerController {
 		if (!this.#mount) return;
 		if (this.#mount.mode === "animated") this.#mount.host.dispose();
 		this.#mount = undefined;
-		ctx.setWidget(WIDGET_KEY, undefined, WIDGET_OPTIONS);
+		ctx.setWidget(WIDGET_KEY, undefined, this.#widgetOptions);
 	}
 
 	#repaintStatic(ctx: CadenceEqualizerContext): void {
-		ctx.setWidget(WIDGET_KEY, [renderEqualizerText(this.sampleRate(this.#wallClock.now()))], WIDGET_OPTIONS);
+		ctx.setWidget(WIDGET_KEY, [renderEqualizerText(this.sampleRate(this.#wallClock.now()))], this.#widgetOptions);
 	}
 
 	#mountWidget(ctx: CadenceEqualizerContext): Mount {
 		const policy = new MotionPolicy({ hasUI: ctx.hasUI, isTTY: ctx.isTTY, env: ctx.env }, ctx.motionSetting);
 		if (policy.tier === "off") {
-			ctx.setWidget(WIDGET_KEY, [renderEqualizerText(this.sampleRate(this.#wallClock.now()))], WIDGET_OPTIONS);
+			ctx.setWidget(WIDGET_KEY, [renderEqualizerText(this.sampleRate(this.#wallClock.now()))], this.#widgetOptions);
 			return { mode: "static" };
 		}
 
@@ -175,13 +188,14 @@ export class CadenceEqualizerController {
 		const state = this.#state;
 		const wallClock = this.#wallClock;
 		const sampleRate = (wallNowMs: number): number | null => this.sampleRate(wallNowMs);
+		const accentColor = this.#accentColor;
 		ctx.setWidget(
 			WIDGET_KEY,
 			(tui, theme) => {
 				backpressure.attach(tui);
-				return new CadenceEqualizerWidget({ tui, host, policy, state, theme, wallClock, sampleRate });
+				return new CadenceEqualizerWidget({ tui, host, policy, state, theme, wallClock, sampleRate, accentColor });
 			},
-			WIDGET_OPTIONS,
+			this.#widgetOptions,
 		);
 		return { mode: "animated", host };
 	}

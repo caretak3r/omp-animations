@@ -1,4 +1,4 @@
-import type { Theme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import type { AnimatedWidgetOptions, FrameScheduler, MotionPolicy } from "../kit";
 import { AnimatedWidget } from "../kit";
 import {
@@ -22,6 +22,23 @@ export const STATIC_RIPPLE_WIDTH = 40;
 const RESTING_GLYPH = "·";
 const DARK_GLYPH = " ";
 
+/**
+ * Named color map. `ring` is the primary accent slot — the only token an
+ * accent override replaces; `calm` (the resting water) stays fixed dim.
+ */
+export interface ReflectionRippleColors {
+	ring: ThemeColor;
+	calm: ThemeColor;
+}
+
+/** Built-in palette — the exact tokens the renderer used before colors were configurable. */
+export const REFLECTION_RIPPLE_COLORS: ReflectionRippleColors = { ring: "accent", calm: "dim" };
+
+/** The palette with the accent slot applied, or the built-in palette when none is given. */
+export function reflectionRippleColors(accentColor: ThemeColor | undefined): ReflectionRippleColors {
+	return accentColor === undefined ? REFLECTION_RIPPLE_COLORS : { ...REFLECTION_RIPPLE_COLORS, ring: accentColor };
+}
+
 /** Calm-water background glyph: goes fully dark while the breath dim is more than half applied, resting dots otherwise. Pure. */
 function calmGlyph(dimAmount: number): string {
 	const clamped = dimAmount <= 0 ? 0 : dimAmount >= 1 ? 1 : dimAmount;
@@ -40,6 +57,7 @@ export function renderReflectionRippleRow(
 	width: number,
 	theme: ReflectionRippleTheme,
 	tier: "full" | "subtle",
+	colors: ReflectionRippleColors = REFLECTION_RIPPLE_COLORS,
 ): string {
 	if (width <= 0) return "";
 	const progress = rippleProgress(elapsedMs, RIPPLE_DURATION_MS);
@@ -49,11 +67,11 @@ export function renderReflectionRippleRow(
 	const bg = calmGlyph(dimAmount);
 
 	if (tier === "subtle") {
-		if (width === 1) return theme.fg("accent", glyph);
+		if (width === 1) return theme.fg(colors.ring, glyph);
 		const center = Math.floor((width - 1) / 2);
 		const before = bg.repeat(center);
 		const after = bg.repeat(width - center - 1);
-		return theme.fg("dim", before) + theme.fg("accent", glyph) + theme.fg("dim", after);
+		return theme.fg(colors.calm, before) + theme.fg(colors.ring, glyph) + theme.fg(colors.calm, after);
 	}
 
 	const center = Math.floor(width / 2);
@@ -63,9 +81,9 @@ export function renderReflectionRippleRow(
 	const cells: string[] = [];
 	for (let i = 0; i < width; i++) {
 		if (i === leftPos || i === rightPos) {
-			cells.push(theme.fg("accent", glyph));
+			cells.push(theme.fg(colors.ring, glyph));
 		} else {
-			cells.push(theme.fg("dim", bg));
+			cells.push(theme.fg(colors.calm, bg));
 		}
 	}
 	return cells.join("");
@@ -106,6 +124,8 @@ export interface ReflectionRippleWidgetOptions extends AnimatedWidgetOptions {
 	 * seen" ambient framing for something that only ever fires briefly.
 	 */
 	onSettled: () => void;
+	/** Accent override for the primary accent slot (the ring); `undefined` keeps the built-in palette. */
+	accentColor?: ThemeColor;
 }
 
 /**
@@ -127,6 +147,7 @@ export class ReflectionRippleWidget extends AnimatedWidget {
 	#policy: MotionPolicy;
 	#clock: ReflectionRippleClock;
 	#onSettled: () => void;
+	#colors: ReflectionRippleColors;
 
 	constructor(options: ReflectionRippleWidgetOptions) {
 		super(options);
@@ -135,6 +156,7 @@ export class ReflectionRippleWidget extends AnimatedWidget {
 		this.#policy = options.policy;
 		this.#clock = options.clock;
 		this.#onSettled = options.onSettled;
+		this.#colors = reflectionRippleColors(options.accentColor);
 	}
 
 	onFrame(_elapsedMs: number): void {
@@ -153,6 +175,6 @@ export class ReflectionRippleWidget extends AnimatedWidget {
 		}
 		const tier = this.#policy.tier === "full" ? "full" : "subtle";
 		const elapsed = this.#state.rippleElapsedMs(this.#clock.now());
-		return [renderReflectionRippleRow(elapsed, width, this.#theme, tier)];
+		return [renderReflectionRippleRow(elapsed, width, this.#theme, tier, this.#colors)];
 	}
 }

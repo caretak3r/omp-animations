@@ -1,4 +1,8 @@
-import type { ExtensionContext, ExtensionFactory } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
+import type {
+	ExtensionContext,
+	ExtensionFactory,
+	WidgetPlacement,
+} from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
 import type { MotionSetting } from "../kit";
 import { type ToolConstellationContext, ToolConstellationController } from "./controller";
 
@@ -39,11 +43,18 @@ function toConstellationContext(
 export interface ToolConstellationExtensionOptions {
 	/** Motion tier injected by the registrar; defaults to "full" when unset. */
 	motionSetting?: MotionSetting;
+	/** Widget placement injected by the registrar; defaults to "belowEditor" when unset. */
+	placement?: WidgetPlacement;
+	// No `accentColor` option: every star's color is its tool category
+	// (`CATEGORY_THEME_COLOR` in `categories.ts`), a seven-way semantic rainbow
+	// with no single "primary" slot to override — recoloring one category
+	// arbitrarily would misrepresent the rest, so this animation only exposes
+	// placement.
 }
 
 export function createToolConstellationExtension(options: ToolConstellationExtensionOptions = {}): ExtensionFactory {
 	return api => {
-		const controller = new ToolConstellationController();
+		const controller = new ToolConstellationController({ placement: options.placement });
 		api.on("tool_call", (event, ctx) => {
 			controller.onToolCall(event, toConstellationContext(ctx, options));
 		});

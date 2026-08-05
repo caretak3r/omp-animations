@@ -1,4 +1,4 @@
-import type { Theme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import type { AnimatedWidgetOptions, MotionPolicy } from "../kit";
 import { AnimatedWidget } from "../kit";
 import {
@@ -17,6 +17,19 @@ export type CadenceEqualizerTheme = Pick<Theme, "fg">;
 /** How far a band's peak must sit above its current amplitude before the peak cap renders as "held" rather than "just hit". */
 const PEAK_VISIBLE_GAP = 0.03;
 
+/** Bucket -> color lookup, one slot per {@link RateBucket}. */
+export type CadenceEqualizerColors = Readonly<Record<RateBucket, ThemeColor>>;
+
+/**
+ * The palette with the accent slot applied: `burst` — the hottest bucket and
+ * the peak-hold cap's color — is the only overridable token, mirroring
+ * Palimpsest's ember-only override; every other bucket keeps its fixed
+ * cool-to-warm ramp position. `undefined` keeps the built-in burst color.
+ */
+export function cadenceEqualizerColors(accentColor?: ThemeColor): CadenceEqualizerColors {
+	return accentColor === undefined ? BUCKET_THEME_COLOR : { ...BUCKET_THEME_COLOR, burst: accentColor };
+}
+
 /** Color a normalized `[0, 1]` band amplitude by projecting it back onto Token Tide's tok/s buckets — reused verbatim so the two cousins share one palette. */
 function bandColor(amplitude: number): RateBucket {
 	return rateBucket(amplitude * MAX_REFERENCE_RATE);
@@ -33,15 +46,16 @@ export function renderEqualizerRow(
 	bands: readonly number[],
 	peaks: readonly number[],
 	theme: CadenceEqualizerTheme,
+	colors: CadenceEqualizerColors = BUCKET_THEME_COLOR,
 ): string {
 	const parts: string[] = [];
 	for (let i = 0; i < bands.length; i++) {
 		if (i > 0) parts.push(" ");
 		const amplitude = bands[i] ?? 0;
 		const peak = peaks[i] ?? 0;
-		const color = BUCKET_THEME_COLOR[bandColor(amplitude)];
+		const color = colors[bandColor(amplitude)];
 		const showPeakCap = peak - amplitude >= PEAK_VISIBLE_GAP;
-		parts.push(showPeakCap ? theme.fg(BUCKET_THEME_COLOR.burst, "‾") : theme.fg("dim", " "));
+		parts.push(showPeakCap ? theme.fg(colors.burst, "‾") : theme.fg("dim", " "));
 		parts.push(theme.fg(color, waveGlyph(amplitude)));
 	}
 	return parts.join("");
@@ -52,8 +66,12 @@ export function renderEqualizerRow(
  * glyphs with no peak caps or spacing, a compact strip that fits a
  * status-line-sized slot. Deterministic given `bands` alone.
  */
-export function renderCompactEqualizer(bands: readonly number[], theme: CadenceEqualizerTheme): string {
-	return bands.map(amplitude => theme.fg(BUCKET_THEME_COLOR[bandColor(amplitude)], waveGlyph(amplitude))).join("");
+export function renderCompactEqualizer(
+	bands: readonly number[],
+	theme: CadenceEqualizerTheme,
+	colors: CadenceEqualizerColors = BUCKET_THEME_COLOR,
+): string {
+	return bands.map(amplitude => theme.fg(colors[bandColor(amplitude)], waveGlyph(amplitude))).join("");
 }
 
 /** Static one-line fallback for the motion-`off` tier: the numeric tok/s reading, or a dash when idle/unknown. */
@@ -69,6 +87,8 @@ export interface CadenceEqualizerWidgetOptions extends AnimatedWidgetOptions {
 	sampleRate(wallNowMs: number): number | null;
 	/** Wall clock (epoch ms) — distinct from the shared `AnimationHost`'s relative elapsed-ms, mirroring Token Tide. Injectable for tests. */
 	wallClock: { now(): number };
+	/** Accent override for the primary accent slot (the burst bucket); `undefined` keeps the built-in palette. */
+	accentColor?: ThemeColor;
 }
 
 /**
@@ -85,6 +105,7 @@ export class CadenceEqualizerWidget extends AnimatedWidget {
 	#policy: MotionPolicy;
 	#sampleRate: (wallNowMs: number) => number | null;
 	#wallClock: { now(): number };
+	#colors: CadenceEqualizerColors;
 
 	constructor(options: CadenceEqualizerWidgetOptions) {
 		super(options);
@@ -93,6 +114,7 @@ export class CadenceEqualizerWidget extends AnimatedWidget {
 		this.#policy = options.policy;
 		this.#sampleRate = options.sampleRate;
 		this.#wallClock = options.wallClock;
+		this.#colors = cadenceEqualizerColors(options.accentColor);
 	}
 
 	override onFrame(_elapsedMs: number): void {
@@ -102,8 +124,10 @@ export class CadenceEqualizerWidget extends AnimatedWidget {
 
 	renderFrame(_width: number): readonly string[] {
 		if (this.#policy.tier === "full") {
-			return [renderEqualizerRow(this.#state.snapshotBands(), this.#state.snapshotPeaks(), this.#theme)];
+			return [
+				renderEqualizerRow(this.#state.snapshotBands(), this.#state.snapshotPeaks(), this.#theme, this.#colors),
+			];
 		}
-		return [renderCompactEqualizer(this.#state.snapshotBands(), this.#theme)];
+		return [renderCompactEqualizer(this.#state.snapshotBands(), this.#theme, this.#colors)];
 	}
 }

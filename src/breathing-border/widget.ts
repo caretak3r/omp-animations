@@ -1,8 +1,9 @@
-import type { Theme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import type { AnimatedWidgetOptions, FrameScheduler, MotionPolicy } from "../kit";
 import { AnimatedWidget } from "../kit";
 import {
 	BORDER_CHAR,
+	type BorderBrightnessToken,
 	breathEnvelope,
 	brightnessGlyph,
 	brightnessToken,
@@ -17,6 +18,38 @@ export type BreathingBorderTheme = Pick<Theme, "fg">;
 
 /** Fixed width used only for the motion-`off` static fallback, which has no real terminal width to size against. */
 export const STATIC_BORDER_WIDTH = 40;
+
+/**
+ * Named color map. `peak` — the border's brightest moment, a traveling pulse
+ * or the exhale's crest — is the primary accent slot and the only token an
+ * accent override replaces; `muted`/`base` stay on their fixed border tokens,
+ * mirroring Palimpsest's underline/amber-stay-fixed, only-the-hottest-tier
+ * convention.
+ */
+export interface BreathingBorderColors {
+	muted: ThemeColor;
+	base: ThemeColor;
+	peak: ThemeColor;
+}
+
+/** Built-in palette — the exact border tokens the renderer used before colors were configurable. */
+export const BREATHING_BORDER_COLORS: BreathingBorderColors = {
+	muted: "borderMuted",
+	base: "border",
+	peak: "borderAccent",
+};
+
+/** The palette with the accent slot applied, or the built-in palette when none is given. */
+export function breathingBorderColors(accentColor: ThemeColor | undefined): BreathingBorderColors {
+	return accentColor === undefined ? BREATHING_BORDER_COLORS : { ...BREATHING_BORDER_COLORS, peak: accentColor };
+}
+
+/** Resolve a raw {@link brightnessToken} classification through the configured palette. */
+function resolveBorderColor(token: BorderBrightnessToken, colors: BreathingBorderColors): ThemeColor {
+	if (token === "borderMuted") return colors.muted;
+	if (token === "border") return colors.base;
+	return colors.peak;
+}
 
 /**
  * Pure renderer for one breathing-border row. `envelope` is the current 0..1
@@ -34,15 +67,16 @@ export function renderBreathingBorderRow(
 	theme: BreathingBorderTheme,
 	tier: "full" | "subtle",
 	travelPos?: number,
+	colors: BreathingBorderColors = BREATHING_BORDER_COLORS,
 ): string {
 	if (width <= 0) return "";
-	const token = brightnessToken(envelope);
+	const token = resolveBorderColor(brightnessToken(envelope), colors);
 
 	if (tier === "subtle") {
 		const glyph = brightnessGlyph(envelope);
 		if (width === 1) return theme.fg(token, glyph);
 		const middle = BORDER_CHAR.repeat(width - 2);
-		return theme.fg(token, glyph) + theme.fg("borderMuted", middle) + theme.fg(token, glyph);
+		return theme.fg(token, glyph) + theme.fg(colors.muted, middle) + theme.fg(token, glyph);
 	}
 
 	if (travelPos === undefined) {
@@ -52,7 +86,7 @@ export function renderBreathingBorderRow(
 	const glyph = brightnessGlyph(envelope);
 	const before = BORDER_CHAR.repeat(pos);
 	const after = BORDER_CHAR.repeat(width - pos - 1);
-	return theme.fg("borderMuted", before) + theme.fg(token, glyph) + theme.fg("borderMuted", after);
+	return theme.fg(colors.muted, before) + theme.fg(token, glyph) + theme.fg(colors.muted, after);
 }
 
 /** The byte-identical idle frame: envelope `0`, no travel — reused as the exhale's landing frame so the wind-down settles without a visible jump. */
@@ -89,6 +123,8 @@ export interface BreathingBorderWidgetOptions extends AnimatedWidgetOptions {
 	 * subscriptions rather than an animated widget that just stopped changing.
 	 */
 	onSettled: () => void;
+	/** Accent override for the primary accent slot (the peak brightness); `undefined` keeps the built-in palette. */
+	accentColor?: ThemeColor;
 }
 
 /**
@@ -110,6 +146,7 @@ export class BreathingBorderWidget extends AnimatedWidget {
 	#policy: MotionPolicy;
 	#clock: BreathingBorderClock;
 	#onSettled: () => void;
+	#colors: BreathingBorderColors;
 
 	constructor(options: BreathingBorderWidgetOptions) {
 		super(options);
@@ -118,6 +155,7 @@ export class BreathingBorderWidget extends AnimatedWidget {
 		this.#policy = options.policy;
 		this.#clock = options.clock;
 		this.#onSettled = options.onSettled;
+		this.#colors = breathingBorderColors(options.accentColor);
 	}
 
 	onFrame(_elapsedMs: number): void {
@@ -141,12 +179,12 @@ export class BreathingBorderWidget extends AnimatedWidget {
 				const elapsed = this.#state.breathElapsedMs(now);
 				const envelope = breathEnvelope(elapsed, period);
 				const travelPos = tier === "full" ? pulsePosition(elapsed, period, width) : undefined;
-				return [renderBreathingBorderRow(envelope, width, this.#theme, tier, travelPos)];
+				return [renderBreathingBorderRow(envelope, width, this.#theme, tier, travelPos, this.#colors)];
 			}
 			case "exhaling": {
 				const elapsed = this.#state.exhaleElapsedMs(now);
 				const envelope = exhaleEnvelope(elapsed, EXHALE_DURATION_MS);
-				return [renderBreathingBorderRow(envelope, width, this.#theme, tier)];
+				return [renderBreathingBorderRow(envelope, width, this.#theme, tier, undefined, this.#colors)];
 			}
 		}
 	}

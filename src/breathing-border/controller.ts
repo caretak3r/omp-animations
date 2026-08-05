@@ -1,6 +1,7 @@
 import type {
 	ExtensionWidgetContent,
 	ExtensionWidgetOptions,
+	WidgetPlacement,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
 import type {
 	AgentEndEvent,
@@ -8,13 +9,14 @@ import type {
 	TurnEndEvent,
 	TurnStartEvent,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
+import type { ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import type { BackpressureSignal, FrameScheduler, MotionSetting } from "../kit";
 import { AnimationHost, backpressureFromTui, DEFAULT_FRAME_SCHEDULER, MotionPolicy } from "../kit";
 import { BreathingBorderState } from "./state";
 import { type BreathingBorderTheme, BreathingBorderWidget, renderBreathingBorderOffText } from "./widget";
 
 const WIDGET_KEY = "breathing-border";
-const WIDGET_OPTIONS: ExtensionWidgetOptions = { placement: "aboveEditor" };
+const DEFAULT_PLACEMENT: WidgetPlacement = "aboveEditor";
 
 /**
  * Per-event surface the controller needs. Adapted from the extension
@@ -75,9 +77,13 @@ export class BreathingBorderController {
 	#scheduler: FrameScheduler;
 	#state = new BreathingBorderState();
 	#mount: Mount | undefined;
+	#widgetOptions: ExtensionWidgetOptions;
+	#accentColor: ThemeColor | undefined;
 
-	constructor(options: { scheduler?: FrameScheduler } = {}) {
+	constructor(options: { scheduler?: FrameScheduler; placement?: WidgetPlacement; accentColor?: ThemeColor } = {}) {
 		this.#scheduler = options.scheduler ?? DEFAULT_FRAME_SCHEDULER;
+		this.#widgetOptions = { placement: options.placement ?? DEFAULT_PLACEMENT };
+		this.#accentColor = options.accentColor;
 	}
 
 	/** Read-only state accessor for tests/introspection. */
@@ -116,13 +122,13 @@ export class BreathingBorderController {
 		if (!this.#mount) return;
 		if (this.#mount.mode === "animated") this.#mount.host.dispose();
 		this.#mount = undefined;
-		ctx.setWidget(WIDGET_KEY, undefined, WIDGET_OPTIONS);
+		ctx.setWidget(WIDGET_KEY, undefined, this.#widgetOptions);
 	}
 
 	#mountWidget(ctx: BreathingBorderContext): Mount {
 		const policy = new MotionPolicy({ hasUI: ctx.hasUI, isTTY: ctx.isTTY, env: ctx.env }, ctx.motionSetting);
 		if (policy.tier === "off") {
-			ctx.setWidget(WIDGET_KEY, [renderBreathingBorderOffText(ctx.theme)], WIDGET_OPTIONS);
+			ctx.setWidget(WIDGET_KEY, [renderBreathingBorderOffText(ctx.theme)], this.#widgetOptions);
 			return { mode: "off" };
 		}
 
@@ -135,9 +141,18 @@ export class BreathingBorderController {
 			WIDGET_KEY,
 			(tui, theme) => {
 				backpressure.attach(tui);
-				return new BreathingBorderWidget({ tui, host, policy, state, theme, clock, onSettled });
+				return new BreathingBorderWidget({
+					tui,
+					host,
+					policy,
+					state,
+					theme,
+					clock,
+					onSettled,
+					accentColor: this.#accentColor,
+				});
 			},
-			WIDGET_OPTIONS,
+			this.#widgetOptions,
 		);
 		return { mode: "animated", host };
 	}
@@ -147,6 +162,6 @@ export class BreathingBorderController {
 		if (this.#mount?.mode !== "animated" || this.#mount.host !== host) return;
 		host.dispose();
 		this.#mount = { mode: "settled" };
-		ctx.setWidget(WIDGET_KEY, [renderBreathingBorderOffText(ctx.theme)], WIDGET_OPTIONS);
+		ctx.setWidget(WIDGET_KEY, [renderBreathingBorderOffText(ctx.theme)], this.#widgetOptions);
 	}
 }
