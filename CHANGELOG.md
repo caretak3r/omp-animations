@@ -4,6 +4,28 @@ All notable changes to `@oh-my-pi/animations` are documented here.
 
 ## [Unreleased]
 
+### Changed
+- **T6 — Curated to the 8-animation keep-set.** Reduced the registrar and the
+  shipped animation set to eight animations: Audit Trail Box, Breathing
+  Border, Cache Meter, Cadence Equalizer, Palimpsest, Rate-Limit Tidepool,
+  Reflection Ripple, and Tool Constellation. Every other animation described
+  below (the rest of Wave 1 and Wave 2, plus the later additions) is no
+  longer part of this package; its source is not in this repository. Pruned
+  `package.json#omp.settings`, `src/index.ts`, and `src/registrar.ts` to
+  match, and registered the four keepers whose factories predate the
+  per-animation placement/accent settings (`breathingBorder`,
+  `cadenceEqualizer`, `reflectionRipple`, `toolConstellation`) at the
+  placement their widgets already hardcode.
+- Vendored Cadence Equalizer's own copy of the tok/s bucket classification
+  and color-ramp module it used to share with Token Tide, since Token Tide is
+  no longer part of this package.
+- Reworked the test suite for the 8-animation keep-set: removed assertions
+  and fixtures for excluded animations, and derived expected counts from
+  `ANIMATIONS` itself instead of hardcoding them.
+- Adapted to stock oh-my-pi API surface: dropped core edits are read defensively so the
+  plugin builds against `@oh-my-pi/pi-coding-agent@16` / `pi-tui@16` and degrades
+  gracefully (`renderUnderPressure` backpressure; Context Weather compaction forecast).
+
 ### Added
 - **T1 — Scaffold.** Initial standalone single-package repo: Bun/TypeScript project,
   `biome` + `tsgo` tooling matching oh-my-pi conventions, npm dependencies on
@@ -22,10 +44,6 @@ All notable changes to `@oh-my-pi/animations` are documented here.
   `package.json#omp`): a per-animation enable map + shared `animations` tier that mounts
   only enabled animations, with zero subscriptions left for disabled ones.
 
-### Changed
-- Adapted to stock oh-my-pi API surface: dropped core edits are read defensively so the
-  plugin builds against `@oh-my-pi/pi-coding-agent@16` / `pi-tui@16` and degrades
-  gracefully (`renderUnderPressure` backpressure; Context Weather compaction forecast).
-
 ### Validation
-- `bun check` green; `bun test` 773 pass / 0 fail / 3497 assertions across 26 files.
+- `bun check` green; `bun test` 688 pass / 0 fail / 2322 expect() calls across 18 files
+  (the current 8-animation keep-set).
