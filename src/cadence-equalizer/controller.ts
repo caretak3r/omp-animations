@@ -8,8 +8,8 @@ import type {
 	MessageStartEvent,
 	MessageUpdateEvent,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
-import { calculateTokensPerSecond } from "@oh-my-pi/pi-coding-agent/modes/components/status-line/token-rate";
 import type { ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import { calculateTokensPerSecond } from "@oh-my-pi/pi-coding-agent/utils/token-rate";
 import type { BackpressureSignal, FrameScheduler, MotionSetting } from "../kit";
 import { AnimationHost, backpressureFromTui, DEFAULT_FRAME_SCHEDULER, MotionPolicy } from "../kit";
 import { CadenceEqualizerState } from "./state";
