@@ -3,7 +3,7 @@
 	"name": "@oh-my-pi/animations",
 	"version": "0.1.0",
 	"private": true,
-	"description": "The oh-my-pi animation plugin suite — ambient animated TUI plugins (both waves) as a single config-driven package.",
+	"description": "Ambient animated TUI widgets for omp, as a single config-driven package.",
 	"license": "MIT",
 	"keywords": [
 		"tui",
@@ -45,7 +45,7 @@
 	],
 	"omp": {
 		"name": "oh-my-pi animations",
-		"description": "Ambient animated TUI plugins (both waves) as a single config-driven package.",
+		"description": "Ambient animated TUI widgets for omp, as a single config-driven package.",
 		"extensions": [
 			"./src/registrar.ts"
 		],
