@@ -10,6 +10,7 @@ import {
 	CadenceEqualizerController,
 	type WallClock,
 } from "../src/cadence-equalizer/controller";
+import { MAX_REFERENCE_RATE, normalizeAmplitude, waveGlyph } from "../src/cadence-equalizer/scale";
 import { CadenceEqualizerState } from "../src/cadence-equalizer/state";
 import {
 	type CadenceEqualizerTheme,
@@ -19,7 +20,6 @@ import {
 	renderEqualizerText,
 } from "../src/cadence-equalizer/widget";
 import { AnimationHost, type FrameScheduler, MotionPolicy } from "../src/kit";
-import { MAX_REFERENCE_RATE, normalizeAmplitude, waveGlyph } from "../src/token-tide/scale";
 
 // Identity theme so assertions see plain text instead of ANSI escapes.
 const idTheme: CadenceEqualizerTheme = { fg: (_color, text) => text };

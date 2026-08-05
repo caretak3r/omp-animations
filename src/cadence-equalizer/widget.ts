@@ -8,7 +8,7 @@ import {
 	type RateBucket,
 	rateBucket,
 	waveGlyph,
-} from "../token-tide/scale";
+} from "./scale";
 import type { CadenceEqualizerState } from "./state";
 
 /** The slice of {@link Theme} the renderer needs — just foreground coloring. */
