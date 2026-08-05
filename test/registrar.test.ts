@@ -79,7 +79,7 @@ describe("animations registrar", () => {
 	it("registers each command-bearing animation's slash command only when that animation is enabled", () => {
 		expect(mount(only("auditTrailBox")).commands).toEqual(["audit-trail"]);
 		expect(mount(only("cacheMeter")).commands).toEqual(["cache"]);
-		expect(mount(only("sessionBonsai", "diffBloom")).commands).toEqual([]);
+		expect(mount(only("palimpsest", "reflectionRipple")).commands).toEqual([]);
 		// Default (nothing specified) enables every animation, so both command-bearing
 		// animations register, in ANIMATIONS mount order.
 		expect(mount({}).commands).toEqual(["audit-trail", "cache"]);
@@ -92,7 +92,7 @@ describe("animations registrar", () => {
 			own.set(a.id, mount(only(a.id)).events.slice().sort());
 		}
 		// A representative subset of the shipped set.
-		const subset = ["agentFleet", "diffBloom", "memoryCrystals"];
+		const subset = ["breathingBorder", "cadenceEqualizer", "toolConstellation"];
 		const got = mount(only(...subset))
 			.events.slice()
 			.sort();
@@ -100,11 +100,11 @@ describe("animations registrar", () => {
 		expect(got).toEqual(expected);
 
 		// And a disabled animation's own events are genuinely absent from the subset mount.
-		const disabledId = "goalHorizon";
+		const disabledId = "reflectionRipple";
 		expect(subset).not.toContain(disabledId);
 		const disabledEvents = own.get(disabledId) ?? [];
 		const gotSet = new Set(got);
-		// goalHorizon subscribes to at least one event no member of the subset does.
+		// reflectionRipple subscribes to at least one event no member of the subset does.
 		expect(disabledEvents.some(e => !gotSet.has(e))).toBe(true);
 	});
 
@@ -116,30 +116,47 @@ describe("animations registrar", () => {
 		expect(all).toEqual(union);
 	});
 
-	it("the dropped ids are not in the registrar's mounted set and register no listeners", () => {
-		// Two rounds of cuts: Plan 007 dropped the 6 status-line duplicators (tok/s, cost,
-		// context %, model); a later scope call dropped 4 more of the retained set to ship a
-		// niche capability set. Every dropped animation's source stays on disk, but none is
-		// part of ANIMATIONS.
-		const cutIds = [
-			"tokenTide",
-			"cadenceEqualizer",
-			"costCandle",
+	it("the excluded animations are not in the registrar's mounted set and register no listeners", () => {
+		// This package ships a curated 8-animation keep-set; the other 16 animation source
+		// dirs from the broader oh-my-pi-animations suite were deliberately left out of the
+		// copy entirely (see package.json's description and this file's own imports) — they
+		// are not merely unregistered, their source does not exist in this repo at all.
+		const excludedIds = [
+			"agentFleet",
+			"compactionVacuum",
 			"contextConstellation",
-			"modelWeatherVane",
 			"contextWeather",
-			"toolConstellation",
+			"costCandle",
+			"diffBloom",
+			"driftBuoy",
+			"fourHands",
+			"goalHorizon",
+			"memoryCrystals",
+			"promptCharge",
+			"sessionBonsai",
+			"sessionStrata",
+			"spinnerPacks",
 			"todoMeteors",
-			"breathingBorder",
-			"reflectionRipple",
+			"tokenTide",
 		];
-		for (const id of cutIds) expect(ALL_IDS).not.toContain(id);
-		expect(ALL_IDS).toHaveLength(13);
+		for (const id of excludedIds) expect(ALL_IDS).not.toContain(id);
+		expect(ALL_IDS.slice().sort()).toEqual(
+			[
+				"auditTrailBox",
+				"breathingBorder",
+				"cacheMeter",
+				"cadenceEqualizer",
+				"palimpsest",
+				"rateLimitTidepool",
+				"reflectionRipple",
+				"toolConstellation",
+			].sort(),
+		);
 
-		// Trying to "enable" a dropped id (e.g. from a stale stored settings file) mounts
+		// Trying to "enable" an excluded id (e.g. from a stale stored settings file) mounts
 		// nothing for it — `only()` only recognizes ids that are still in ANIMATIONS, so a
-		// stored `{ toolConstellation: true }` is silently inert rather than resurrecting it.
-		const { events, labels } = mount({ ...only(), toolConstellation: true, contextWeather: true });
+		// stored `{ diffBloom: true }` is silently inert rather than resurrecting it.
+		const { events, labels } = mount({ ...only(), diffBloom: true, contextWeather: true });
 		expect(events).toEqual([]);
 		expect(labels).toContain("oh-my-pi animations");
 	});
@@ -153,22 +170,22 @@ describe("resolveAnimationsConfig", () => {
 	});
 
 	it("reads the tier and a stored disable from plugin settings", () => {
-		const cfg = resolveAnimationsConfig({ animations: "subtle", diffBloom: false }, {});
+		const cfg = resolveAnimationsConfig({ animations: "subtle", cacheMeter: false }, {});
 		expect(cfg.tier).toBe("subtle");
-		expect(cfg.enabled.diffBloom).toBe(false);
-		expect(cfg.enabled.agentFleet).toBe(true);
+		expect(cfg.enabled.cacheMeter).toBe(false);
+		expect(cfg.enabled.palimpsest).toBe(true);
 	});
 
 	it("falls back to env vars when a setting is unstored", () => {
-		const cfg = resolveAnimationsConfig({}, { OMP_ANIMATIONS: "off", OMP_ANIMATIONS_DIFF_BLOOM: "false" });
+		const cfg = resolveAnimationsConfig({}, { OMP_ANIMATIONS: "off", OMP_ANIMATIONS_CACHE_METER: "false" });
 		expect(cfg.tier).toBe("off");
-		expect(cfg.enabled.diffBloom).toBe(false);
-		expect(cfg.enabled.sessionBonsai).toBe(true);
+		expect(cfg.enabled.cacheMeter).toBe(false);
+		expect(cfg.enabled.auditTrailBox).toBe(true);
 	});
 
 	it("prefers a stored setting over the env fallback", () => {
-		const cfg = resolveAnimationsConfig({ diffBloom: false }, { OMP_ANIMATIONS_DIFF_BLOOM: "true" });
-		expect(cfg.enabled.diffBloom).toBe(false);
+		const cfg = resolveAnimationsConfig({ cacheMeter: false }, { OMP_ANIMATIONS_CACHE_METER: "true" });
+		expect(cfg.enabled.cacheMeter).toBe(false);
 	});
 });
 
@@ -240,7 +257,7 @@ describe("readPluginSettingsSync", () => {
 		// This exercises exactly the code path `export default createAnimationsPlugin()` uses —
 		// only `cwd`/`home` are supplied, so `settings` resolves via the real readPluginSettingsSync.
 		const { home, cwd } = isolatedRoots();
-		writeProjectOverrides(cwd, { animations: "subtle", diffBloom: false });
+		writeProjectOverrides(cwd, { animations: "subtle", cacheMeter: false });
 		const { api, events } = makeApi();
 		createAnimationsPlugin({ cwd, home, env: {} })(api);
 
@@ -250,61 +267,50 @@ describe("readPluginSettingsSync", () => {
 			return solo.events;
 		};
 
-		// diffBloom is disabled by the stored setting; every other animation is absent
+		// cacheMeter is disabled by the stored setting; every other animation is absent
 		// from it and so defaults to enabled. Asserted as multiset equality against the
 		// union of the enabled animations' own subscriptions rather than "none of
-		// diffBloom's event NAMES appear" — event names are shared (Diff Bloom and Audit
-		// Trail Box both subscribe to `tool_result`), so only the count proves that the
+		// cacheMeter's event NAMES appear" — event names are shared (Cache Meter and Audit
+		// Trail Box both subscribe to `session_switch`), so only the count proves that the
 		// disabled factory contributed nothing.
-		expect(soloEvents("diffBloom").length).toBeGreaterThan(0);
-		const expected = ALL_IDS.filter(id => id !== "diffBloom")
+		expect(soloEvents("cacheMeter").length).toBeGreaterThan(0);
+		const expected = ALL_IDS.filter(id => id !== "cacheMeter")
 			.flatMap(soloEvents)
 			.sort();
 		expect(events.slice().sort()).toEqual(expected);
 	});
 });
 
-describe("package.json#omp.settings — Plan 007's native default", () => {
-	it("ships tier 'subtle' and exactly the 13 shipped animations, each defaulting true", async () => {
+describe("package.json#omp.settings — this package's native default", () => {
+	it("ships tier 'subtle' and exactly the shipped animations (ANIMATIONS), each defaulting true", async () => {
 		const pkg = await Bun.file(path.join(import.meta.dir, "..", "package.json")).json();
 		const settings = pkg.omp.settings as Record<string, { default?: unknown }>;
 
 		expect(settings.animations?.default).toBe("subtle");
 
-		const shippedIds = [
-			"sessionBonsai",
-			"agentFleet",
-			"memoryCrystals",
-			"auditTrailBox",
-			"diffBloom",
-			"palimpsest",
-			"goalHorizon",
-			"promptCharge",
-			"sessionStrata",
-			"cacheMeter",
-			"driftBuoy",
-			"rateLimitTidepool",
-			"fourHands",
-		];
-		for (const id of shippedIds) expect(settings[id]?.default).toBe(true);
+		for (const id of ALL_IDS) expect(settings[id]?.default).toBe(true);
 
-		const cutIds = [
-			"tokenTide",
-			"cadenceEqualizer",
-			"costCandle",
+		const excludedIds = [
+			"agentFleet",
 			"contextConstellation",
-			"modelWeatherVane",
 			"contextWeather",
-			"toolConstellation",
+			"costCandle",
+			"diffBloom",
+			"driftBuoy",
+			"fourHands",
+			"goalHorizon",
+			"memoryCrystals",
+			"promptCharge",
+			"sessionBonsai",
+			"sessionStrata",
 			"todoMeteors",
-			"breathingBorder",
-			"reflectionRipple",
+			"tokenTide",
 		];
-		for (const id of cutIds) expect(settings[id]).toBeUndefined();
+		for (const id of excludedIds) expect(settings[id]).toBeUndefined();
 
 		// Exactly the tier setting + per shipped animation: the enable boolean and its
-		// Placement/AccentColor appearance settings. No leftover dropped keys.
-		const appearanceKeys = shippedIds.flatMap(id => [`${id}Placement`, `${id}AccentColor`]);
-		expect(Object.keys(settings).sort()).toEqual(["animations", ...shippedIds, ...appearanceKeys].sort());
+		// Placement/AccentColor appearance settings. No leftover excluded keys.
+		const appearanceKeys = ALL_IDS.flatMap(id => [`${id}Placement`, `${id}AccentColor`]);
+		expect(Object.keys(settings).sort()).toEqual(["animations", ...ALL_IDS, ...appearanceKeys].sort());
 	});
 });

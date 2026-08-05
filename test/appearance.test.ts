@@ -7,22 +7,12 @@ import type {
 	ExtensionWidgetOptions,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
 import type {
-	AutoCompactionEndEvent,
+	AfterProviderResponseEvent,
 	EditToolResultEvent,
-	InputEvent,
-	SessionTreeEvent,
+	MessageEndEvent,
+	MessageStartEvent,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
-import type { GoalUpdatedEvent } from "@oh-my-pi/pi-coding-agent/extensibility/shared-events";
-import type { Goal } from "@oh-my-pi/pi-coding-agent/goals/state";
 import type { Theme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
-import {
-	type AgentFleetContext,
-	AgentFleetController,
-	type AgentFleetRegistrySource,
-} from "../src/agent-fleet/controller";
-import type { AgentFleetRefSource, AgentFleetRegistryEventSource } from "../src/agent-fleet/state";
-import { AgentFleetState } from "../src/agent-fleet/state";
-import { AGENT_FLEET_COLORS, AgentFleetWidget, renderAgentFleetRow } from "../src/agent-fleet/widget";
 import {
 	ACCENT_SETTING_VALUES,
 	accentColorKey,
@@ -31,39 +21,31 @@ import {
 	placementKey,
 	resolveAnimationAppearance,
 } from "../src/appearance";
-import { type DiffBloomContext, DiffBloomController } from "../src/diff-bloom/controller";
-import { DiffBloomState } from "../src/diff-bloom/state";
-import { DIFF_BLOOM_COLORS, DiffBloomWidget, renderDiffBloomRow } from "../src/diff-bloom/widget";
-import { type GoalHorizonContext, GoalHorizonController } from "../src/goal-horizon/controller";
-import { GoalHorizonState } from "../src/goal-horizon/state";
-import {
-	GOAL_HORIZON_FLARE_COLOR,
-	GoalHorizonWidget,
-	renderGoalHorizonRow,
-	renderHorizonBar,
-} from "../src/goal-horizon/widget";
+import { type AuditTrailBoxContext, AuditTrailBoxController } from "../src/audit-trail-box/controller";
+import { AuditLedgerState } from "../src/audit-trail-box/state";
+import { AUDIT_TRAIL_BOX_COLORS, AuditTrailBoxWidget, renderAuditMeterRow } from "../src/audit-trail-box/widget";
+import { type CacheMeterContext, CacheMeterController } from "../src/cache-meter/controller";
+import { CacheMeterState } from "../src/cache-meter/state";
+import { CACHE_METER_COLORS, CacheMeterWidget, renderCacheMeterRow } from "../src/cache-meter/widget";
 import { AnimationHost, type FrameScheduler, MotionPolicy } from "../src/kit";
-import { type MemoryCrystalsContext, MemoryCrystalsController } from "../src/memory-crystals/controller";
-import { SPARKLE_DURATION_MS } from "../src/memory-crystals/crystal";
-import { MemoryCrystalsState } from "../src/memory-crystals/state";
-import { MEMORY_CRYSTALS_COLORS, MemoryCrystalsWidget, renderMemoryCrystalsRow } from "../src/memory-crystals/widget";
-import { CHARGE_BUCKET_COLOR } from "../src/prompt-charge/charge";
-import { type PromptChargeContext, PromptChargeController } from "../src/prompt-charge/controller";
-import { PromptChargeState } from "../src/prompt-charge/state";
-import { PromptChargeWidget, renderPromptChargeRow } from "../src/prompt-charge/widget";
+import { type PalimpsestContext, PalimpsestController } from "../src/palimpsest/controller";
+import { PalimpsestState } from "../src/palimpsest/state";
+import { PALIMPSEST_COLORS, PalimpsestWidget, renderPalimpsestRows } from "../src/palimpsest/widget";
+import { RateLimitTidepoolController, type TidepoolContext } from "../src/rate-limit-tidepool/controller";
+import { RateLimitTidepoolState } from "../src/rate-limit-tidepool/state";
+import { renderTidepoolRow, TIDEPOOL_COLORS, TidepoolWidget } from "../src/rate-limit-tidepool/widget";
 import { ANIMATIONS, createAnimationsPlugin, resolveAnimationsConfig } from "../src/registrar";
-import {
-	type BonsaiSessionSource,
-	type BonsaiTreeSourceNode,
-	type SessionBonsaiContext,
-	SessionBonsaiController,
-} from "../src/session-bonsai/controller";
-import { BonsaiState } from "../src/session-bonsai/state";
-import type { RawTreeNode } from "../src/session-bonsai/tree";
-import { BONSAI_COLORS, renderBonsaiTree, SessionBonsaiWidget } from "../src/session-bonsai/widget";
 
-const idTheme: Pick<Theme, "fg"> = { fg: (_color, text) => text };
-const taggedTheme: Pick<Theme, "fg"> = { fg: (color, text) => `${color}:${text}` };
+const idTheme: Pick<Theme, "fg" | "underline" | "bold"> = {
+	fg: (_color, text) => text,
+	underline: text => text,
+	bold: text => text,
+};
+const taggedTheme: Pick<Theme, "fg" | "underline" | "bold"> = {
+	fg: (color, text) => `${color}:${text}`,
+	underline: text => `U(${text})`,
+	bold: text => `B(${text})`,
+};
 const fullEnv = { hasUI: true, isTTY: true, env: {} as Record<string, string | undefined> };
 const noopTui = { requestComponentRender() {} };
 
@@ -107,93 +89,11 @@ function widgetRecorder(): {
 	};
 }
 
-function editResult(diff: string, pathName = "src/foo.ts"): EditToolResultEvent {
-	return {
-		type: "tool_result",
-		toolName: "edit",
-		toolCallId: "call-1",
-		input: { path: pathName },
-		content: [{ type: "text", text: "ok" }],
-		isError: false,
-		details: { diff, path: pathName },
-	};
-}
-
-function successfulCompactionEnd(tokensBefore: number): AutoCompactionEndEvent {
-	return {
-		type: "auto_compaction_end",
-		action: "context-full",
-		aborted: false,
-		willRetry: false,
-		result: { summary: "compacted the session", tokensBefore, firstKeptEntryId: "entry-1" },
-	} as AutoCompactionEndEvent;
-}
-
-function inputEvent(text: string): InputEvent {
-	return { type: "input", text, source: "interactive" };
-}
-
-function makeGoal(overrides: Partial<Goal> = {}): Goal {
-	return {
-		id: "goal-1",
-		objective: "ship the thing",
-		status: "active",
-		tokenBudget: 1000,
-		tokensUsed: 0,
-		timeUsedSeconds: 0,
-		createdAt: 0,
-		updatedAt: 0,
-		...overrides,
-	};
-}
-
-function goalUpdated(goal: Goal | null): GoalUpdatedEvent {
-	return { type: "goal_updated", goal };
-}
-
-function ref(id: string, overrides: Partial<AgentFleetRefSource> = {}): AgentFleetRefSource {
-	return { id, displayName: id, kind: "sub", status: "running", ...overrides };
-}
-
-function registryEvent(
-	type: AgentFleetRegistryEventSource["type"],
-	id: string,
-	overrides: Partial<AgentFleetRefSource> = {},
-): AgentFleetRegistryEventSource {
-	return { type, ref: ref(id, overrides) };
-}
-
-function fakeRegistry(): AgentFleetRegistrySource & { emit(event: AgentFleetRegistryEventSource): void } {
-	const listeners = new Set<(event: AgentFleetRegistryEventSource) => void>();
-	return {
-		onChange(listener) {
-			listeners.add(listener);
-			return () => listeners.delete(listener);
-		},
-		emit(event) {
-			for (const listener of [...listeners]) listener(event);
-		},
-	};
-}
-
-function branchingRawTree(): RawTreeNode[] {
-	return [
-		{
-			id: "root",
-			children: [
-				{ id: "active", children: [] },
-				{ id: "dormant", children: [] },
-			],
-		},
-	];
-}
-
-function oneNodeSource(): BonsaiTreeSourceNode[] {
-	return [{ entry: { id: "leaf" }, children: [] }];
-}
-
-function fixedSessionSource(roots: BonsaiTreeSourceNode[], leafId: string | null): BonsaiSessionSource {
-	return { getTree: () => roots, getLeafId: () => leafId };
+function expectPlacement(calls: WidgetCall[], placement: "aboveEditor" | "belowEditor"): void {
+	expect(calls[0]?.options?.placement).toBe(placement);
+	const clearingCall = calls.at(-1);
+	expect(clearingCall?.content).toBeUndefined();
+	expect(clearingCall?.options?.placement).toBe(placement);
 }
 
 function makeWidgetHarness(): {
@@ -207,16 +107,66 @@ function makeWidgetHarness(): {
 	return { scheduler, policy, host };
 }
 
-function expectPlacement(calls: WidgetCall[], placement: "aboveEditor" | "belowEditor"): void {
-	expect(calls[0]?.options?.placement).toBe(placement);
-	const clearingCall = calls.at(-1);
-	expect(clearingCall?.content).toBeUndefined();
-	expect(clearingCall?.options?.placement).toBe(placement);
+const sampleDiff = ["@@ -10,3 +10,3 @@", "+line ten", "+line eleven", "+line twelve"].join("\n");
+
+function editResult(path: string): EditToolResultEvent {
+	return {
+		type: "tool_result",
+		toolName: "edit",
+		toolCallId: "call-1",
+		input: { path },
+		content: [{ type: "text", text: "ok" }],
+		isError: false,
+		details: { diff: sampleDiff, path },
+	};
+}
+
+function assistantMessageEnd(cacheRead: number): MessageEndEvent {
+	return {
+		type: "message_end",
+		message: {
+			role: "assistant",
+			content: [],
+			api: "anthropic-messages",
+			provider: "anthropic",
+			model: "claude",
+			usage: { input: 0, output: 10, cacheRead, cacheWrite: 0, totalTokens: 10 },
+			stopReason: "stop",
+			timestamp: 0,
+		},
+	} as unknown as MessageEndEvent;
+}
+
+const anthropicHeaders = {
+	"anthropic-ratelimit-requests-limit": "50",
+	"anthropic-ratelimit-requests-remaining": "45",
+	"anthropic-ratelimit-tokens-limit": "40000",
+	"anthropic-ratelimit-tokens-remaining": "12000",
+};
+
+function afterProviderResponse(headers: Readonly<Record<string, string>>): AfterProviderResponseEvent {
+	return { type: "after_provider_response", status: 200, headers: headers as Record<string, string> };
+}
+
+function assistantMessageStart(provider: string): MessageStartEvent {
+	return {
+		type: "message_start",
+		message: {
+			role: "assistant",
+			content: [],
+			api: "anthropic-messages",
+			provider,
+			model: "model-x",
+			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 },
+			stopReason: "stop",
+			timestamp: 0,
+		},
+	} as unknown as MessageStartEvent;
 }
 
 describe("resolveAnimationAppearance", () => {
 	it("uses the historical placement and built-in palette by default", () => {
-		expect(resolveAnimationAppearance("diffBloom", "aboveEditor", {}, {})).toEqual({
+		expect(resolveAnimationAppearance("cacheMeter", "aboveEditor", {}, {})).toEqual({
 			placement: "aboveEditor",
 			accentColor: undefined,
 		});
@@ -224,76 +174,76 @@ describe("resolveAnimationAppearance", () => {
 
 	it("resolves stored placement before env, with null falling through", () => {
 		expect(
-			resolveAnimationAppearance("diffBloom", "aboveEditor", { diffBloomPlacement: "belowEditor" }, {}).placement,
+			resolveAnimationAppearance("cacheMeter", "aboveEditor", { cacheMeterPlacement: "belowEditor" }, {}).placement,
 		).toBe("belowEditor");
 		expect(
 			resolveAnimationAppearance(
-				"diffBloom",
+				"cacheMeter",
 				"aboveEditor",
 				{},
 				{
-					OMP_ANIMATIONS_DIFF_BLOOM_PLACEMENT: "belowEditor",
+					OMP_ANIMATIONS_CACHE_METER_PLACEMENT: "belowEditor",
 				},
 			).placement,
 		).toBe("belowEditor");
 		expect(
 			resolveAnimationAppearance(
-				"diffBloom",
+				"cacheMeter",
 				"aboveEditor",
-				{ diffBloomPlacement: "aboveEditor" },
-				{ OMP_ANIMATIONS_DIFF_BLOOM_PLACEMENT: "belowEditor" },
+				{ cacheMeterPlacement: "aboveEditor" },
+				{ OMP_ANIMATIONS_CACHE_METER_PLACEMENT: "belowEditor" },
 			).placement,
 		).toBe("aboveEditor");
 		expect(
 			resolveAnimationAppearance(
-				"diffBloom",
+				"cacheMeter",
 				"aboveEditor",
-				{ diffBloomPlacement: null },
-				{ OMP_ANIMATIONS_DIFF_BLOOM_PLACEMENT: "belowEditor" },
+				{ cacheMeterPlacement: null },
+				{ OMP_ANIMATIONS_CACHE_METER_PLACEMENT: "belowEditor" },
 			).placement,
 		).toBe("belowEditor");
 	});
 
 	it("silently falls back for malformed placement values", () => {
 		expect(
-			resolveAnimationAppearance("diffBloom", "aboveEditor", { diffBloomPlacement: "sideways" }, {}).placement,
+			resolveAnimationAppearance("cacheMeter", "aboveEditor", { cacheMeterPlacement: "sideways" }, {}).placement,
 		).toBe("aboveEditor");
-		expect(resolveAnimationAppearance("diffBloom", "aboveEditor", { diffBloomPlacement: 42 }, {}).placement).toBe(
+		expect(resolveAnimationAppearance("cacheMeter", "aboveEditor", { cacheMeterPlacement: 42 }, {}).placement).toBe(
 			"aboveEditor",
 		);
 	});
 
 	it("resolves curated accent values while default, absent, and junk preserve the built-in palette", () => {
 		expect(
-			resolveAnimationAppearance("diffBloom", "aboveEditor", { diffBloomAccentColor: "success" }, {}).accentColor,
+			resolveAnimationAppearance("cacheMeter", "aboveEditor", { cacheMeterAccentColor: "success" }, {}).accentColor,
 		).toBe("success");
 		expect(
 			resolveAnimationAppearance(
-				"diffBloom",
+				"cacheMeter",
 				"aboveEditor",
 				{},
 				{
-					OMP_ANIMATIONS_DIFF_BLOOM_ACCENT_COLOR: "warning",
+					OMP_ANIMATIONS_CACHE_METER_ACCENT_COLOR: "warning",
 				},
 			).accentColor,
 		).toBe("warning");
 		for (const value of ["default", undefined, "hotpink"]) {
 			expect(
-				resolveAnimationAppearance("diffBloom", "aboveEditor", { diffBloomAccentColor: value }, {}).accentColor,
+				resolveAnimationAppearance("cacheMeter", "aboveEditor", { cacheMeterAccentColor: value }, {}).accentColor,
 			).toBeUndefined();
 		}
 	});
 
 	it("derives manifest and env keys from camel-case ids", () => {
-		expect(animationsEnvKey("sessionBonsai")).toBe("OMP_ANIMATIONS_SESSION_BONSAI");
-		expect(animationsEnvKey("sessionBonsai", "PLACEMENT")).toBe("OMP_ANIMATIONS_SESSION_BONSAI_PLACEMENT");
-		expect(placementKey("goalHorizon")).toBe("goalHorizonPlacement");
-		expect(accentColorKey("goalHorizon")).toBe("goalHorizonAccentColor");
+		expect(animationsEnvKey("toolConstellation")).toBe("OMP_ANIMATIONS_TOOL_CONSTELLATION");
+		expect(animationsEnvKey("toolConstellation", "PLACEMENT")).toBe("OMP_ANIMATIONS_TOOL_CONSTELLATION_PLACEMENT");
+		expect(placementKey("cadenceEqualizer")).toBe("cadenceEqualizerPlacement");
+		expect(accentColorKey("cadenceEqualizer")).toBe("cadenceEqualizerAccentColor");
 	});
 });
 
 describe("resolveAnimationsConfig appearance", () => {
-	it("resolves the exact 8-below/5-above split (the historical 3-below/3-above plus Audit Trail Box, Palimpsest, Session Strata, Rate-Limit Tidepool and Four Hands, all belowEditor, plus Cache Meter and Drift Buoy, aboveEditor)", () => {
+	it("resolves the documented 5-below/3-above split (auditTrailBox, cadenceEqualizer, palimpsest, rateLimitTidepool, toolConstellation belowEditor; breathingBorder, cacheMeter, reflectionRipple aboveEditor)", () => {
 		const config = resolveAnimationsConfig({}, {});
 		for (const entry of ANIMATIONS) {
 			expect(config.appearance[entry.id]).toEqual({
@@ -302,40 +252,35 @@ describe("resolveAnimationsConfig appearance", () => {
 			});
 		}
 		expect(ANIMATIONS.filter(entry => entry.defaultPlacement === "belowEditor").map(entry => entry.id)).toEqual([
-			"sessionBonsai",
-			"agentFleet",
-			"memoryCrystals",
 			"auditTrailBox",
+			"cadenceEqualizer",
 			"palimpsest",
-			"sessionStrata",
 			"rateLimitTidepool",
-			"fourHands",
+			"toolConstellation",
 		]);
 		expect(ANIMATIONS.filter(entry => entry.defaultPlacement === "aboveEditor").map(entry => entry.id)).toEqual([
-			"diffBloom",
-			"goalHorizon",
-			"promptCharge",
+			"breathingBorder",
 			"cacheMeter",
-			"driftBuoy",
+			"reflectionRipple",
 		]);
 	});
 
 	it("keeps stored overrides isolated to their animation", () => {
 		const config = resolveAnimationsConfig(
-			{ promptChargePlacement: "belowEditor", memoryCrystalsAccentColor: "warning" },
+			{ auditTrailBoxPlacement: "aboveEditor", cacheMeterAccentColor: "warning" },
 			{},
 		);
 		for (const entry of ANIMATIONS) {
 			expect(config.appearance[entry.id]).toEqual({
-				placement: entry.id === "promptCharge" ? "belowEditor" : entry.defaultPlacement,
-				accentColor: entry.id === "memoryCrystals" ? "warning" : undefined,
+				placement: entry.id === "auditTrailBox" ? "aboveEditor" : entry.defaultPlacement,
+				accentColor: entry.id === "cacheMeter" ? "warning" : undefined,
 			});
 		}
 	});
 
 	it("threads an env-only override into the registrar config", () => {
-		const config = resolveAnimationsConfig({}, { OMP_ANIMATIONS_GOAL_HORIZON_ACCENT_COLOR: "accent" });
-		expect(config.appearance.goalHorizon.accentColor).toBe("accent");
+		const config = resolveAnimationsConfig({}, { OMP_ANIMATIONS_RATE_LIMIT_TIDEPOOL_ACCENT_COLOR: "accent" });
+		expect(config.appearance.rateLimitTidepool.accentColor).toBe("accent");
 	});
 });
 
@@ -364,226 +309,190 @@ describe("manifest appearance settings", () => {
 });
 
 describe("controller placement threading", () => {
-	it("uses the override for mount and clear calls in every controller", () => {
+	it("uses the override for mount and clear calls in every appearance-capable controller", () => {
 		{
 			const recorder = widgetRecorder();
-			const ctx: DiffBloomContext = {
+			const ctx: AuditTrailBoxContext = {
 				...fullEnv,
 				motionSetting: "full",
 				theme: idTheme,
 				setWidget: recorder.setWidget,
+				setStatus: () => {},
 			};
-			const controller = new DiffBloomController({ scheduler: manualScheduler(), placement: "belowEditor" });
-			controller.onToolResult(editResult("+1|added line"), ctx);
-			controller.dispose(ctx);
-			expectPlacement(recorder.calls, "belowEditor");
-		}
-
-		{
-			const recorder = widgetRecorder();
-			const ctx: SessionBonsaiContext = {
-				...fullEnv,
-				motionSetting: "full",
-				theme: idTheme,
-				sessionManager: fixedSessionSource(oneNodeSource(), "leaf"),
-				setWidget: recorder.setWidget,
-			};
-			const controller = new SessionBonsaiController({
+			const controller = new AuditTrailBoxController({
 				scheduler: manualScheduler(),
 				placement: "aboveEditor",
+				probeSource: { inspect: async () => undefined },
 			});
-			controller.onSessionTree({ type: "session_tree" } as SessionTreeEvent, ctx);
+			controller.noteWrite("a.ts", {}, ctx);
 			controller.dispose(ctx);
 			expectPlacement(recorder.calls, "aboveEditor");
 		}
 
 		{
 			const recorder = widgetRecorder();
-			const ctx: GoalHorizonContext = {
+			const ctx: CacheMeterContext = {
 				...fullEnv,
 				motionSetting: "full",
 				theme: idTheme,
 				setWidget: recorder.setWidget,
 			};
-			const controller = new GoalHorizonController({ scheduler: manualScheduler(), placement: "belowEditor" });
-			controller.onGoalUpdated(goalUpdated(makeGoal()), ctx);
+			const controller = new CacheMeterController({ scheduler: manualScheduler(), placement: "belowEditor" });
+			controller.onMessageEnd(assistantMessageEnd(100), ctx);
 			controller.dispose(ctx);
 			expectPlacement(recorder.calls, "belowEditor");
 		}
 
 		{
 			const recorder = widgetRecorder();
-			const ctx: MemoryCrystalsContext = {
+			const ctx: PalimpsestContext = {
 				...fullEnv,
 				motionSetting: "full",
 				theme: idTheme,
 				setWidget: recorder.setWidget,
 			};
-			const controller = new MemoryCrystalsController({
-				scheduler: manualScheduler(),
-				placement: "aboveEditor",
-			});
-			controller.onAutoCompactionEnd(successfulCompactionEnd(50_000), ctx);
+			const controller = new PalimpsestController({ scheduler: manualScheduler(), placement: "aboveEditor" });
+			// A single touch stays below the glow threshold; the second is what mounts.
+			controller.onToolResult(editResult("a.ts"), ctx);
+			controller.onToolResult(editResult("a.ts"), ctx);
 			controller.dispose(ctx);
 			expectPlacement(recorder.calls, "aboveEditor");
 		}
 
 		{
 			const recorder = widgetRecorder();
-			const ctx: PromptChargeContext = {
-				...fullEnv,
-				motionSetting: "full",
-				theme: idTheme,
-				getEditorText: () => "",
-				setWidget: recorder.setWidget,
-			};
-			const controller = new PromptChargeController({ scheduler: manualScheduler(), placement: "belowEditor" });
-			controller.mount(ctx);
-			controller.dispose(ctx);
-			expectPlacement(recorder.calls, "belowEditor");
-		}
-
-		{
-			const recorder = widgetRecorder();
-			const registry = fakeRegistry();
-			const ctx: AgentFleetContext = {
+			const ctx: TidepoolContext = {
 				...fullEnv,
 				motionSetting: "full",
 				theme: idTheme,
 				setWidget: recorder.setWidget,
 			};
-			const controller = new AgentFleetController({
-				registry,
-				scheduler: manualScheduler(),
-				placement: "aboveEditor",
-			});
-			controller.watch(ctx);
-			registry.emit(registryEvent("registered", "sub-1"));
+			const controller = new RateLimitTidepoolController({ scheduler: manualScheduler(), placement: "aboveEditor" });
+			controller.onAfterProviderResponse(afterProviderResponse(anthropicHeaders), ctx);
+			controller.onMessageStart(assistantMessageStart("anthropic"), ctx);
 			controller.dispose(ctx);
 			expectPlacement(recorder.calls, "aboveEditor");
 		}
 	});
 
-	it("uses the override for an off-tier static mount too", () => {
+	it("uses the override for every off-tier repaint, not just the first", () => {
 		const recorder = widgetRecorder();
-		const ctx: PromptChargeContext = {
+		const ctx: AuditTrailBoxContext = {
 			...fullEnv,
 			motionSetting: "off",
 			theme: idTheme,
-			getEditorText: () => "",
 			setWidget: recorder.setWidget,
+			setStatus: () => {},
 		};
-		const controller = new PromptChargeController({ scheduler: manualScheduler(), placement: "belowEditor" });
-		controller.mount(ctx);
-		controller.onInput(inputEvent("charged prompt"), ctx);
+		const controller = new AuditTrailBoxController({
+			placement: "aboveEditor",
+			probeSource: { inspect: async () => undefined },
+		});
+		controller.noteRead("a.ts", {}, ctx);
+		controller.noteWrite("a.ts", {}, ctx);
 		expect(Array.isArray(recorder.calls[0]?.content)).toBe(true);
-		expect(recorder.calls.every(call => call.options?.placement === "belowEditor")).toBe(true);
+		expect(recorder.calls.every(call => call.options?.placement === "aboveEditor")).toBe(true);
 		controller.dispose(ctx);
-		expectPlacement(recorder.calls, "belowEditor");
+		expectPlacement(recorder.calls, "aboveEditor");
 	});
 });
 
 describe("renderer accent override", () => {
-	it("recolors only Diff Bloom's added slot", () => {
-		const colors = { ...DIFF_BLOOM_COLORS, added: "success" as const };
-		const addedDominant = renderDiffBloomRow(400, 10, taggedTheme, 5, 1, "full", colors);
-		expect(addedDominant).toContain("success:");
-		expect(addedDominant).not.toContain("toolDiffAdded:");
-		const removedDominant = renderDiffBloomRow(400, 10, taggedTheme, 1, 5, "full", colors);
-		expect(removedDominant).toContain("toolDiffRemoved:");
-	});
-
-	it("recolors only Session Bonsai's active path", () => {
-		const state = new BonsaiState();
-		state.update(branchingRawTree(), "active", 0);
-		const rows = renderBonsaiTree(state.snapshot(), 1000, taggedTheme, "subtle", {
-			...BONSAI_COLORS,
-			active: "warning",
+	it("recolors only Audit Trail Box's badge", () => {
+		const ledger = new AuditLedgerState();
+		ledger.noteRead("a.ts", {});
+		const snapshot = ledger.snapshot();
+		const defaultRow = renderAuditMeterRow(snapshot, 40, 0, taggedTheme, "full");
+		expect(defaultRow).toContain("accent:");
+		const overriddenRow = renderAuditMeterRow(snapshot, 40, 0, taggedTheme, "full", {
+			...AUDIT_TRAIL_BOX_COLORS,
+			badge: "success",
 		});
-		expect(rows.some(row => row.includes("warning:"))).toBe(true);
-		expect(rows.some(row => row.includes("dim:"))).toBe(true);
+		expect(overriddenRow).toContain("success:");
+		expect(overriddenRow).not.toContain("accent:");
 	});
 
-	it("recolors only Goal Horizon's milestone flare", () => {
-		const state = new GoalHorizonState();
-		state.applyGoal(makeGoal({ tokensUsed: 0 }), 0);
-		state.applyGoal(makeGoal({ tokensUsed: 300 }), 0);
+	it("recolors only Cache Meter's badge", () => {
+		const state = new CacheMeterState();
+		state.recordUsage(
+			{
+				provider: "anthropic",
+				model: "claude",
+				usage: { input: 0, output: 10, cacheRead: 100, cacheWrite: 0, totalTokens: 100 },
+			},
+			0,
+		);
 		const snapshot = state.snapshot();
-		const row = renderHorizonBar(snapshot.fraction as number, 0, snapshot, taggedTheme, "accent");
-		expect(row).toContain("accent:");
-		expect(row).toContain("syntaxType:");
+		const defaultRow = renderCacheMeterRow(snapshot, 40, 0, taggedTheme, "full");
+		expect(defaultRow).toContain("accent:");
+		const overriddenRow = renderCacheMeterRow(snapshot, 40, 0, taggedTheme, "full", snapshot.warmth, false, {
+			...CACHE_METER_COLORS,
+			badge: "success",
+		});
+		expect(overriddenRow).toContain("success:");
+		expect(overriddenRow).not.toContain("accent:");
 	});
 
-	it("recolors only Memory Crystals' landing sparkle", () => {
-		const state = new MemoryCrystalsState();
-		state.applyCompactionEnd(1000, "small", "context-full", 0);
-		state.applyCompactionEnd(20_000, "medium", "context-full", 0);
-		state.applyCompactionEnd(40_000, "large", "context-full", 0);
-		const colors = { ...MEMORY_CRYSTALS_COLORS, sparkle: "warning" as const };
-		expect(renderMemoryCrystalsRow(state.snapshot(), 0, taggedTheme, "full", colors)).toContain("warning:");
-		const settled = renderMemoryCrystalsRow(state.snapshot(), SPARKLE_DURATION_MS, taggedTheme, "full", colors);
-		expect(settled).toContain("dim:");
-		expect(settled).toContain("syntaxType:");
-		expect(settled).toContain("success:");
+	it("recolors only Palimpsest's ember tier, leaving underline/amber on their fixed tokens", () => {
+		const colors = { ...PALIMPSEST_COLORS, ember: "accent" as const };
+		const snapshot = { rows: [{ path: "a.ts", start: 1, end: 1, overlapCount: 4, lastTouchedTurn: 0 }] };
+		expect(renderPalimpsestRows(snapshot, 0, taggedTheme, "full", colors)).toEqual(["accent:B(a.ts:1)"]);
+		expect(renderPalimpsestRows(snapshot, 0, taggedTheme, "full")).toEqual(["error:B(a.ts:1)"]);
 	});
 
-	it("recolors only Prompt Charge's full bucket", () => {
-		const colors = { ...CHARGE_BUCKET_COLOR, full: "success" as const };
-		const full = new PromptChargeState();
-		full.sampleEditorLength(1000);
-		expect(renderPromptChargeRow(full.snapshot(), 0, taggedTheme, "subtle", colors)).toContain("success:");
-		const building = new PromptChargeState();
-		building.sampleEditorLength(10);
-		expect(renderPromptChargeRow(building.snapshot(), 0, taggedTheme, "subtle", colors)).not.toContain("success:");
-	});
-
-	it("recolors only Agent Fleet's working fireflies", () => {
-		const state = new AgentFleetState();
-		state.applyRegistryEvent(registryEvent("registered", "sub-1"), 0);
-		const row = renderAgentFleetRow(state.snapshot(), 0, taggedTheme, "subtle", {
-			...AGENT_FLEET_COLORS,
-			working: "accent",
-		})[0];
-		expect(row).toContain("accent:");
-		expect(row).not.toContain("statusLineSubagents:");
+	it("recolors only Rate-Limit Tidepool's water, never the fixed sand alarm", () => {
+		const colors = {
+			water: "syntaxString" as const,
+			pebble: "dim" as const,
+			sand: "warning" as const,
+			label: "dim" as const,
+		};
+		const calm = renderTidepoolRow(1, "anthropic", 0, 69, taggedTheme, "subtle", colors);
+		expect(calm).toContain("syntaxString:");
+		const sand = renderTidepoolRow(0, "anthropic", 0, 69, taggedTheme, "subtle", colors);
+		expect(sand).toContain("warning:");
+		expect(sand).not.toContain("syntaxString:");
 	});
 });
 
 describe("default byte-equality", () => {
 	it("matches every explicit built-in palette", () => {
-		expect(renderDiffBloomRow(200, 20, taggedTheme, 5, 2, "full")).toBe(
-			renderDiffBloomRow(200, 20, taggedTheme, 5, 2, "full", DIFF_BLOOM_COLORS),
+		const ledger = new AuditLedgerState();
+		ledger.noteRead("a.ts", {});
+		expect(renderAuditMeterRow(ledger.snapshot(), 40, 0, taggedTheme, "full")).toBe(
+			renderAuditMeterRow(ledger.snapshot(), 40, 0, taggedTheme, "full", AUDIT_TRAIL_BOX_COLORS),
 		);
 
-		const bonsai = new BonsaiState();
-		bonsai.update(branchingRawTree(), "active", 0);
-		expect(renderBonsaiTree(bonsai.snapshot(), 1000, taggedTheme, "subtle")).toEqual(
-			renderBonsaiTree(bonsai.snapshot(), 1000, taggedTheme, "subtle", BONSAI_COLORS),
+		const cache = new CacheMeterState();
+		cache.recordUsage(
+			{
+				provider: "anthropic",
+				model: "claude",
+				usage: { input: 0, output: 10, cacheRead: 100, cacheWrite: 0, totalTokens: 100 },
+			},
+			0,
+		);
+		const cacheSnapshot = cache.snapshot();
+		expect(renderCacheMeterRow(cacheSnapshot, 40, 0, taggedTheme, "full")).toBe(
+			renderCacheMeterRow(
+				cacheSnapshot,
+				40,
+				0,
+				taggedTheme,
+				"full",
+				cacheSnapshot.warmth,
+				false,
+				CACHE_METER_COLORS,
+			),
 		);
 
-		const goal = new GoalHorizonState();
-		goal.applyGoal(makeGoal({ tokensUsed: 0 }), 0);
-		goal.applyGoal(makeGoal({ tokensUsed: 300 }), 0);
-		expect(renderGoalHorizonRow(goal.snapshot(), 0, taggedTheme, "full")).toBe(
-			renderGoalHorizonRow(goal.snapshot(), 0, taggedTheme, "full", GOAL_HORIZON_FLARE_COLOR),
+		const palimpsestSnapshot = { rows: [{ path: "a.ts", start: 1, end: 1, overlapCount: 4, lastTouchedTurn: 0 }] };
+		expect(renderPalimpsestRows(palimpsestSnapshot, 0, taggedTheme, "full")).toEqual(
+			renderPalimpsestRows(palimpsestSnapshot, 0, taggedTheme, "full", PALIMPSEST_COLORS),
 		);
 
-		const crystals = new MemoryCrystalsState();
-		crystals.applyCompactionEnd(10_000, "medium", "context-full", 0);
-		expect(renderMemoryCrystalsRow(crystals.snapshot(), 0, taggedTheme, "full")).toBe(
-			renderMemoryCrystalsRow(crystals.snapshot(), 0, taggedTheme, "full", MEMORY_CRYSTALS_COLORS),
-		);
-
-		const charge = new PromptChargeState();
-		charge.sampleEditorLength(1000);
-		expect(renderPromptChargeRow(charge.snapshot(), 0, taggedTheme, "subtle")).toBe(
-			renderPromptChargeRow(charge.snapshot(), 0, taggedTheme, "subtle", CHARGE_BUCKET_COLOR),
-		);
-
-		const fleet = new AgentFleetState();
-		fleet.applyRegistryEvent(registryEvent("registered", "sub-1"), 0);
-		expect(renderAgentFleetRow(fleet.snapshot(), 0, taggedTheme, "subtle")).toEqual(
-			renderAgentFleetRow(fleet.snapshot(), 0, taggedTheme, "subtle", AGENT_FLEET_COLORS),
+		expect(renderTidepoolRow(0.5, "anthropic", 0, 69, taggedTheme, "full")).toBe(
+			renderTidepoolRow(0.5, "anthropic", 0, 69, taggedTheme, "full", TIDEPOOL_COLORS),
 		);
 	});
 });
@@ -592,29 +501,34 @@ describe("widget accent threading", () => {
 	it("maps each widget accent option into its primary color slot", () => {
 		{
 			const { scheduler, policy, host } = makeWidgetHarness();
-			const state = new DiffBloomState();
-			state.applyBloom("a.ts", 10, 2, 0);
-			const widget = new DiffBloomWidget({
+			const state = new AuditLedgerState();
+			state.noteRead("a.ts", {});
+			const widget = new AuditTrailBoxWidget({
 				tui: noopTui,
 				host,
 				policy,
 				state,
 				theme: taggedTheme,
 				clock: scheduler,
-				onSettled: () => {},
 				accentColor: "success",
 			});
-			scheduler.advance(200);
-			expect(widget.renderFrame(20)[0]).toContain("success:");
+			expect(widget.renderFrame(40)[0]).toContain("success:");
 			widget.dispose();
 			host.dispose();
 		}
 
 		{
 			const { scheduler, policy, host } = makeWidgetHarness();
-			const state = new BonsaiState();
-			state.update(branchingRawTree(), "active", 0);
-			const widget = new SessionBonsaiWidget({
+			const state = new CacheMeterState();
+			state.recordUsage(
+				{
+					provider: "anthropic",
+					model: "claude",
+					usage: { input: 0, output: 10, cacheRead: 100, cacheWrite: 0, totalTokens: 100 },
+				},
+				0,
+			);
+			const widget = new CacheMeterWidget({
 				tui: noopTui,
 				host,
 				policy,
@@ -623,81 +537,51 @@ describe("widget accent threading", () => {
 				clock: scheduler,
 				accentColor: "warning",
 			});
-			expect(widget.renderFrame(80).some(row => row.includes("warning:"))).toBe(true);
+			expect(widget.renderFrame(40)[0]).toContain("warning:");
 			widget.dispose();
 			host.dispose();
 		}
 
 		{
-			const { scheduler, policy, host } = makeWidgetHarness();
-			const state = new GoalHorizonState();
-			state.applyGoal(makeGoal({ tokensUsed: 0 }), 0);
-			state.applyGoal(makeGoal({ tokensUsed: 300 }), 0);
-			const widget = new GoalHorizonWidget({
+			const { policy, host } = makeWidgetHarness();
+			const state = new PalimpsestState();
+			state.applyDegradedTouch("a.ts");
+			state.applyDegradedTouch("a.ts");
+			state.applyDegradedTouch("a.ts");
+			state.applyDegradedTouch("a.ts"); // overlapCount 4 -> ember
+			const widget = new PalimpsestWidget({
 				tui: noopTui,
 				host,
 				policy,
 				state,
 				theme: taggedTheme,
-				clock: scheduler,
 				accentColor: "accent",
 			});
-			expect(widget.renderFrame(80)[0]).toContain("accent:");
+			expect(widget.renderFrame(40)[0]).toContain("accent:");
 			widget.dispose();
 			host.dispose();
 		}
 
 		{
 			const { scheduler, policy, host } = makeWidgetHarness();
-			const state = new MemoryCrystalsState();
-			state.applyCompactionEnd(20_000, "large", "context-full", 0);
-			const widget = new MemoryCrystalsWidget({
+			const state = new RateLimitTidepoolState();
+			state.applySample({
+				provider: "anthropic",
+				family: "anthropic",
+				level: 0.5,
+				resetAtMs: undefined,
+				observedAtMs: 0,
+			});
+			const widget = new TidepoolWidget({
 				tui: noopTui,
 				host,
 				policy,
 				state,
 				theme: taggedTheme,
 				clock: scheduler,
-				accentColor: "warning",
+				accentColor: "syntaxString",
 			});
-			expect(widget.renderFrame(80)[0]).toContain("warning:");
-			widget.dispose();
-			host.dispose();
-		}
-
-		{
-			const { scheduler, policy, host } = makeWidgetHarness();
-			const state = new PromptChargeState();
-			const widget = new PromptChargeWidget({
-				tui: noopTui,
-				host,
-				policy,
-				state,
-				theme: taggedTheme,
-				clock: scheduler,
-				getEditorText: () => "a".repeat(1000),
-				accentColor: "success",
-			});
-			widget.onFrame(0);
-			expect(widget.renderFrame(80)[0]).toContain("success:");
-			widget.dispose();
-			host.dispose();
-		}
-
-		{
-			const { scheduler, policy, host } = makeWidgetHarness();
-			const state = new AgentFleetState();
-			state.applyRegistryEvent(registryEvent("registered", "sub-1"), 0);
-			const widget = new AgentFleetWidget({
-				tui: noopTui,
-				host,
-				policy,
-				state,
-				theme: taggedTheme,
-				clock: scheduler,
-				accentColor: "accent",
-			});
-			expect(widget.renderFrame(80)[0]).toContain("accent:");
+			expect(widget.renderFrame(69)[0]).toContain("syntaxString:");
 			widget.dispose();
 			host.dispose();
 		}
@@ -714,6 +598,7 @@ describe("registrar end-to-end placement", () => {
 				handlers.set(event, handler);
 			},
 			setLabel() {},
+			registerCommand() {},
 			logger: { error() {}, warn() {}, debug() {}, info() {} },
 		} as unknown as ExtensionAPI;
 		return { api, handlers };
@@ -728,7 +613,7 @@ describe("registrar end-to-end placement", () => {
 	it("passes a stored placement override through registrar, factory, and controller", async () => {
 		const { api, handlers } = makeRecordingApi();
 		createAnimationsPlugin({
-			settings: { ...only("promptCharge"), promptChargePlacement: "belowEditor" },
+			settings: { ...only("auditTrailBox"), auditTrailBoxPlacement: "aboveEditor" },
 			env: {},
 			readPluginSettings: async () => ({}),
 		})(api);
@@ -736,16 +621,27 @@ describe("registrar end-to-end placement", () => {
 		const calls: Array<{ key: string; options?: { placement?: string } }> = [];
 		const fakeCtx = {
 			hasUI: true,
+			cwd: process.cwd(),
 			ui: {
 				theme: idTheme,
-				getEditorText: () => "",
 				setWidget: (key: string, _content: unknown, options?: { placement?: string }) =>
 					calls.push({ key, options }),
+				setStatus: () => {},
 			},
 		} as unknown as ExtensionContext;
 
-		await handlers.get("session_start")?.({ type: "session_start" }, fakeCtx);
-		expect(calls[0]?.key).toBe("prompt-charge");
-		expect(calls[0]?.options?.placement).toBe("belowEditor");
+		await handlers.get("tool_result")?.(
+			{
+				type: "tool_result",
+				toolName: "write",
+				toolCallId: "call-1",
+				input: { path: "/tmp/appearance-test-audit-trail-box.ts", content: "x" },
+				content: [{ type: "text", text: "ok" }],
+				isError: false,
+			},
+			fakeCtx,
+		);
+		expect(calls[0]?.key).toBe("audit-trail-box");
+		expect(calls[0]?.options?.placement).toBe("aboveEditor");
 	});
 });

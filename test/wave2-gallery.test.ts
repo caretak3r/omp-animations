@@ -1,62 +1,56 @@
-// Gallery integration test: mounts the 6 shipped ambient-animation controllers together
+// Gallery integration test: mounts this package's ambient-animation controllers together
 // in one shared session (one shared `setWidget` spy), unlike the per-feature test files
-// which each mount only their own controller in isolation. The dropped animations
-// (Plan 007's 6 status-line duplicators plus tool-constellation, todo-meteors,
-// breathing-border, reflection-ripple) keep their source and per-feature test on disk,
-// just unregistered — so they are not exercised here.
+// which each mount only their own controller in isolation. `motionSetting: "off"` forces
+// every controller's `MotionPolicy` to the `off` tier, so every `setWidget` call carries a
+// plain `string[]` instead of an animated-widget factory — no fake `TUI` needed.
 import { describe, expect, test } from "bun:test";
+import type { Rule } from "@oh-my-pi/pi-coding-agent/capability/rule";
 import type {
-	AutoCompactionEndEvent,
+	AfterProviderResponseEvent,
 	EditToolResultEvent,
 	ExtensionWidgetContent,
 	ExtensionWidgetOptions,
-	InputEvent,
-	SessionTreeEvent,
+	MessageEndEvent,
+	MessageStartEvent,
+	ToolCallEvent,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
-import type { GoalUpdatedEvent } from "@oh-my-pi/pi-coding-agent/extensibility/shared-events";
-import type { Goal } from "@oh-my-pi/pi-coding-agent/goals/state";
 import type { Theme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
-import {
-	type AgentFleetContext,
-	AgentFleetController,
-	type AgentFleetRegistrySource,
-} from "../src/agent-fleet/controller";
-import type { AgentFleetRefSource, AgentFleetRegistryEventSource } from "../src/agent-fleet/state";
-import { type DiffBloomContext, DiffBloomController } from "../src/diff-bloom/controller";
-import { type GoalHorizonContext, GoalHorizonController } from "../src/goal-horizon/controller";
-import type { MotionSetting } from "../src/kit";
-import { type MemoryCrystalsContext, MemoryCrystalsController } from "../src/memory-crystals/controller";
-import { type PromptChargeContext, PromptChargeController } from "../src/prompt-charge/controller";
-import {
-	type BonsaiSessionSource,
-	type BonsaiTreeSourceNode,
-	type SessionBonsaiContext,
-	SessionBonsaiController,
-} from "../src/session-bonsai/controller";
+import { type AuditTrailBoxContext, AuditTrailBoxController } from "../src/audit-trail-box/controller";
+import { type BreathingBorderContext, BreathingBorderController } from "../src/breathing-border/controller";
+import { type CacheMeterContext, CacheMeterController } from "../src/cache-meter/controller";
+import { type CadenceEqualizerContext, CadenceEqualizerController } from "../src/cadence-equalizer/controller";
+import { type PalimpsestContext, PalimpsestController } from "../src/palimpsest/controller";
+import { RateLimitTidepoolController, type TidepoolContext } from "../src/rate-limit-tidepool/controller";
+import { type ReflectionRippleContext, ReflectionRippleController } from "../src/reflection-ripple/controller";
+import { type ToolConstellationContext, ToolConstellationController } from "../src/tool-constellation/controller";
 
-// Identity theme so assertions see plain text instead of ANSI escapes. All 6
-// feature theme aliases are structurally `Pick<Theme, "fg">`, so one shared
-// object satisfies every controller's `theme` field.
-const idTheme: Pick<Theme, "fg"> = { fg: (_color, text) => text };
-
-/**
- * Every WIDGET_KEY -> documented placement for the 6 shipped animations
- * (3 aboveEditor, 3 belowEditor). Key order mirrors the registrar's `ANIMATIONS`
- * mount order, which the dispose-cascade test asserts against.
- */
-const EXPECTED_PLACEMENT: Record<string, "aboveEditor" | "belowEditor"> = {
-	"session-bonsai": "belowEditor",
-	"agent-fleet": "belowEditor",
-	"memory-crystals": "belowEditor",
-	"diff-bloom": "aboveEditor",
-	"goal-horizon": "aboveEditor",
-	"prompt-charge": "aboveEditor",
+// Identity theme so assertions see plain text instead of ANSI escapes. Palimpsest's theme
+// additionally needs `underline`/`bold`; every other feature's theme type is a subset of
+// this, so one shared object satisfies every controller's `theme` field.
+const idTheme: Pick<Theme, "fg" | "underline" | "bold"> = {
+	fg: (_color, text) => text,
+	underline: text => text,
+	bold: text => text,
 };
 
-/** sdk.ts's `createAgentSession` inline-extension registration order (see `sdk.ts` around line 1844-1858). */
-const REGISTRATION_ORDER = Object.keys(EXPECTED_PLACEMENT).sort(
-	(a, b) => Object.keys(EXPECTED_PLACEMENT).indexOf(a) - Object.keys(EXPECTED_PLACEMENT).indexOf(b),
-);
+/**
+ * Every WIDGET_KEY -> documented placement, in the registrar's `ANIMATIONS` mount order
+ * (`src/registrar.ts`) — the dispose-cascade test asserts against this same order.
+ */
+const EXPECTED_PLACEMENT: Record<string, "aboveEditor" | "belowEditor"> = {
+	"audit-trail-box": "belowEditor",
+	"breathing-border": "aboveEditor",
+	"cache-meter": "aboveEditor",
+	"cadence-equalizer": "belowEditor",
+	palimpsest: "belowEditor",
+	"rate-limit-tidepool": "belowEditor",
+	"reflection-ripple": "aboveEditor",
+	"tool-constellation": "belowEditor",
+};
+
+const REGISTRATION_ORDER = Object.keys(EXPECTED_PLACEMENT);
+const ABOVE_COUNT = Object.values(EXPECTED_PLACEMENT).filter(p => p === "aboveEditor").length;
+const BELOW_COUNT = Object.values(EXPECTED_PLACEMENT).filter(p => p === "belowEditor").length;
 
 interface CapturedWidgetCall {
 	feature: string;
@@ -65,58 +59,78 @@ interface CapturedWidgetCall {
 	content: ExtensionWidgetContent;
 }
 
-/** root -A- B(branch) -> C(leaf), -> D -E- (leaf), in the real `{ entry: { id }, children }` shape. */
-function branchingSourceTree(): BonsaiTreeSourceNode[] {
-	return [
-		{
-			entry: { id: "A" },
-			children: [
-				{
-					entry: { id: "B" },
-					children: [
-						{ entry: { id: "C" }, children: [] },
-						{ entry: { id: "D" }, children: [{ entry: { id: "E" }, children: [] }] },
-					],
-				},
-			],
-		},
-	];
-}
-
-function fixedSessionSource(roots: BonsaiTreeSourceNode[], leafId: string | null): BonsaiSessionSource {
-	return { getTree: () => roots, getLeafId: () => leafId };
-}
-
-function fakeRegistry(): AgentFleetRegistrySource & { emit(evt: AgentFleetRegistryEventSource): void } {
-	const listeners = new Set<(evt: AgentFleetRegistryEventSource) => void>();
+function rule(name: string): Rule {
 	return {
-		onChange(listener) {
-			listeners.add(listener);
-			return () => listeners.delete(listener);
-		},
-		emit(evt) {
-			for (const listener of [...listeners]) listener(evt);
-		},
+		name,
+		path: `/rules/${name}.md`,
+		content: "",
+		_source: { provider: "test", providerName: "Test", path: `/rules/${name}.md`, level: "project" },
 	};
 }
 
-function ref(id: string, overrides: Partial<AgentFleetRefSource> = {}): AgentFleetRefSource {
-	return { id, displayName: id, kind: "sub", status: "running", ...overrides };
+function toolCallEvent(toolName: string, toolCallId = "1"): ToolCallEvent {
+	return { type: "tool_call", toolCallId, toolName, input: {} } as ToolCallEvent;
 }
 
-function successfulCompactionEnd(tokensBefore: number): AutoCompactionEndEvent {
+function assistantMessage(output: number): MessageStartEvent["message"] {
 	return {
-		type: "auto_compaction_end",
-		action: "context-full",
-		aborted: false,
-		willRetry: false,
-		result: { summary: "compacted the session", tokensBefore, firstKeptEntryId: "entry-1" },
-	} as AutoCompactionEndEvent;
+		role: "assistant",
+		content: [],
+		api: "anthropic-messages",
+		provider: "test",
+		model: "test-model",
+		usage: { output, input: 0, cacheRead: 0, cacheWrite: 0, totalTokens: output },
+		stopReason: "stop",
+		timestamp: 0,
+	} as unknown as MessageStartEvent["message"];
 }
 
-const sampleDiff = ["+1|line one", "+2|line two", "-1|old line"].join("\n");
+function assistantMessageEnd(provider: string, model: string, cacheRead: number): MessageEndEvent {
+	return {
+		type: "message_end",
+		message: {
+			role: "assistant",
+			content: [],
+			api: "anthropic-messages",
+			provider,
+			model,
+			usage: { input: 0, output: 10, cacheRead, cacheWrite: 0, totalTokens: 10 },
+			stopReason: "stop",
+			timestamp: 0,
+		},
+	} as unknown as MessageEndEvent;
+}
 
-function editResult(diff: string, path = "src/foo.ts"): EditToolResultEvent {
+const anthropicHeaders = {
+	"anthropic-ratelimit-requests-limit": "50",
+	"anthropic-ratelimit-requests-remaining": "45",
+	"anthropic-ratelimit-tokens-limit": "40000",
+	"anthropic-ratelimit-tokens-remaining": "12000",
+};
+
+function afterProviderResponse(headers: Readonly<Record<string, string>>): AfterProviderResponseEvent {
+	return { type: "after_provider_response", status: 200, headers: headers as Record<string, string> };
+}
+
+function assistantMessageStart(provider: string): MessageStartEvent {
+	return {
+		type: "message_start",
+		message: {
+			role: "assistant",
+			content: [],
+			api: "anthropic-messages",
+			provider,
+			model: "model-x",
+			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 },
+			stopReason: "stop",
+			timestamp: 0,
+		},
+	} as unknown as MessageStartEvent;
+}
+
+const sampleDiff = ["@@ -10,3 +10,3 @@", "+line ten", "+line eleven", "+line twelve"].join("\n");
+
+function editResult(path: string): EditToolResultEvent {
 	return {
 		type: "tool_result",
 		toolName: "edit",
@@ -124,26 +138,8 @@ function editResult(diff: string, path = "src/foo.ts"): EditToolResultEvent {
 		input: { path },
 		content: [{ type: "text", text: "ok" }],
 		isError: false,
-		details: { diff, path },
+		details: { diff: sampleDiff, path },
 	};
-}
-
-function makeGoal(overrides: Partial<Goal> = {}): Goal {
-	return {
-		id: "goal-1",
-		objective: "ship the thing",
-		status: "active",
-		tokenBudget: 1000,
-		tokensUsed: 400,
-		timeUsedSeconds: 0,
-		createdAt: 0,
-		updatedAt: 0,
-		...overrides,
-	};
-}
-
-function inputEvent(text: string): InputEvent {
-	return { type: "input", text, source: "interactive" };
 }
 
 interface MountedGallery {
@@ -152,12 +148,10 @@ interface MountedGallery {
 }
 
 /**
- * Constructs the 6 shipped controllers, each wired to its own feature-shaped fake
- * context, but all sharing ONE `setWidget` spy — then drives each through its
- * representative "active" event (mirroring the driving call each feature's own test
- * file already uses). `motionSetting: "off"` forces every controller's `MotionPolicy`
- * to the `off` tier (see `resolveMotionTier`), so every `setWidget` call carries a plain
- * `string[]` instead of an animated-widget factory — no fake `TUI` needed.
+ * Constructs one controller per shipped animation, each wired to its own feature-shaped
+ * fake context, but all sharing ONE `setWidget` spy — then drives each through its
+ * representative "active" event (mirroring the driving call each feature's own test file
+ * already uses).
  */
 function mountGallery(): MountedGallery {
 	const calls: CapturedWidgetCall[] = [];
@@ -166,7 +160,7 @@ function mountGallery(): MountedGallery {
 		hasUI: true,
 		isTTY: true,
 		env: {} as Record<string, string | undefined>,
-		motionSetting: "off" as MotionSetting,
+		motionSetting: "off" as const,
 		theme: idTheme,
 	};
 	function widget(feature: string) {
@@ -176,52 +170,67 @@ function mountGallery(): MountedGallery {
 	}
 
 	{
-		const ctx: SessionBonsaiContext = {
+		const ctx: AuditTrailBoxContext = {
 			...base,
-			sessionManager: fixedSessionSource(branchingSourceTree(), "C"),
-			setWidget: widget("session-bonsai"),
+			setWidget: widget("audit-trail-box"),
+			setStatus: () => {},
 		};
-		const controller = new SessionBonsaiController();
-		controller.onSessionTree({ type: "session_tree", newLeafId: "C", oldLeafId: null } as SessionTreeEvent, ctx);
-		disposers.push({ feature: "session-bonsai", dispose: () => controller.dispose(ctx) });
+		const controller = new AuditTrailBoxController();
+		controller.noteRead("a.ts", {}, ctx);
+		disposers.push({ feature: "audit-trail-box", dispose: () => controller.dispose(ctx) });
 	}
 
 	{
-		const ctx: AgentFleetContext = { ...base, setWidget: widget("agent-fleet") };
-		const registry = fakeRegistry();
-		const controller = new AgentFleetController({ registry });
-		controller.watch(ctx);
-		registry.emit({ type: "registered", ref: ref("sub-1") });
-		disposers.push({ feature: "agent-fleet", dispose: () => controller.dispose(ctx) });
+		const ctx: BreathingBorderContext = { ...base, setWidget: widget("breathing-border") };
+		const controller = new BreathingBorderController();
+		controller.onAgentStart({ type: "agent_start" }, ctx);
+		disposers.push({ feature: "breathing-border", dispose: () => controller.dispose(ctx) });
 	}
 
 	{
-		const ctx: MemoryCrystalsContext = { ...base, setWidget: widget("memory-crystals") };
-		const controller = new MemoryCrystalsController();
-		controller.onAutoCompactionEnd(successfulCompactionEnd(20_000), ctx);
-		disposers.push({ feature: "memory-crystals", dispose: () => controller.dispose(ctx) });
+		const ctx: CacheMeterContext = { ...base, setWidget: widget("cache-meter") };
+		const controller = new CacheMeterController();
+		controller.onMessageEnd(assistantMessageEnd("anthropic", "claude", 100), ctx);
+		disposers.push({ feature: "cache-meter", dispose: () => controller.dispose(ctx) });
 	}
 
 	{
-		const ctx: DiffBloomContext = { ...base, setWidget: widget("diff-bloom") };
-		const controller = new DiffBloomController();
-		controller.onToolResult(editResult(sampleDiff), ctx);
-		disposers.push({ feature: "diff-bloom", dispose: () => controller.dispose(ctx) });
+		const ctx: CadenceEqualizerContext = { ...base, setWidget: widget("cadence-equalizer") };
+		const controller = new CadenceEqualizerController();
+		controller.onMessageStart({ type: "message_start", message: assistantMessage(0) }, ctx);
+		disposers.push({ feature: "cadence-equalizer", dispose: () => controller.dispose(ctx) });
 	}
 
 	{
-		const ctx: GoalHorizonContext = { ...base, setWidget: widget("goal-horizon") };
-		const controller = new GoalHorizonController();
-		controller.onGoalUpdated({ type: "goal_updated", goal: makeGoal() } as GoalUpdatedEvent, ctx);
-		disposers.push({ feature: "goal-horizon", dispose: () => controller.dispose(ctx) });
+		const ctx: PalimpsestContext = { ...base, setWidget: widget("palimpsest") };
+		const controller = new PalimpsestController();
+		// A single touch stays below the glow threshold — two touches to the same span
+		// are what actually mount the widget (`GLOW_THRESHOLD`, see palimpsest/spans.ts).
+		controller.onToolResult(editResult("a.ts"), ctx);
+		controller.onToolResult(editResult("a.ts"), ctx);
+		disposers.push({ feature: "palimpsest", dispose: () => controller.dispose(ctx) });
 	}
 
 	{
-		const ctx: PromptChargeContext = { ...base, getEditorText: () => "", setWidget: widget("prompt-charge") };
-		const controller = new PromptChargeController();
-		controller.mount(ctx);
-		controller.onInput(inputEvent("x".repeat(80)), ctx);
-		disposers.push({ feature: "prompt-charge", dispose: () => controller.dispose(ctx) });
+		const ctx: TidepoolContext = { ...base, setWidget: widget("rate-limit-tidepool") };
+		const controller = new RateLimitTidepoolController();
+		controller.onAfterProviderResponse(afterProviderResponse(anthropicHeaders), ctx);
+		controller.onMessageStart(assistantMessageStart("anthropic"), ctx);
+		disposers.push({ feature: "rate-limit-tidepool", dispose: () => controller.dispose(ctx) });
+	}
+
+	{
+		const ctx: ReflectionRippleContext = { ...base, setWidget: widget("reflection-ripple") };
+		const controller = new ReflectionRippleController();
+		controller.onTtsrTriggered({ type: "ttsr_triggered", rules: [rule("no-console-log")] }, ctx);
+		disposers.push({ feature: "reflection-ripple", dispose: () => controller.dispose(ctx) });
+	}
+
+	{
+		const ctx: ToolConstellationContext = { ...base, setWidget: widget("tool-constellation") };
+		const controller = new ToolConstellationController();
+		controller.onToolCall(toolCallEvent("bash"), ctx);
+		disposers.push({ feature: "tool-constellation", dispose: () => controller.dispose(ctx) });
 	}
 
 	return { calls, disposers };
@@ -234,7 +243,7 @@ function lastCallPerKey(calls: readonly CapturedWidgetCall[]): CapturedWidgetCal
 	return [...byKey.values()];
 }
 
-/** Formats the 6 captured widgets into a labeled, human-readable "gallery" of the shipped suite. */
+/** Formats the captured widgets into a labeled, human-readable "gallery" of the shipped suite. */
 function renderGallery(calls: readonly CapturedWidgetCall[]): string {
 	const section = (label: string, placement: "aboveEditor" | "belowEditor"): string[] => {
 		const lines = [`${label}:`];
@@ -251,17 +260,17 @@ function renderGallery(calls: readonly CapturedWidgetCall[]): string {
 }
 
 describe("wave2 gallery integration", () => {
-	test("mounting all 6 shipped controllers together produces one non-idle setWidget call each, matching the documented 3/3 placement split", () => {
+	test("mounting every shipped controller together produces one non-idle setWidget call each, matching the documented aboveEditor/belowEditor split", () => {
 		const { calls } = mountGallery();
 		const withContent = lastCallPerKey(calls).filter(call => call.content !== undefined);
 
-		expect(withContent).toHaveLength(6);
+		expect(withContent).toHaveLength(Object.keys(EXPECTED_PLACEMENT).length);
 		expect(new Set(withContent.map(call => call.key))).toEqual(new Set(Object.keys(EXPECTED_PLACEMENT)));
 
 		const aboveCount = withContent.filter(call => call.options?.placement === "aboveEditor").length;
 		const belowCount = withContent.filter(call => call.options?.placement === "belowEditor").length;
-		expect(aboveCount).toBe(3);
-		expect(belowCount).toBe(3);
+		expect(aboveCount).toBe(ABOVE_COUNT);
+		expect(belowCount).toBe(BELOW_COUNT);
 
 		for (const call of withContent) {
 			expect(call.options?.placement).toBe(EXPECTED_PLACEMENT[call.key]);
@@ -275,7 +284,7 @@ describe("wave2 gallery integration", () => {
 		}
 	});
 
-	test("renderGallery composes a labeled above/below gallery snapshot of all 6 widgets", () => {
+	test("renderGallery composes a labeled above/below gallery snapshot of every widget", () => {
 		const { calls } = mountGallery();
 		const withContent = lastCallPerKey(calls).filter(call => call.content !== undefined);
 		const gallery = renderGallery(withContent);
@@ -288,11 +297,11 @@ describe("wave2 gallery integration", () => {
 
 		const [aboveSection, belowSection] = gallery.split("Below editor");
 		const countBlocks = (section: string) => (section.match(/^ {2}\S/gm) ?? []).length;
-		expect(countBlocks(aboveSection)).toBe(3);
-		expect(countBlocks(belowSection)).toBe(3);
+		expect(countBlocks(aboveSection)).toBe(ABOVE_COUNT);
+		expect(countBlocks(belowSection)).toBe(BELOW_COUNT);
 	});
 
-	test("disposing all 6 controllers in the registrar's mount order never throws (full session_shutdown cascade)", () => {
+	test("disposing every controller in the registrar's mount order never throws (full session_shutdown cascade)", () => {
 		const { disposers } = mountGallery();
 		expect(disposers.map(d => d.feature)).toEqual(REGISTRATION_ORDER);
 		for (const { dispose } of disposers) {
