@@ -1,0 +1,18 @@
+telemetry = false
+
+[install]
+linker = "hoisted"
+exact = true
+saveTextLockfile = true
+
+[loader]
+".md" = "text"
+".py" = "text"
+".lark" = "text"
+
+[test]
+# bun test does NOT honor .gitignore; keep it from walking into vendored/build dirs.
+pathIgnorePatterns = ["**/node_modules/**", "**/.git/**", "**/dist/**"]
+
+[run]
+bun = true

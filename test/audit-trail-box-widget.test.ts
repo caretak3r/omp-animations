@@ -1,0 +1,476 @@
+import { describe, expect, it } from "bun:test";
+import { AuditLedgerState, COLD_AFTER_TURNS, POISON_STREAK_TICKS } from "../src/audit-trail-box/state";
+import {
+	AUDIT_TRAIL_BOX_COLORS,
+	type AuditTrailBoxTheme,
+	AuditTrailBoxWidget,
+	alarmPulse,
+	BADGE_GLYPH,
+	BADGE_PULSE_GLYPH,
+	elidePath,
+	PULSE_PERIOD_MS,
+	renderAuditMeterRow,
+	renderAuditOffText,
+	renderAuditPanel,
+	STATUS_GLYPHS,
+	topRiskStatus,
+} from "../src/audit-trail-box/widget";
+import { AnimationHost, type FrameScheduler, MotionPolicy } from "../src/kit";
+
+// Identity theme so assertions see plain text instead of ANSI escapes.
+const idTheme: AuditTrailBoxTheme = { fg: (_color, text) => text };
+// Color-tagging theme for tests that need to assert which color the renderer chose.
+const taggedTheme: AuditTrailBoxTheme = { fg: (color, text) => `${color}:${text}` };
+
+const WIDE = 200;
+
+/** Manual frame scheduler: drives host ticks deterministically. */
+function manualScheduler(): FrameScheduler & { advance(ms: number): void; readonly running: boolean } {
+	let current = 0;
+	let ticker: (() => void) | undefined;
+	return {
+		now: () => current,
+		start(_intervalMs, tick) {
+			ticker = tick;
+			return () => {
+				ticker = undefined;
+			};
+		},
+		advance(ms) {
+			current += ms;
+			ticker?.();
+		},
+		get running() {
+			return ticker !== undefined;
+		},
+	};
+}
+
+const noopTui = { requestComponentRender: () => {} };
+const fullEnv = { hasUI: true, isTTY: true, env: {} as Record<string, string | undefined> };
+
+/** Drive a path to POISONED: read it, then two probe ticks of divergence past the hysteresis gate. */
+function poison(state: AuditLedgerState, path: string, nowMs = 100_000): void {
+	state.noteRead(path, { hash: "held", content: "held\n" });
+	for (let tick = 0; tick < POISON_STREAK_TICKS; tick++) {
+		state.noteProbe([{ path, hash: "moved", content: "moved\n", reachable: true }], nowMs + tick);
+	}
+}
+
+/** Age a path into COLD by advancing past the eviction threshold. */
+function chill(state: AuditLedgerState): void {
+	for (let turn = 0; turn < COLD_AFTER_TURNS; turn++) state.noteTurn();
+}
+
+describe("audit trail box pulse math (pure)", () => {
+	it("alarmPulse is bright on the first half of the period and dark on the second", () => {
+		expect(alarmPulse(0)).toBe(true);
+		expect(alarmPulse(PULSE_PERIOD_MS / 4)).toBe(true);
+		expect(alarmPulse(PULSE_PERIOD_MS / 2)).toBe(false);
+		expect(alarmPulse(PULSE_PERIOD_MS - 1)).toBe(false);
+	});
+
+	it("alarmPulse wraps across periods and survives negative phases", () => {
+		expect(alarmPulse(PULSE_PERIOD_MS)).toBe(true);
+		expect(alarmPulse(PULSE_PERIOD_MS * 3)).toBe(true);
+		expect(alarmPulse(-1)).toBe(false);
+		expect(alarmPulse(-PULSE_PERIOD_MS)).toBe(true);
+	});
+
+	it("topRiskStatus reports the most urgent non-empty status, and undefined when nothing is tracked", () => {
+		const state = new AuditLedgerState();
+		expect(topRiskStatus(state.snapshot())).toBeUndefined();
+
+		state.noteRead("a.ts", { hash: "h" });
+		expect(topRiskStatus(state.snapshot())).toBe("fresh");
+
+		state.noteWrite("b.ts", 0, { hash: "h" });
+		expect(topRiskStatus(state.snapshot())).toBe("dirty");
+
+		poison(state, "c.ts");
+		expect(topRiskStatus(state.snapshot())).toBe("poisoned");
+	});
+
+	it("elidePath keeps the identifying tail and marks the cut", () => {
+		expect(elidePath("src/a.ts", 20)).toBe("src/a.ts");
+		expect(elidePath("src/audit-trail-box/state.ts", 12)).toBe("…ox/state.ts");
+		expect(elidePath("src/audit-trail-box/state.ts", 12).length).toBe(12);
+	});
+
+	it("elidePath degrades to a bare tail slice at absurd budgets instead of throwing", () => {
+		expect(elidePath("abcdef", 1)).toBe("f");
+		expect(elidePath("abcdef", 0)).toBe("f");
+	});
+});
+
+describe("audit trail box meter row (compact surface)", () => {
+	it("renders badge, per-status counts and the economics tail at full width", () => {
+		const state = new AuditLedgerState();
+		state.noteRead("a.ts", { hash: "h1" });
+		state.noteRead("b.ts", { hash: "h2" });
+		state.noteWrite("b.ts", 0, { hash: "h3" });
+
+		const row = renderAuditMeterRow(state.snapshot(), WIDE, 0, idTheme, "subtle");
+		expect(row.startsWith(BADGE_GLYPH)).toBe(true);
+		expect(row).toContain(`1${STATUS_GLYPHS.dirty}`);
+		expect(row).toContain(`1${STATUS_GLYPHS.fresh}`);
+		expect(row).toContain("r/w 2/1");
+		expect(row).toContain("×1.0");
+		expect(row).toContain("↻0%");
+	});
+
+	it("orders the count cells highest-risk first", () => {
+		const state = new AuditLedgerState();
+		state.noteRead("fresh.ts", { hash: "h" });
+		state.noteWrite("dirty.ts", 0, { hash: "h" });
+		poison(state, "bad.ts");
+
+		const row = renderAuditMeterRow(state.snapshot(), WIDE, 0, idTheme, "subtle");
+		const poisonedAt = row.indexOf(STATUS_GLYPHS.poisoned);
+		const dirtyAt = row.indexOf(STATUS_GLYPHS.dirty);
+		const freshAt = row.indexOf(STATUS_GLYPHS.fresh);
+		expect(poisonedAt).toBeGreaterThan(-1);
+		expect(poisonedAt).toBeLessThan(dirtyAt);
+		expect(dirtyAt).toBeLessThan(freshAt);
+	});
+
+	it("omits statuses with no paths rather than printing zeros", () => {
+		const state = new AuditLedgerState();
+		state.noteRead("a.ts", { hash: "h" });
+		const counts = (renderAuditMeterRow(state.snapshot(), WIDE, 0, idTheme, "subtle").split(" r/w ")[0] ?? "").trim();
+		expect(counts).toBe(`${BADGE_GLYPH} 1${STATUS_GLYPHS.fresh}`);
+		expect(counts).not.toContain(STATUS_GLYPHS.poisoned);
+		expect(counts).not.toContain(STATUS_GLYPHS.cold);
+		expect(counts).not.toContain("0");
+	});
+
+	it("drops the economics tail before it drops counts", () => {
+		const state = new AuditLedgerState();
+		state.noteRead("a.ts", { hash: "h" });
+		state.noteWrite("b.ts", 0, { hash: "h" });
+
+		const full = renderAuditMeterRow(state.snapshot(), WIDE, 0, idTheme, "subtle");
+		const medium = renderAuditMeterRow(state.snapshot(), full.length - 1, 0, idTheme, "subtle");
+		expect(medium).not.toContain("r/w");
+		expect(medium).toContain(`1${STATUS_GLYPHS.dirty}`);
+		expect(medium).toContain(`1${STATUS_GLYPHS.fresh}`);
+	});
+
+	it("degrades to a single count — the highest-risk one — under width pressure", () => {
+		const state = new AuditLedgerState();
+		state.noteRead("a.ts", { hash: "h" });
+		state.noteRead("b.ts", { hash: "h" });
+		state.noteWrite("c.ts", 0, { hash: "h" });
+		poison(state, "d.ts");
+
+		const single = renderAuditMeterRow(state.snapshot(), 4, 0, idTheme, "subtle");
+		expect(single).toBe(`${BADGE_GLYPH} 1${STATUS_GLYPHS.poisoned}`);
+		expect(single).not.toContain(STATUS_GLYPHS.fresh);
+		expect(single.length).toBeLessThanOrEqual(4);
+	});
+
+	it("falls back to the bare badge when even one count does not fit", () => {
+		const state = new AuditLedgerState();
+		state.noteRead("a.ts", { hash: "h" });
+		expect(renderAuditMeterRow(state.snapshot(), 1, 0, idTheme, "subtle")).toBe(BADGE_GLYPH);
+	});
+
+	it("renders nothing at all at zero or negative width", () => {
+		const state = new AuditLedgerState();
+		state.noteRead("a.ts", { hash: "h" });
+		expect(renderAuditMeterRow(state.snapshot(), 0, 0, idTheme, "subtle")).toBe("");
+		expect(renderAuditMeterRow(state.snapshot(), -10, 0, idTheme, "subtle")).toBe("");
+	});
+
+	it("says it is idle before anything is tracked, and shrinks to the badge", () => {
+		const state = new AuditLedgerState();
+		expect(renderAuditMeterRow(state.snapshot(), WIDE, 0, idTheme, "subtle")).toBe(`${BADGE_GLYPH} nothing tracked`);
+		expect(renderAuditMeterRow(state.snapshot(), 3, 0, idTheme, "subtle")).toBe(BADGE_GLYPH);
+	});
+
+	it("every degradation tier stays inside its budget", () => {
+		const state = new AuditLedgerState();
+		state.noteRead("a.ts", { hash: "h" });
+		state.noteWrite("b.ts", 0, { hash: "h" });
+		poison(state, "c.ts");
+		for (let width = 1; width <= 80; width++) {
+			expect(renderAuditMeterRow(state.snapshot(), width, 0, idTheme, "subtle").length).toBeLessThanOrEqual(width);
+		}
+	});
+
+	it("colors the badge with the alarm token while a path is poisoned, and the accent token otherwise", () => {
+		const clean = new AuditLedgerState();
+		clean.noteRead("a.ts", { hash: "h" });
+		expect(renderAuditMeterRow(clean.snapshot(), WIDE, 0, taggedTheme, "subtle")).toContain(
+			`${AUDIT_TRAIL_BOX_COLORS.badge}:${BADGE_GLYPH}`,
+		);
+
+		const bad = new AuditLedgerState();
+		poison(bad, "a.ts");
+		expect(renderAuditMeterRow(bad.snapshot(), WIDE, 0, taggedTheme, "subtle")).toContain(
+			`${AUDIT_TRAIL_BOX_COLORS.poisoned}:${BADGE_GLYPH}`,
+		);
+	});
+
+	it("pulses the badge in the full tier only while a path is poisoned", () => {
+		const bad = new AuditLedgerState();
+		poison(bad, "a.ts");
+		const bright = renderAuditMeterRow(bad.snapshot(), WIDE, 0, idTheme, "full");
+		const dark = renderAuditMeterRow(bad.snapshot(), WIDE, PULSE_PERIOD_MS / 2, idTheme, "full");
+		expect(bright.startsWith(BADGE_GLYPH)).toBe(true);
+		expect(dark.startsWith(BADGE_PULSE_GLYPH)).toBe(true);
+	});
+
+	it("never pulses in the subtle tier, nor with a clean working set", () => {
+		const bad = new AuditLedgerState();
+		poison(bad, "a.ts");
+		expect(
+			renderAuditMeterRow(bad.snapshot(), WIDE, PULSE_PERIOD_MS / 2, idTheme, "subtle").startsWith(BADGE_GLYPH),
+		).toBe(true);
+
+		const clean = new AuditLedgerState();
+		clean.noteRead("a.ts", { hash: "h" });
+		expect(
+			renderAuditMeterRow(clean.snapshot(), WIDE, PULSE_PERIOD_MS / 2, idTheme, "full").startsWith(BADGE_GLYPH),
+		).toBe(true);
+	});
+
+	it("honors an accent override on the badge without recoloring the risk ramp", () => {
+		const state = new AuditLedgerState();
+		state.noteRead("a.ts", { hash: "h" });
+		const colors = { ...AUDIT_TRAIL_BOX_COLORS, badge: "syntaxString" as const };
+		const row = renderAuditMeterRow(state.snapshot(), WIDE, 0, taggedTheme, "subtle", colors);
+		expect(row).toContain(`syntaxString:${BADGE_GLYPH}`);
+		expect(row).toContain(`${AUDIT_TRAIL_BOX_COLORS.fresh}:1${STATUS_GLYPHS.fresh}`);
+	});
+
+	it("reports write amplification and the redundant-read ratio from the ledger", () => {
+		const state = new AuditLedgerState();
+		state.noteRead("a.ts", { hash: "h" });
+		state.noteRead("a.ts", { hash: "h" });
+		state.noteWrite("a.ts", 0, { hash: "h" });
+		state.noteWrite("a.ts", 0, { hash: "h" });
+
+		const row = renderAuditMeterRow(state.snapshot(), WIDE, 0, idTheme, "subtle");
+		expect(row).toContain("r/w 2/2");
+		expect(row).toContain("×2.0");
+		expect(row).toContain("↻50%");
+	});
+});
+
+describe("audit trail box panel (slash-command surface)", () => {
+	it("heads with the turn and tracked-path count, and says so when empty", () => {
+		const state = new AuditLedgerState();
+		const lines = renderAuditPanel(state.snapshot(), idTheme);
+		expect(lines[0]).toContain("audit trail box");
+		expect(lines[0]).toContain("turn 0");
+		expect(lines[0]).toContain("0 paths");
+		expect(lines[1]).toContain("nothing tracked");
+	});
+
+	it("singularizes the heading for exactly one path", () => {
+		const state = new AuditLedgerState();
+		state.noteRead("a.ts", { hash: "h" });
+		expect(renderAuditPanel(state.snapshot(), idTheme)[0]).toEndWith("1 path");
+	});
+
+	it("sorts rows by risk: poisoned, then dirty, then redundant, then cold, then fresh", () => {
+		const state = new AuditLedgerState();
+		state.noteRead("z-fresh.ts", { hash: "h" });
+		state.noteRead("y-redundant.ts", { hash: "h" });
+		state.noteRead("y-redundant.ts", { hash: "h" });
+		chill(state);
+		state.noteRead("x-cold.ts", { hash: "h" });
+		chill(state);
+		state.noteWrite("w-dirty.ts", 0, { hash: "h" });
+		poison(state, "v-poisoned.ts");
+
+		const rows = renderAuditPanel(state.snapshot(), idTheme).slice(1, -1);
+		const order = rows.map(row => row.trim().charAt(0));
+		expect(order[0]).toBe(STATUS_GLYPHS.poisoned);
+		expect(order[1]).toBe(STATUS_GLYPHS.dirty);
+		expect(order).toContain(STATUS_GLYPHS.cold);
+	});
+
+	it("caps rows and reports the remainder", () => {
+		const state = new AuditLedgerState();
+		for (let index = 0; index < 9; index++) state.noteRead(`file-${index}.ts`, { hash: "h" });
+
+		const lines = renderAuditPanel(state.snapshot(), idTheme, { maxRows: 3 });
+		expect(lines.filter(line => line.includes(STATUS_GLYPHS.fresh))).toHaveLength(3);
+		expect(lines.some(line => line.includes("⋯ +6 more"))).toBe(true);
+	});
+
+	it("omits the remainder note when everything fits", () => {
+		const state = new AuditLedgerState();
+		state.noteRead("a.ts", { hash: "h" });
+		expect(renderAuditPanel(state.snapshot(), idTheme, { maxRows: 3 }).some(line => line.includes("more"))).toBe(
+			false,
+		);
+	});
+
+	it("shows each row's severity verdict and the families that fired, in canonical order", () => {
+		const state = new AuditLedgerState();
+		poison(state, "a.ts");
+		state.noteRecovery(100_000);
+
+		const row = renderAuditPanel(state.snapshot(), idTheme).find(line => line.includes("a.ts"));
+		expect(row).toBeDefined();
+		expect(row).toContain("alarm");
+		expect(row).toContain("divergence+recovery");
+	});
+
+	it("marks a path with no firing families with an em dash rather than an empty column", () => {
+		const state = new AuditLedgerState();
+		state.noteRead("a.ts", { hash: "h" });
+		const row = renderAuditPanel(state.snapshot(), idTheme).find(line => line.includes("a.ts"));
+		expect(row).toContain("none");
+		expect(row).toContain("—");
+	});
+
+	it("elides long paths to the configured column budget", () => {
+		const state = new AuditLedgerState();
+		const long = `src/${"deep/".repeat(20)}state.ts`;
+		state.noteRead(long, { hash: "h" });
+		const row = renderAuditPanel(state.snapshot(), idTheme, { pathWidth: 20 }).find(line =>
+			line.includes("state.ts"),
+		);
+		expect(row).toContain("…");
+		expect(row).not.toContain(long);
+	});
+
+	it("closes with the session economics line", () => {
+		const state = new AuditLedgerState();
+		state.noteRead("a.ts", { hash: "h" });
+		state.noteRead("a.ts", { hash: "h" });
+		state.noteWrite("a.ts", 0, { hash: "h" });
+
+		const last = renderAuditPanel(state.snapshot(), idTheme).at(-1) ?? "";
+		expect(last).toContain("r/w 2/1");
+		expect(last).toContain("write amp ×1.0");
+		expect(last).toContain("redundant 50%");
+		expect(last).toContain("bloat");
+	});
+
+	it("colors each row by its status token", () => {
+		const state = new AuditLedgerState();
+		poison(state, "a.ts");
+		const row = renderAuditPanel(state.snapshot(), taggedTheme).find(line => line.includes("a.ts")) ?? "";
+		expect(row).toContain(`${AUDIT_TRAIL_BOX_COLORS.poisoned}:${STATUS_GLYPHS.poisoned}`);
+	});
+});
+
+describe("audit trail box off-tier text (static surface)", () => {
+	it("reports idle before anything is tracked", () => {
+		expect(renderAuditOffText(new AuditLedgerState().snapshot())).toBe(`${BADGE_GLYPH} nothing tracked`);
+	});
+
+	it("leads with risk and names every non-empty status", () => {
+		const state = new AuditLedgerState();
+		state.noteRead("a.ts", { hash: "h" });
+		state.noteWrite("b.ts", 0, { hash: "h" });
+		poison(state, "c.ts");
+
+		const text = renderAuditOffText(state.snapshot());
+		expect(text).toBe(`${BADGE_GLYPH} 3 tracked · 1 poisoned, 1 dirty, 1 fresh`);
+	});
+
+	it("is plain text with no color and no motion phase", () => {
+		const state = new AuditLedgerState();
+		poison(state, "a.ts");
+		const text = renderAuditOffText(state.snapshot());
+		expect(text).not.toContain("\u001b[");
+		expect(text).not.toContain(BADGE_PULSE_GLYPH);
+	});
+});
+
+describe("audit trail box widget lifecycle", () => {
+	it("subscribes to the frame clock, repaints as the pulse advances, and unsubscribes on dispose", () => {
+		const scheduler = manualScheduler();
+		const policy = new MotionPolicy(fullEnv, "full");
+		const host = new AnimationHost({ policy, scheduler });
+		const state = new AuditLedgerState();
+		poison(state, "a.ts");
+		const widget = new AuditTrailBoxWidget({ tui: noopTui, host, policy, state, theme: idTheme, clock: scheduler });
+
+		expect(widget.animating).toBe(true);
+		expect(host.subscriberCount).toBe(1);
+
+		const bright = widget.render(80);
+		scheduler.advance(PULSE_PERIOD_MS / 2);
+		widget.markDirty();
+		expect(widget.render(80)).not.toEqual(bright);
+
+		widget.dispose();
+		expect(host.subscriberCount).toBe(0);
+		expect(host.running).toBe(false);
+		expect(scheduler.running).toBe(false);
+	});
+
+	it("off tier renders one static frame and never subscribes", () => {
+		const scheduler = manualScheduler();
+		const policy = new MotionPolicy(fullEnv, "off");
+		const host = new AnimationHost({ policy, scheduler });
+		const state = new AuditLedgerState();
+		state.noteRead("a.ts", { hash: "h" });
+		const widget = new AuditTrailBoxWidget({ tui: noopTui, host, policy, state, theme: idTheme, clock: scheduler });
+
+		expect(widget.animating).toBe(false);
+		expect(host.subscriberCount).toBe(0);
+		expect(widget.render(80)[0]).not.toBe("");
+	});
+
+	it("renders exactly one row and honors the width it is handed", () => {
+		const scheduler = manualScheduler();
+		const policy = new MotionPolicy(fullEnv, "subtle");
+		const host = new AnimationHost({ policy, scheduler });
+		const state = new AuditLedgerState();
+		state.noteRead("a.ts", { hash: "h" });
+		state.noteWrite("b.ts", 0, { hash: "h" });
+		const widget = new AuditTrailBoxWidget({ tui: noopTui, host, policy, state, theme: idTheme, clock: scheduler });
+
+		const wide = widget.render(WIDE);
+		expect(wide).toHaveLength(1);
+		expect(wide[0]).toContain("r/w");
+
+		widget.markDirty();
+		const narrow = widget.render(6);
+		expect(narrow).toHaveLength(1);
+		expect((narrow[0] ?? "").length).toBeLessThanOrEqual(6);
+		widget.dispose();
+	});
+
+	it("applies the accent override to the badge slot", () => {
+		const scheduler = manualScheduler();
+		const policy = new MotionPolicy(fullEnv, "subtle");
+		const host = new AnimationHost({ policy, scheduler });
+		const state = new AuditLedgerState();
+		state.noteRead("a.ts", { hash: "h" });
+		const widget = new AuditTrailBoxWidget({
+			tui: noopTui,
+			host,
+			policy,
+			state,
+			theme: taggedTheme,
+			clock: scheduler,
+			accentColor: "syntaxNumber",
+		});
+		expect(widget.render(WIDE)[0]).toContain(`syntaxNumber:${BADGE_GLYPH}`);
+		widget.dispose();
+	});
+
+	it("reads the injected clock, not the host's mount-relative elapsed time", () => {
+		const scheduler = manualScheduler();
+		scheduler.advance(PULSE_PERIOD_MS / 2);
+		const policy = new MotionPolicy(fullEnv, "full");
+		const host = new AnimationHost({ policy, scheduler });
+		const state = new AuditLedgerState();
+		poison(state, "a.ts");
+		const widget = new AuditTrailBoxWidget({ tui: noopTui, host, policy, state, theme: idTheme, clock: scheduler });
+
+		// elapsedMs is still 0 (nothing has ticked since mount); the clock says half a period.
+		expect(widget.elapsedMs).toBe(0);
+		expect((widget.render(WIDE)[0] ?? "").startsWith(BADGE_PULSE_GLYPH)).toBe(true);
+		widget.dispose();
+	});
+});

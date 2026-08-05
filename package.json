@@ -1,0 +1,534 @@
+{
+	"type": "module",
+	"name": "@oh-my-pi/animations",
+	"version": "0.1.0",
+	"private": true,
+	"description": "The oh-my-pi animation plugin suite — ambient animated TUI plugins (both waves) as a single config-driven package.",
+	"license": "MIT",
+	"keywords": [
+		"tui",
+		"animation",
+		"terminal",
+		"extension",
+		"plugin",
+		"cli",
+		"oh-my-pi"
+	],
+	"scripts": {
+		"check": "biome check . && bun run check:types",
+		"check:types": "tsgo -p tsconfig.json --noEmit",
+		"test": "bun test",
+		"lint": "biome lint .",
+		"fix": "biome check --write --unsafe .",
+		"fmt": "biome format --write ."
+	},
+	"dependencies": {
+		"@oh-my-pi/pi-tui": "^16",
+		"@oh-my-pi/pi-utils": "^16"
+	},
+	"peerDependencies": {
+		"@oh-my-pi/pi-coding-agent": "^16"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.4.16",
+		"@oh-my-pi/pi-coding-agent": "^16",
+		"@types/bun": "^1.3.14",
+		"@typescript/native-preview": "7.0.0-dev.20260609.1"
+	},
+	"engines": {
+		"bun": ">=1.3.14"
+	},
+	"files": [
+		"src",
+		"README.md",
+		"CHANGELOG.md"
+	],
+	"omp": {
+		"name": "oh-my-pi animations",
+		"description": "Ambient animated TUI plugins (both waves) as a single config-driven package.",
+		"extensions": [
+			"./src/registrar.ts"
+		],
+		"settings": {
+			"animations": {
+				"type": "enum",
+				"description": "Shared motion tier for all animations (each still gates to 'off' on non-TTY/CI/NO_COLOR). Default 'subtle' is the curated native posture (Plan 007) for the 13 shipped animations; they mount as separate ambient rows.",
+				"values": [
+					"off",
+					"subtle",
+					"full"
+				],
+				"default": "subtle",
+				"env": "OMP_ANIMATIONS"
+			},
+			"sessionBonsai": {
+				"type": "boolean",
+				"description": "Mount Session Bonsai.",
+				"default": true,
+				"env": "OMP_ANIMATIONS_SESSION_BONSAI"
+			},
+			"sessionBonsaiPlacement": {
+				"type": "enum",
+				"description": "Which side of the editor Session Bonsai mounts on. Applied at wire time (restart to change).",
+				"values": [
+					"aboveEditor",
+					"belowEditor"
+				],
+				"default": "belowEditor",
+				"env": "OMP_ANIMATIONS_SESSION_BONSAI_PLACEMENT"
+			},
+			"sessionBonsaiAccentColor": {
+				"type": "enum",
+				"description": "Session Bonsai's primary accent — the active-path glow. 'default' keeps the built-in palette. Applied at wire time (restart to change).",
+				"values": [
+					"default",
+					"accent",
+					"success",
+					"warning",
+					"error",
+					"muted",
+					"syntaxKeyword",
+					"syntaxFunction",
+					"syntaxVariable",
+					"syntaxType",
+					"syntaxString",
+					"syntaxNumber"
+				],
+				"default": "default",
+				"env": "OMP_ANIMATIONS_SESSION_BONSAI_ACCENT_COLOR"
+			},
+			"agentFleet": {
+				"type": "boolean",
+				"description": "Mount Agent Fleet.",
+				"default": true,
+				"env": "OMP_ANIMATIONS_AGENT_FLEET"
+			},
+			"agentFleetPlacement": {
+				"type": "enum",
+				"description": "Which side of the editor Agent Fleet mounts on. Applied at wire time (restart to change).",
+				"values": [
+					"aboveEditor",
+					"belowEditor"
+				],
+				"default": "belowEditor",
+				"env": "OMP_ANIMATIONS_AGENT_FLEET_PLACEMENT"
+			},
+			"agentFleetAccentColor": {
+				"type": "enum",
+				"description": "Agent Fleet's primary accent — the working-firefly color. 'default' keeps the built-in palette. Applied at wire time (restart to change).",
+				"values": [
+					"default",
+					"accent",
+					"success",
+					"warning",
+					"error",
+					"muted",
+					"syntaxKeyword",
+					"syntaxFunction",
+					"syntaxVariable",
+					"syntaxType",
+					"syntaxString",
+					"syntaxNumber"
+				],
+				"default": "default",
+				"env": "OMP_ANIMATIONS_AGENT_FLEET_ACCENT_COLOR"
+			},
+			"memoryCrystals": {
+				"type": "boolean",
+				"description": "Mount Memory Crystals.",
+				"default": true,
+				"env": "OMP_ANIMATIONS_MEMORY_CRYSTALS"
+			},
+			"memoryCrystalsPlacement": {
+				"type": "enum",
+				"description": "Which side of the editor Memory Crystals mounts on. Applied at wire time (restart to change).",
+				"values": [
+					"aboveEditor",
+					"belowEditor"
+				],
+				"default": "belowEditor",
+				"env": "OMP_ANIMATIONS_MEMORY_CRYSTALS_PLACEMENT"
+			},
+			"memoryCrystalsAccentColor": {
+				"type": "enum",
+				"description": "Memory Crystals' primary accent — the landing-flash sparkle. 'default' keeps the built-in palette. Applied at wire time (restart to change).",
+				"values": [
+					"default",
+					"accent",
+					"success",
+					"warning",
+					"error",
+					"muted",
+					"syntaxKeyword",
+					"syntaxFunction",
+					"syntaxVariable",
+					"syntaxType",
+					"syntaxString",
+					"syntaxNumber"
+				],
+				"default": "default",
+				"env": "OMP_ANIMATIONS_MEMORY_CRYSTALS_ACCENT_COLOR"
+			},
+			"auditTrailBox": {
+				"type": "boolean",
+				"description": "Mount Audit Trail Box.",
+				"default": true,
+				"env": "OMP_ANIMATIONS_AUDIT_TRAIL_BOX"
+			},
+			"auditTrailBoxPlacement": {
+				"type": "enum",
+				"description": "Which side of the editor Audit Trail Box mounts on. Applied at wire time (restart to change).",
+				"values": [
+					"aboveEditor",
+					"belowEditor"
+				],
+				"default": "belowEditor",
+				"env": "OMP_ANIMATIONS_AUDIT_TRAIL_BOX_PLACEMENT"
+			},
+			"auditTrailBoxAccentColor": {
+				"type": "enum",
+				"description": "Audit Trail Box's primary accent — the box badge (the per-status risk ramp stays fixed). 'default' keeps the built-in palette. Applied at wire time (restart to change).",
+				"values": [
+					"default",
+					"accent",
+					"success",
+					"warning",
+					"error",
+					"muted",
+					"syntaxKeyword",
+					"syntaxFunction",
+					"syntaxVariable",
+					"syntaxType",
+					"syntaxString",
+					"syntaxNumber"
+				],
+				"default": "default",
+				"env": "OMP_ANIMATIONS_AUDIT_TRAIL_BOX_ACCENT_COLOR"
+			},
+			"diffBloom": {
+				"type": "boolean",
+				"description": "Mount Diff Bloom.",
+				"default": true,
+				"env": "OMP_ANIMATIONS_DIFF_BLOOM"
+			},
+			"diffBloomPlacement": {
+				"type": "enum",
+				"description": "Which side of the editor Diff Bloom mounts on. Applied at wire time (restart to change).",
+				"values": [
+					"aboveEditor",
+					"belowEditor"
+				],
+				"default": "aboveEditor",
+				"env": "OMP_ANIMATIONS_DIFF_BLOOM_PLACEMENT"
+			},
+			"diffBloomAccentColor": {
+				"type": "enum",
+				"description": "Diff Bloom's primary accent — the added-side bloom segment (removed lines keep their diff-red). 'default' keeps the built-in palette. Applied at wire time (restart to change).",
+				"values": [
+					"default",
+					"accent",
+					"success",
+					"warning",
+					"error",
+					"muted",
+					"syntaxKeyword",
+					"syntaxFunction",
+					"syntaxVariable",
+					"syntaxType",
+					"syntaxString",
+					"syntaxNumber"
+				],
+				"default": "default",
+				"env": "OMP_ANIMATIONS_DIFF_BLOOM_ACCENT_COLOR"
+			},
+			"palimpsest": {
+				"type": "boolean",
+				"description": "Mount Palimpsest.",
+				"default": true,
+				"env": "OMP_ANIMATIONS_PALIMPSEST"
+			},
+			"palimpsestPlacement": {
+				"type": "enum",
+				"description": "Which side of the editor Palimpsest mounts on. Applied at wire time (restart to change).",
+				"values": [
+					"aboveEditor",
+					"belowEditor"
+				],
+				"default": "belowEditor",
+				"env": "OMP_ANIMATIONS_PALIMPSEST_PLACEMENT"
+			},
+			"palimpsestAccentColor": {
+				"type": "enum",
+				"description": "Palimpsest's primary accent — the ember-tier glow at 4+ overlapping touches (underline/amber stay fixed). 'default' keeps the built-in palette. Applied at wire time (restart to change).",
+				"values": [
+					"default",
+					"accent",
+					"success",
+					"warning",
+					"error",
+					"muted",
+					"syntaxKeyword",
+					"syntaxFunction",
+					"syntaxVariable",
+					"syntaxType",
+					"syntaxString",
+					"syntaxNumber"
+				],
+				"default": "default",
+				"env": "OMP_ANIMATIONS_PALIMPSEST_ACCENT_COLOR"
+			},
+			"goalHorizon": {
+				"type": "boolean",
+				"description": "Mount Goal Horizon.",
+				"default": true,
+				"env": "OMP_ANIMATIONS_GOAL_HORIZON"
+			},
+			"goalHorizonPlacement": {
+				"type": "enum",
+				"description": "Which side of the editor Goal Horizon mounts on. Applied at wire time (restart to change).",
+				"values": [
+					"aboveEditor",
+					"belowEditor"
+				],
+				"default": "aboveEditor",
+				"env": "OMP_ANIMATIONS_GOAL_HORIZON_PLACEMENT"
+			},
+			"goalHorizonAccentColor": {
+				"type": "enum",
+				"description": "Goal Horizon's primary accent — the milestone flare (the sunrise gradient stays fixed). 'default' keeps the built-in palette. Applied at wire time (restart to change).",
+				"values": [
+					"default",
+					"accent",
+					"success",
+					"warning",
+					"error",
+					"muted",
+					"syntaxKeyword",
+					"syntaxFunction",
+					"syntaxVariable",
+					"syntaxType",
+					"syntaxString",
+					"syntaxNumber"
+				],
+				"default": "default",
+				"env": "OMP_ANIMATIONS_GOAL_HORIZON_ACCENT_COLOR"
+			},
+			"promptCharge": {
+				"type": "boolean",
+				"description": "Mount Prompt Charge.",
+				"default": true,
+				"env": "OMP_ANIMATIONS_PROMPT_CHARGE"
+			},
+			"promptChargePlacement": {
+				"type": "enum",
+				"description": "Which side of the editor Prompt Charge mounts on. Applied at wire time (restart to change).",
+				"values": [
+					"aboveEditor",
+					"belowEditor"
+				],
+				"default": "aboveEditor",
+				"env": "OMP_ANIMATIONS_PROMPT_CHARGE_PLACEMENT"
+			},
+			"promptChargeAccentColor": {
+				"type": "enum",
+				"description": "Prompt Charge's primary accent — the full-charge flash (the dim-to-hot bucket ramp stays fixed). 'default' keeps the built-in palette. Applied at wire time (restart to change).",
+				"values": [
+					"default",
+					"accent",
+					"success",
+					"warning",
+					"error",
+					"muted",
+					"syntaxKeyword",
+					"syntaxFunction",
+					"syntaxVariable",
+					"syntaxType",
+					"syntaxString",
+					"syntaxNumber"
+				],
+				"default": "default",
+				"env": "OMP_ANIMATIONS_PROMPT_CHARGE_ACCENT_COLOR"
+			},
+			"sessionStrata": {
+				"type": "boolean",
+				"description": "Mount Session Strata.",
+				"default": true,
+				"env": "OMP_ANIMATIONS_SESSION_STRATA"
+			},
+			"sessionStrataPlacement": {
+				"type": "enum",
+				"description": "Which side of the editor Session Strata mounts on. Applied at wire time (restart to change).",
+				"values": [
+					"aboveEditor",
+					"belowEditor"
+				],
+				"default": "belowEditor",
+				"env": "OMP_ANIMATIONS_SESSION_STRATA_PLACEMENT"
+			},
+			"sessionStrataAccentColor": {
+				"type": "enum",
+				"description": "Session Strata's primary accent — the generate (no-tool-call) segment color (the reused tool-category palette stays fixed). 'default' keeps the built-in palette. Applied at wire time (restart to change).",
+				"values": [
+					"default",
+					"accent",
+					"success",
+					"warning",
+					"error",
+					"muted",
+					"syntaxKeyword",
+					"syntaxFunction",
+					"syntaxVariable",
+					"syntaxType",
+					"syntaxString",
+					"syntaxNumber"
+				],
+				"default": "default",
+				"env": "OMP_ANIMATIONS_SESSION_STRATA_ACCENT_COLOR"
+			},
+			"cacheMeter": {
+				"type": "boolean",
+				"description": "Mount Cache Meter.",
+				"default": true,
+				"env": "OMP_ANIMATIONS_CACHE_METER"
+			},
+			"cacheMeterPlacement": {
+				"type": "enum",
+				"description": "Which side of the editor Cache Meter mounts on. Applied at wire time (restart to change).",
+				"values": [
+					"aboveEditor",
+					"belowEditor"
+				],
+				"default": "aboveEditor",
+				"env": "OMP_ANIMATIONS_CACHE_METER_PLACEMENT"
+			},
+			"cacheMeterAccentColor": {
+				"type": "enum",
+				"description": "Cache Meter's primary accent — the badge color (the invalidation alert stays fixed error-red). 'default' keeps the built-in palette. Applied at wire time (restart to change).",
+				"values": [
+					"default",
+					"accent",
+					"success",
+					"warning",
+					"error",
+					"muted",
+					"syntaxKeyword",
+					"syntaxFunction",
+					"syntaxVariable",
+					"syntaxType",
+					"syntaxString",
+					"syntaxNumber"
+				],
+				"default": "default",
+				"env": "OMP_ANIMATIONS_CACHE_METER_ACCENT_COLOR"
+			},
+			"driftBuoy": {
+				"type": "boolean",
+				"description": "Mount Drift Buoy.",
+				"default": true,
+				"env": "OMP_ANIMATIONS_DRIFT_BUOY"
+			},
+			"driftBuoyPlacement": {
+				"type": "enum",
+				"description": "Which side of the editor Drift Buoy mounts on. Applied at wire time (restart to change).",
+				"values": [
+					"aboveEditor",
+					"belowEditor"
+				],
+				"default": "aboveEditor",
+				"env": "OMP_ANIMATIONS_DRIFT_BUOY_PLACEMENT"
+			},
+			"driftBuoyAccentColor": {
+				"type": "enum",
+				"description": "Drift Buoy's primary accent — the buoy glyph (the strained-tether alarm stays fixed warning-amber). 'default' keeps the built-in palette. Applied at wire time (restart to change).",
+				"values": [
+					"default",
+					"accent",
+					"success",
+					"warning",
+					"error",
+					"muted",
+					"syntaxKeyword",
+					"syntaxFunction",
+					"syntaxVariable",
+					"syntaxType",
+					"syntaxString",
+					"syntaxNumber"
+				],
+				"default": "default",
+				"env": "OMP_ANIMATIONS_DRIFT_BUOY_ACCENT_COLOR"
+			},
+			"rateLimitTidepool": {
+				"type": "boolean",
+				"description": "Mount Rate-Limit Tidepool.",
+				"default": true,
+				"env": "OMP_ANIMATIONS_RATE_LIMIT_TIDEPOOL"
+			},
+			"rateLimitTidepoolPlacement": {
+				"type": "enum",
+				"description": "Which side of the editor Rate-Limit Tidepool mounts on. Applied at wire time (restart to change).",
+				"values": [
+					"aboveEditor",
+					"belowEditor"
+				],
+				"default": "belowEditor",
+				"env": "OMP_ANIMATIONS_RATE_LIMIT_TIDEPOOL_PLACEMENT"
+			},
+			"rateLimitTidepoolAccentColor": {
+				"type": "enum",
+				"description": "Rate-Limit Tidepool's primary accent — the water color (the near-empty sand alarm stays fixed warning-amber). 'default' keeps the built-in palette. Applied at wire time (restart to change).",
+				"values": [
+					"default",
+					"accent",
+					"success",
+					"warning",
+					"error",
+					"muted",
+					"syntaxKeyword",
+					"syntaxFunction",
+					"syntaxVariable",
+					"syntaxType",
+					"syntaxString",
+					"syntaxNumber"
+				],
+				"default": "default",
+				"env": "OMP_ANIMATIONS_RATE_LIMIT_TIDEPOOL_ACCENT_COLOR"
+			},
+			"fourHands": {
+				"type": "boolean",
+				"description": "Mount Four Hands.",
+				"default": true,
+				"env": "OMP_ANIMATIONS_FOUR_HANDS"
+			},
+			"fourHandsPlacement": {
+				"type": "enum",
+				"description": "Which side of the editor Four Hands mounts on. Applied at wire time (restart to change).",
+				"values": [
+					"aboveEditor",
+					"belowEditor"
+				],
+				"default": "belowEditor",
+				"env": "OMP_ANIMATIONS_FOUR_HANDS_PLACEMENT"
+			},
+			"fourHandsAccentColor": {
+				"type": "enum",
+				"description": "Four Hands' primary accent — solid (in-context) human strikes (context-excluded hollow strikes and agent ticks stay fixed dim). 'default' keeps the built-in palette. Applied at wire time (restart to change).",
+				"values": [
+					"default",
+					"accent",
+					"success",
+					"warning",
+					"error",
+					"muted",
+					"syntaxKeyword",
+					"syntaxFunction",
+					"syntaxVariable",
+					"syntaxType",
+					"syntaxString",
+					"syntaxNumber"
+				],
+				"default": "default",
+				"env": "OMP_ANIMATIONS_FOUR_HANDS_ACCENT_COLOR"
+			}
+		}
+	}
+}
