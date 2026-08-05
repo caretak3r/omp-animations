@@ -16,9 +16,8 @@
  * `env` fallbacks > defaults (every registered animation enabled, tier `full`).
  *
  * `readPluginSettings`/`env` stay on `MountContext` as a generic seam for any animation
- * that self-resolves richer settings beyond the shared enable+tier map (the pattern
- * Context Weather used before Plan 007 unregistered it) — retained animations do not
- * currently use it.
+ * that self-resolves richer settings beyond the shared enable+tier map — none of this
+ * package's shipped animations currently use it.
  */
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
@@ -26,30 +25,25 @@ import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import type { ExtensionFactory, WidgetPlacement } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
 import { getPluginSettings } from "@oh-my-pi/pi-coding-agent/extensibility/plugins/loader";
 import { CONFIG_DIR_NAME, getPluginsLockfile } from "@oh-my-pi/pi-utils";
-import { createAgentFleetExtension } from "./agent-fleet";
 import { type AnimationAppearance, animationsEnvKey, resolveAnimationAppearance } from "./appearance";
 import { createAuditTrailBoxExtension } from "./audit-trail-box";
+import { createBreathingBorderExtension } from "./breathing-border";
 import { createCacheMeterExtension } from "./cache-meter";
-import { createDiffBloomExtension } from "./diff-bloom";
-import { createDriftBuoyExtension } from "./drift-buoy";
-import { createFourHandsExtension } from "./four-hands";
-import { createGoalHorizonExtension } from "./goal-horizon";
+import { createCadenceEqualizerExtension } from "./cadence-equalizer";
 import type { MotionSetting } from "./kit";
-import { createMemoryCrystalsExtension } from "./memory-crystals";
 import { createPalimpsestExtension } from "./palimpsest";
-import { createPromptChargeExtension } from "./prompt-charge";
 import { createRateLimitTidepoolExtension } from "./rate-limit-tidepool";
-import { createSessionBonsaiExtension } from "./session-bonsai";
-import { createSessionStrataExtension } from "./session-strata";
+import { createReflectionRippleExtension } from "./reflection-ripple";
+import { createToolConstellationExtension } from "./tool-constellation";
 
 /** npm package name — the key the runtime plugin settings store files settings under. */
 export const PLUGIN_NAME = "@oh-my-pi/animations";
 
 const MOTION_VALUES: readonly MotionSetting[] = ["off", "subtle", "full"];
 // The manifest (package.json#omp.settings.animations.default) ships "subtle" as the
-// curated native default (Plan 007); this code fallback stays "full" deliberately — it
-// is the value used only when a key is entirely absent from both stored settings and
-// env (e.g. direct programmatic use of createAnimationsPlugin() outside the omp host).
+// curated native default; this code fallback stays "full" deliberately — it is the
+// value used only when a key is entirely absent from both stored settings and env
+// (e.g. direct programmatic use of createAnimationsPlugin() outside the omp host).
 const DEFAULT_TIER: MotionSetting = "full";
 
 /** Reads THIS plugin's stored settings (unified). Async, matching the runtime store. */
@@ -80,40 +74,23 @@ export interface AnimationEntry {
 }
 
 /**
- * The config-driven registry of the 13 shipped mountable animations. Two rounds of cuts
- * narrowed the suite: Plan 007 dropped the 6 status-line duplicators (`tokenTide`,
- * `cadenceEqualizer`, `costCandle`, `contextConstellation`, `modelWeatherVane`,
- * `contextWeather`); a subsequent maintainer scope call dropped 4 more of the retained
- * set (`toolConstellation`, `todoMeteors`, `breathingBorder`, `reflectionRipple`) to
- * ship a deliberately niche capability set. Every dropped animation's source stays on
- * disk with its per-feature test, unregistered — see `plans/007-cut-status-bar-duplicators.md`
- * and `plans/PROGRESS.md`. Spinner Packs and Compaction Vacuum are library modules with
- * no extension factory (Compaction Vacuum is driven by a core compaction hook in-tree),
- * so they are exported by the package barrel but intentionally not registered here.
- * `palimpsest` (a thrash detector, bead oh-my-pi-xxz.1) shipped after the cuts and was
- * greenlit from the start rather than passing through the niche-set scope call.
- * `auditTrailBox`, `cacheMeter`, `driftBuoy`, `sessionStrata`, `rateLimitTidepool`, and
- * `fourHands` shipped afterward, each following the same pattern.
+ * The config-driven registry of this package's shipped animations: audit-trail-box,
+ * breathing-border, cache-meter, cadence-equalizer, palimpsest, rate-limit-tidepool,
+ * reflection-ripple, and tool-constellation — a curated keep-set chosen from the larger
+ * oh-my-pi-animations suite. Every other animation's source was deliberately left out of
+ * this package's copy rather than shipped here unregistered.
+ *
+ * Two of the eight (`auditTrailBox`, `cacheMeter`) plus `palimpsest` and
+ * `rateLimitTidepool` shipped with per-animation `placement`/`accentColor` options
+ * (see `appearance.ts`) and thread the resolved appearance record straight through.
+ * The other four (`breathingBorder`, `cadenceEqualizer`, `reflectionRipple`,
+ * `toolConstellation`) predate that appearance-settings machinery: their factories only
+ * accept `motionSetting`, and their controllers hardcode their widget's placement — the
+ * `<id>Placement`/`<id>AccentColor` manifest settings still resolve for them (for
+ * uniformity with every other animation's settings shape) but are not currently wired to
+ * anything.
  */
 export const ANIMATIONS: readonly AnimationEntry[] = [
-	{
-		id: "sessionBonsai",
-		title: "Session Bonsai",
-		defaultPlacement: "belowEditor",
-		mount: (api, c) => createSessionBonsaiExtension({ motionSetting: c.tier, ...c.appearance.sessionBonsai })(api),
-	},
-	{
-		id: "agentFleet",
-		title: "Agent Fleet",
-		defaultPlacement: "belowEditor",
-		mount: (api, c) => createAgentFleetExtension({ motionSetting: c.tier, ...c.appearance.agentFleet })(api),
-	},
-	{
-		id: "memoryCrystals",
-		title: "Memory Crystals",
-		defaultPlacement: "belowEditor",
-		mount: (api, c) => createMemoryCrystalsExtension({ motionSetting: c.tier, ...c.appearance.memoryCrystals })(api),
-	},
 	{
 		id: "auditTrailBox",
 		title: "Audit Trail Box",
@@ -121,34 +98,12 @@ export const ANIMATIONS: readonly AnimationEntry[] = [
 		mount: (api, c) => createAuditTrailBoxExtension({ motionSetting: c.tier, ...c.appearance.auditTrailBox })(api),
 	},
 	{
-		id: "diffBloom",
-		title: "Diff Bloom",
+		id: "breathingBorder",
+		title: "Breathing Border",
+		// The widget's placement is hardcoded in controller.ts (predates per-animation
+		// appearance settings) — this is that hardcoded side, not a configurable default.
 		defaultPlacement: "aboveEditor",
-		mount: (api, c) => createDiffBloomExtension({ motionSetting: c.tier, ...c.appearance.diffBloom })(api),
-	},
-	{
-		id: "palimpsest",
-		title: "Palimpsest",
-		defaultPlacement: "belowEditor",
-		mount: (api, c) => createPalimpsestExtension({ motionSetting: c.tier, ...c.appearance.palimpsest })(api),
-	},
-	{
-		id: "goalHorizon",
-		title: "Goal Horizon",
-		defaultPlacement: "aboveEditor",
-		mount: (api, c) => createGoalHorizonExtension({ motionSetting: c.tier, ...c.appearance.goalHorizon })(api),
-	},
-	{
-		id: "promptCharge",
-		title: "Prompt Charge",
-		defaultPlacement: "aboveEditor",
-		mount: (api, c) => createPromptChargeExtension({ motionSetting: c.tier, ...c.appearance.promptCharge })(api),
-	},
-	{
-		id: "sessionStrata",
-		title: "Session Strata",
-		defaultPlacement: "belowEditor",
-		mount: (api, c) => createSessionStrataExtension({ motionSetting: c.tier, ...c.appearance.sessionStrata })(api),
+		mount: (api, c) => createBreathingBorderExtension({ motionSetting: c.tier })(api),
 	},
 	{
 		id: "cacheMeter",
@@ -157,10 +112,17 @@ export const ANIMATIONS: readonly AnimationEntry[] = [
 		mount: (api, c) => createCacheMeterExtension({ motionSetting: c.tier, ...c.appearance.cacheMeter })(api),
 	},
 	{
-		id: "driftBuoy",
-		title: "Drift Buoy",
-		defaultPlacement: "aboveEditor",
-		mount: (api, c) => createDriftBuoyExtension({ motionSetting: c.tier, ...c.appearance.driftBuoy })(api),
+		id: "cadenceEqualizer",
+		title: "Cadence Equalizer",
+		// Hardcoded in controller.ts, same as breathingBorder above.
+		defaultPlacement: "belowEditor",
+		mount: (api, c) => createCadenceEqualizerExtension({ motionSetting: c.tier })(api),
+	},
+	{
+		id: "palimpsest",
+		title: "Palimpsest",
+		defaultPlacement: "belowEditor",
+		mount: (api, c) => createPalimpsestExtension({ motionSetting: c.tier, ...c.appearance.palimpsest })(api),
 	},
 	{
 		id: "rateLimitTidepool",
@@ -170,10 +132,18 @@ export const ANIMATIONS: readonly AnimationEntry[] = [
 			createRateLimitTidepoolExtension({ motionSetting: c.tier, ...c.appearance.rateLimitTidepool })(api),
 	},
 	{
-		id: "fourHands",
-		title: "Four Hands",
+		id: "reflectionRipple",
+		title: "Reflection Ripple",
+		// Hardcoded in controller.ts, same as breathingBorder above.
+		defaultPlacement: "aboveEditor",
+		mount: (api, c) => createReflectionRippleExtension({ motionSetting: c.tier })(api),
+	},
+	{
+		id: "toolConstellation",
+		title: "Tool Constellation",
+		// Hardcoded in controller.ts, same as breathingBorder above.
 		defaultPlacement: "belowEditor",
-		mount: (api, c) => createFourHandsExtension({ motionSetting: c.tier, ...c.appearance.fourHands })(api),
+		mount: (api, c) => createToolConstellationExtension({ motionSetting: c.tier })(api),
 	},
 ];
 

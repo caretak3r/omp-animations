@@ -3,11 +3,10 @@
  * widget mounts on) and an optional accent-color override for the animation's
  * primary accent slot.
  *
- * Follows the Context Weather settings template (src/context-weather/settings.ts):
- * flat prefixed manifest keys, per-key env fallbacks, validated enum resolvers,
- * stored > env > default precedence — but with keys DERIVED from the animation id
- * instead of hand-enumerated, since the same two settings repeat across all 10
- * shipped animations. Resolution happens once, at registrar wire time (the same
+ * Flat prefixed manifest keys, per-key env fallbacks, validated enum resolvers,
+ * stored > env > default precedence — with keys DERIVED from the animation id
+ * instead of hand-enumerated, since the same two settings repeat across every
+ * shipped animation. Resolution happens once, at registrar wire time (the same
  * restart-required posture as the enable/tier settings); there is no live re-read.
  */
 import type { WidgetPlacement } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";

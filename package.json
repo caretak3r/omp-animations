@@ -52,7 +52,7 @@
 		"settings": {
 			"animations": {
 				"type": "enum",
-				"description": "Shared motion tier for all animations (each still gates to 'off' on non-TTY/CI/NO_COLOR). Default 'subtle' is the curated native posture (Plan 007) for the 13 shipped animations; they mount as separate ambient rows.",
+				"description": "Shared motion tier for all animations (each still gates to 'off' on non-TTY/CI/NO_COLOR). Default 'subtle' is the curated native posture; each shipped animation mounts as a separate ambient row.",
 				"values": [
 					"off",
 					"subtle",
@@ -60,114 +60,6 @@
 				],
 				"default": "subtle",
 				"env": "OMP_ANIMATIONS"
-			},
-			"sessionBonsai": {
-				"type": "boolean",
-				"description": "Mount Session Bonsai.",
-				"default": true,
-				"env": "OMP_ANIMATIONS_SESSION_BONSAI"
-			},
-			"sessionBonsaiPlacement": {
-				"type": "enum",
-				"description": "Which side of the editor Session Bonsai mounts on. Applied at wire time (restart to change).",
-				"values": [
-					"aboveEditor",
-					"belowEditor"
-				],
-				"default": "belowEditor",
-				"env": "OMP_ANIMATIONS_SESSION_BONSAI_PLACEMENT"
-			},
-			"sessionBonsaiAccentColor": {
-				"type": "enum",
-				"description": "Session Bonsai's primary accent — the active-path glow. 'default' keeps the built-in palette. Applied at wire time (restart to change).",
-				"values": [
-					"default",
-					"accent",
-					"success",
-					"warning",
-					"error",
-					"muted",
-					"syntaxKeyword",
-					"syntaxFunction",
-					"syntaxVariable",
-					"syntaxType",
-					"syntaxString",
-					"syntaxNumber"
-				],
-				"default": "default",
-				"env": "OMP_ANIMATIONS_SESSION_BONSAI_ACCENT_COLOR"
-			},
-			"agentFleet": {
-				"type": "boolean",
-				"description": "Mount Agent Fleet.",
-				"default": true,
-				"env": "OMP_ANIMATIONS_AGENT_FLEET"
-			},
-			"agentFleetPlacement": {
-				"type": "enum",
-				"description": "Which side of the editor Agent Fleet mounts on. Applied at wire time (restart to change).",
-				"values": [
-					"aboveEditor",
-					"belowEditor"
-				],
-				"default": "belowEditor",
-				"env": "OMP_ANIMATIONS_AGENT_FLEET_PLACEMENT"
-			},
-			"agentFleetAccentColor": {
-				"type": "enum",
-				"description": "Agent Fleet's primary accent — the working-firefly color. 'default' keeps the built-in palette. Applied at wire time (restart to change).",
-				"values": [
-					"default",
-					"accent",
-					"success",
-					"warning",
-					"error",
-					"muted",
-					"syntaxKeyword",
-					"syntaxFunction",
-					"syntaxVariable",
-					"syntaxType",
-					"syntaxString",
-					"syntaxNumber"
-				],
-				"default": "default",
-				"env": "OMP_ANIMATIONS_AGENT_FLEET_ACCENT_COLOR"
-			},
-			"memoryCrystals": {
-				"type": "boolean",
-				"description": "Mount Memory Crystals.",
-				"default": true,
-				"env": "OMP_ANIMATIONS_MEMORY_CRYSTALS"
-			},
-			"memoryCrystalsPlacement": {
-				"type": "enum",
-				"description": "Which side of the editor Memory Crystals mounts on. Applied at wire time (restart to change).",
-				"values": [
-					"aboveEditor",
-					"belowEditor"
-				],
-				"default": "belowEditor",
-				"env": "OMP_ANIMATIONS_MEMORY_CRYSTALS_PLACEMENT"
-			},
-			"memoryCrystalsAccentColor": {
-				"type": "enum",
-				"description": "Memory Crystals' primary accent — the landing-flash sparkle. 'default' keeps the built-in palette. Applied at wire time (restart to change).",
-				"values": [
-					"default",
-					"accent",
-					"success",
-					"warning",
-					"error",
-					"muted",
-					"syntaxKeyword",
-					"syntaxFunction",
-					"syntaxVariable",
-					"syntaxType",
-					"syntaxString",
-					"syntaxNumber"
-				],
-				"default": "default",
-				"env": "OMP_ANIMATIONS_MEMORY_CRYSTALS_ACCENT_COLOR"
 			},
 			"auditTrailBox": {
 				"type": "boolean",
@@ -205,25 +97,25 @@
 				"default": "default",
 				"env": "OMP_ANIMATIONS_AUDIT_TRAIL_BOX_ACCENT_COLOR"
 			},
-			"diffBloom": {
+			"breathingBorder": {
 				"type": "boolean",
-				"description": "Mount Diff Bloom.",
+				"description": "Mount Breathing Border.",
 				"default": true,
-				"env": "OMP_ANIMATIONS_DIFF_BLOOM"
+				"env": "OMP_ANIMATIONS_BREATHING_BORDER"
 			},
-			"diffBloomPlacement": {
+			"breathingBorderPlacement": {
 				"type": "enum",
-				"description": "Which side of the editor Diff Bloom mounts on. Applied at wire time (restart to change).",
+				"description": "Reserved for a future Breathing Border placement override — its aboveEditor placement is currently hardcoded in the widget's controller, so this setting has no effect yet.",
 				"values": [
 					"aboveEditor",
 					"belowEditor"
 				],
 				"default": "aboveEditor",
-				"env": "OMP_ANIMATIONS_DIFF_BLOOM_PLACEMENT"
+				"env": "OMP_ANIMATIONS_BREATHING_BORDER_PLACEMENT"
 			},
-			"diffBloomAccentColor": {
+			"breathingBorderAccentColor": {
 				"type": "enum",
-				"description": "Diff Bloom's primary accent — the added-side bloom segment (removed lines keep their diff-red). 'default' keeps the built-in palette. Applied at wire time (restart to change).",
+				"description": "Reserved for a future Breathing Border accent override — the widget's palette is currently fixed, so this setting has no effect yet.",
 				"values": [
 					"default",
 					"accent",
@@ -239,151 +131,7 @@
 					"syntaxNumber"
 				],
 				"default": "default",
-				"env": "OMP_ANIMATIONS_DIFF_BLOOM_ACCENT_COLOR"
-			},
-			"palimpsest": {
-				"type": "boolean",
-				"description": "Mount Palimpsest.",
-				"default": true,
-				"env": "OMP_ANIMATIONS_PALIMPSEST"
-			},
-			"palimpsestPlacement": {
-				"type": "enum",
-				"description": "Which side of the editor Palimpsest mounts on. Applied at wire time (restart to change).",
-				"values": [
-					"aboveEditor",
-					"belowEditor"
-				],
-				"default": "belowEditor",
-				"env": "OMP_ANIMATIONS_PALIMPSEST_PLACEMENT"
-			},
-			"palimpsestAccentColor": {
-				"type": "enum",
-				"description": "Palimpsest's primary accent — the ember-tier glow at 4+ overlapping touches (underline/amber stay fixed). 'default' keeps the built-in palette. Applied at wire time (restart to change).",
-				"values": [
-					"default",
-					"accent",
-					"success",
-					"warning",
-					"error",
-					"muted",
-					"syntaxKeyword",
-					"syntaxFunction",
-					"syntaxVariable",
-					"syntaxType",
-					"syntaxString",
-					"syntaxNumber"
-				],
-				"default": "default",
-				"env": "OMP_ANIMATIONS_PALIMPSEST_ACCENT_COLOR"
-			},
-			"goalHorizon": {
-				"type": "boolean",
-				"description": "Mount Goal Horizon.",
-				"default": true,
-				"env": "OMP_ANIMATIONS_GOAL_HORIZON"
-			},
-			"goalHorizonPlacement": {
-				"type": "enum",
-				"description": "Which side of the editor Goal Horizon mounts on. Applied at wire time (restart to change).",
-				"values": [
-					"aboveEditor",
-					"belowEditor"
-				],
-				"default": "aboveEditor",
-				"env": "OMP_ANIMATIONS_GOAL_HORIZON_PLACEMENT"
-			},
-			"goalHorizonAccentColor": {
-				"type": "enum",
-				"description": "Goal Horizon's primary accent — the milestone flare (the sunrise gradient stays fixed). 'default' keeps the built-in palette. Applied at wire time (restart to change).",
-				"values": [
-					"default",
-					"accent",
-					"success",
-					"warning",
-					"error",
-					"muted",
-					"syntaxKeyword",
-					"syntaxFunction",
-					"syntaxVariable",
-					"syntaxType",
-					"syntaxString",
-					"syntaxNumber"
-				],
-				"default": "default",
-				"env": "OMP_ANIMATIONS_GOAL_HORIZON_ACCENT_COLOR"
-			},
-			"promptCharge": {
-				"type": "boolean",
-				"description": "Mount Prompt Charge.",
-				"default": true,
-				"env": "OMP_ANIMATIONS_PROMPT_CHARGE"
-			},
-			"promptChargePlacement": {
-				"type": "enum",
-				"description": "Which side of the editor Prompt Charge mounts on. Applied at wire time (restart to change).",
-				"values": [
-					"aboveEditor",
-					"belowEditor"
-				],
-				"default": "aboveEditor",
-				"env": "OMP_ANIMATIONS_PROMPT_CHARGE_PLACEMENT"
-			},
-			"promptChargeAccentColor": {
-				"type": "enum",
-				"description": "Prompt Charge's primary accent — the full-charge flash (the dim-to-hot bucket ramp stays fixed). 'default' keeps the built-in palette. Applied at wire time (restart to change).",
-				"values": [
-					"default",
-					"accent",
-					"success",
-					"warning",
-					"error",
-					"muted",
-					"syntaxKeyword",
-					"syntaxFunction",
-					"syntaxVariable",
-					"syntaxType",
-					"syntaxString",
-					"syntaxNumber"
-				],
-				"default": "default",
-				"env": "OMP_ANIMATIONS_PROMPT_CHARGE_ACCENT_COLOR"
-			},
-			"sessionStrata": {
-				"type": "boolean",
-				"description": "Mount Session Strata.",
-				"default": true,
-				"env": "OMP_ANIMATIONS_SESSION_STRATA"
-			},
-			"sessionStrataPlacement": {
-				"type": "enum",
-				"description": "Which side of the editor Session Strata mounts on. Applied at wire time (restart to change).",
-				"values": [
-					"aboveEditor",
-					"belowEditor"
-				],
-				"default": "belowEditor",
-				"env": "OMP_ANIMATIONS_SESSION_STRATA_PLACEMENT"
-			},
-			"sessionStrataAccentColor": {
-				"type": "enum",
-				"description": "Session Strata's primary accent — the generate (no-tool-call) segment color (the reused tool-category palette stays fixed). 'default' keeps the built-in palette. Applied at wire time (restart to change).",
-				"values": [
-					"default",
-					"accent",
-					"success",
-					"warning",
-					"error",
-					"muted",
-					"syntaxKeyword",
-					"syntaxFunction",
-					"syntaxVariable",
-					"syntaxType",
-					"syntaxString",
-					"syntaxNumber"
-				],
-				"default": "default",
-				"env": "OMP_ANIMATIONS_SESSION_STRATA_ACCENT_COLOR"
+				"env": "OMP_ANIMATIONS_BREATHING_BORDER_ACCENT_COLOR"
 			},
 			"cacheMeter": {
 				"type": "boolean",
@@ -421,25 +169,25 @@
 				"default": "default",
 				"env": "OMP_ANIMATIONS_CACHE_METER_ACCENT_COLOR"
 			},
-			"driftBuoy": {
+			"cadenceEqualizer": {
 				"type": "boolean",
-				"description": "Mount Drift Buoy.",
+				"description": "Mount Cadence Equalizer.",
 				"default": true,
-				"env": "OMP_ANIMATIONS_DRIFT_BUOY"
+				"env": "OMP_ANIMATIONS_CADENCE_EQUALIZER"
 			},
-			"driftBuoyPlacement": {
+			"cadenceEqualizerPlacement": {
 				"type": "enum",
-				"description": "Which side of the editor Drift Buoy mounts on. Applied at wire time (restart to change).",
+				"description": "Reserved for a future Cadence Equalizer placement override — its belowEditor placement is currently hardcoded in the widget's controller, so this setting has no effect yet.",
 				"values": [
 					"aboveEditor",
 					"belowEditor"
 				],
-				"default": "aboveEditor",
-				"env": "OMP_ANIMATIONS_DRIFT_BUOY_PLACEMENT"
+				"default": "belowEditor",
+				"env": "OMP_ANIMATIONS_CADENCE_EQUALIZER_PLACEMENT"
 			},
-			"driftBuoyAccentColor": {
+			"cadenceEqualizerAccentColor": {
 				"type": "enum",
-				"description": "Drift Buoy's primary accent — the buoy glyph (the strained-tether alarm stays fixed warning-amber). 'default' keeps the built-in palette. Applied at wire time (restart to change).",
+				"description": "Reserved for a future Cadence Equalizer accent override — the widget's palette is currently fixed, so this setting has no effect yet.",
 				"values": [
 					"default",
 					"accent",
@@ -455,7 +203,43 @@
 					"syntaxNumber"
 				],
 				"default": "default",
-				"env": "OMP_ANIMATIONS_DRIFT_BUOY_ACCENT_COLOR"
+				"env": "OMP_ANIMATIONS_CADENCE_EQUALIZER_ACCENT_COLOR"
+			},
+			"palimpsest": {
+				"type": "boolean",
+				"description": "Mount Palimpsest.",
+				"default": true,
+				"env": "OMP_ANIMATIONS_PALIMPSEST"
+			},
+			"palimpsestPlacement": {
+				"type": "enum",
+				"description": "Which side of the editor Palimpsest mounts on. Applied at wire time (restart to change).",
+				"values": [
+					"aboveEditor",
+					"belowEditor"
+				],
+				"default": "belowEditor",
+				"env": "OMP_ANIMATIONS_PALIMPSEST_PLACEMENT"
+			},
+			"palimpsestAccentColor": {
+				"type": "enum",
+				"description": "Palimpsest's primary accent — the ember-tier glow at 4+ overlapping touches (underline/amber stay fixed). 'default' keeps the built-in palette. Applied at wire time (restart to change).",
+				"values": [
+					"default",
+					"accent",
+					"success",
+					"warning",
+					"error",
+					"muted",
+					"syntaxKeyword",
+					"syntaxFunction",
+					"syntaxVariable",
+					"syntaxType",
+					"syntaxString",
+					"syntaxNumber"
+				],
+				"default": "default",
+				"env": "OMP_ANIMATIONS_PALIMPSEST_ACCENT_COLOR"
 			},
 			"rateLimitTidepool": {
 				"type": "boolean",
@@ -493,25 +277,25 @@
 				"default": "default",
 				"env": "OMP_ANIMATIONS_RATE_LIMIT_TIDEPOOL_ACCENT_COLOR"
 			},
-			"fourHands": {
+			"reflectionRipple": {
 				"type": "boolean",
-				"description": "Mount Four Hands.",
+				"description": "Mount Reflection Ripple.",
 				"default": true,
-				"env": "OMP_ANIMATIONS_FOUR_HANDS"
+				"env": "OMP_ANIMATIONS_REFLECTION_RIPPLE"
 			},
-			"fourHandsPlacement": {
+			"reflectionRipplePlacement": {
 				"type": "enum",
-				"description": "Which side of the editor Four Hands mounts on. Applied at wire time (restart to change).",
+				"description": "Reserved for a future Reflection Ripple placement override — its aboveEditor placement is currently hardcoded in the widget's controller, so this setting has no effect yet.",
 				"values": [
 					"aboveEditor",
 					"belowEditor"
 				],
-				"default": "belowEditor",
-				"env": "OMP_ANIMATIONS_FOUR_HANDS_PLACEMENT"
+				"default": "aboveEditor",
+				"env": "OMP_ANIMATIONS_REFLECTION_RIPPLE_PLACEMENT"
 			},
-			"fourHandsAccentColor": {
+			"reflectionRippleAccentColor": {
 				"type": "enum",
-				"description": "Four Hands' primary accent — solid (in-context) human strikes (context-excluded hollow strikes and agent ticks stay fixed dim). 'default' keeps the built-in palette. Applied at wire time (restart to change).",
+				"description": "Reserved for a future Reflection Ripple accent override — the widget's palette is currently fixed, so this setting has no effect yet.",
 				"values": [
 					"default",
 					"accent",
@@ -527,7 +311,43 @@
 					"syntaxNumber"
 				],
 				"default": "default",
-				"env": "OMP_ANIMATIONS_FOUR_HANDS_ACCENT_COLOR"
+				"env": "OMP_ANIMATIONS_REFLECTION_RIPPLE_ACCENT_COLOR"
+			},
+			"toolConstellation": {
+				"type": "boolean",
+				"description": "Mount Tool Constellation.",
+				"default": true,
+				"env": "OMP_ANIMATIONS_TOOL_CONSTELLATION"
+			},
+			"toolConstellationPlacement": {
+				"type": "enum",
+				"description": "Reserved for a future Tool Constellation placement override — its belowEditor placement is currently hardcoded in the widget's controller, so this setting has no effect yet.",
+				"values": [
+					"aboveEditor",
+					"belowEditor"
+				],
+				"default": "belowEditor",
+				"env": "OMP_ANIMATIONS_TOOL_CONSTELLATION_PLACEMENT"
+			},
+			"toolConstellationAccentColor": {
+				"type": "enum",
+				"description": "Reserved for a future Tool Constellation accent override — the widget's palette is currently fixed, so this setting has no effect yet.",
+				"values": [
+					"default",
+					"accent",
+					"success",
+					"warning",
+					"error",
+					"muted",
+					"syntaxKeyword",
+					"syntaxFunction",
+					"syntaxVariable",
+					"syntaxType",
+					"syntaxString",
+					"syntaxNumber"
+				],
+				"default": "default",
+				"env": "OMP_ANIMATIONS_TOOL_CONSTELLATION_ACCENT_COLOR"
 			}
 		}
 	}
