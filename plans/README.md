@@ -84,6 +84,7 @@ something omp's status line does NOT already surface. omp's status line already 
 | [008](008-preset-aware-glyphs.md) | Route glyphs through `theme.symbol()` preset system | M | LOW-MED | high — 0 preset usage today; `ascii`/`nerd` users get mojibake |
 | [009](009-consolidate-ambient-surface.md) | **SPIKE** — consolidate retained animations onto one ambient surface | L | MED | the true "match omp" fix — N stacked rows → 1 self-eliding line; subsumes 010 |
 | [010](010-unmount-idle-rows.md) | Unmount idle/empty widgets instead of dead rows | M | LOW | med — kills `(no open todos)`-style dead rows; **subsumed by 009** |
+| [017](017-animations-box.md) | Animations Box — one consolidated `setWidget` box for the keeper set | L | MED | **resolves 009's spike** (maintainer chose a dedicated box, 2026-08-06) and **supersedes 010** (box mode suppresses standalone rows entirely) |
 
 **Cut list (007):** `token-tide`, `cadence-equalizer`, `cost-candle`, `context-weather` (unregister only —
 code retained), `context-constellation`, `model-weather-vane`. **Retained (10, maintainer-confirmed
@@ -159,11 +160,12 @@ invoked/retained telemetry, no multi-source enumeration.
 | 006 | STOPPED-escape-hatch (no-go: paint-batching win measured negligible) — see `plans/PROGRESS.md` |
 | 007 | DONE — see `plans/PROGRESS.md` (executed `007-cut-status-bar-duplicators.md`; the maintainer's fixed retain-10/cut-6 list applied; `007-native-default-posture.md` superseded — its on-by-default trio is entirely inside the cut set) |
 | 008 | TODO — preset-aware glyphs (retained set) |
-| 009 | TODO (optional spike) — consolidate to one ambient surface |
-| 010 | TODO — unmount idle rows (subsumed by 009) |
+| 009 | RESOLVED by 017 — the spike's `setStatus`-vs-`setWidget` question was answered by maintainer directive (2026-08-06): a dedicated box |
+| 010 | SUPERSEDED by 017 — box mode suppresses standalone rows; enabled-but-idle segments render dim resting rows |
 | 011 | TODO — Diff Bloom git-backed work-effort meter |
 | 012 | TODO — Agent Fleet live legend (name+status confirmed; activity needs frame poll) |
 | 013 | TODO (measure-first spike) — Memory Crystals → retrieval |
 | 014 | TODO — Session Bonsai labeled branches (subagent label dropped) |
 | 015 | DONE — executed + reviewed (advisor `execute`, 2026-07-17); worktree `/tmp/wt-015`, branch `advisor/015-goal-horizon-generic-budget` @ `e6c9c04`, gate 825/0/3638; awaiting maintainer merge |
 | 016 | TODO — Prompt Charge between-turn signals (thinking + context; approval deferred) |
+| 017 | SPEC — Animations Box (bead `oh-my-pi-dxi.1`); awaiting maintainer sign-off before implementation |
