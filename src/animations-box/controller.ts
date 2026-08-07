@@ -31,10 +31,19 @@
  * `AuditLedgerState` never sees the divergence probe's `noteProbe` either
  * (that's off-path filesystem I/O the standalone controller owns alongside
  * its `setStatus` surface, not "row/ledger state"). Cadence Equalizer,
- * Rate-Limit Tidepool and Reflection Ripple land in `dxi.4`; the breathing
- * border in `dxi.5`. Registrar wiring — actually mounting this controller
- * from `session_start` — is `dxi.7`'s scope; this controller is fully
- * unit-testable in isolation until then.
+ * Rate-Limit Tidepool and Reflection Ripple (`oh-my-pi-dxi.4`) are wired the
+ * same way below — a fresh `*State` instance, fed by adapter logic mirrored
+ * from each standalone controller's own private helpers where it isn't
+ * exported (`toAssistantSample` mirrors `../cadence-equalizer/controller.ts`'s
+ * private helper of the same name, exactly as `toCacheRequestSample` above
+ * mirrors cache meter's). Cadence's live tok/s sampling and per-tick EMA-band
+ * stepping, and Reflection Ripple's settle check, both run from the `#onTick`
+ * seam every tick, mirroring what each standalone widget's own `onFrame` hook
+ * does (this box has no per-segment `AnimatedWidget`, so there is no other
+ * frame hook to hang them on). The breathing border lands in `dxi.5`.
+ * Registrar wiring — actually mounting this controller from `session_start`
+ * — is `dxi.7`'s scope; this controller is fully unit-testable in isolation
+ * until then.
  */
 import type {
 	ExtensionWidgetContent,
@@ -42,25 +51,40 @@ import type {
 	WidgetPlacement,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
 import type {
+	AfterProviderResponseEvent,
 	AutoCompactionStartEvent,
 	EditToolResultEvent,
 	MessageEndEvent,
+	MessageStartEvent,
+	MessageUpdateEvent,
 	ToolCallEvent,
 	ToolResultEvent,
+	TtsrTriggeredEvent,
 	TurnEndEvent,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 import { getDiffStats } from "@oh-my-pi/pi-coding-agent/tools/render-utils";
+import { calculateTokensPerSecond } from "@oh-my-pi/pi-coding-agent/utils/token-rate";
 import { AuditLedgerState, auditTouchesFromToolResult } from "../audit-trail-box";
 import { CacheMeterState, type CacheRequestSample } from "../cache-meter";
+import { CadenceEqualizerState } from "../cadence-equalizer";
+// `normalizeAmplitude` lives in `scale.ts`, not re-exported by the keeper's
+// own `index.ts` barrel — same deep-import gap `segments.ts` documents for
+// `MAX_REFERENCE_RATE`.
+import { normalizeAmplitude } from "../cadence-equalizer/scale";
 import type { BackpressureSignal, FrameScheduler, MotionSetting } from "../kit";
 import { AnimationHost, backpressureFromTui, DEFAULT_FRAME_SCHEDULER, MotionPolicy } from "../kit";
 import { PalimpsestState, parseHunkSpans } from "../palimpsest";
+import { familyForProvider, RateLimitTidepoolState, readRateLimitHeaders } from "../rate-limit-tidepool";
+import { ReflectionRippleState } from "../reflection-ripple";
 import { ConstellationState } from "../tool-constellation";
 import {
 	type BoxTheme,
 	buildAuditTrailBoxSegment,
 	buildCacheMeterSegment,
+	buildCadenceEqualizerSegment,
 	buildPalimpsestSegment,
+	buildRateLimitTidepoolSegment,
+	buildReflectionRippleSegment,
 	buildToolConstellationSegment,
 	type SegmentSample,
 } from "./segments";
@@ -86,6 +110,25 @@ function toCacheRequestSample(message: MessageEndEvent["message"]): CacheRequest
 			cost: message.usage.cost,
 			cttl: message.usage.cttl,
 		},
+	};
+}
+
+/** The minimal shape `calculateTokensPerSecond` needs from an assistant `AgentMessage` — identical to `../cadence-equalizer/controller.ts`'s own private `AssistantSample`. */
+interface AssistantSample {
+	role: "assistant";
+	timestamp: number;
+	duration?: number;
+	usage: { output: number };
+}
+
+/** Narrow a streamed message to the assistant sample shape the shared rate provider consumes — identical to `../cadence-equalizer/controller.ts`'s own private `toAssistantSample`. `undefined` for any other role. */
+function toAssistantSample(message: MessageStartEvent["message"]): AssistantSample | undefined {
+	if (message.role !== "assistant") return undefined;
+	return {
+		role: "assistant",
+		timestamp: message.timestamp,
+		duration: message.duration,
+		usage: { output: message.usage.output },
 	};
 }
 
@@ -188,6 +231,18 @@ export class AnimationsBoxController {
 	#auditTrailState: AuditLedgerState = new AuditLedgerState();
 	#constellationState: ConstellationState = new ConstellationState();
 	#palimpsestState: PalimpsestState = new PalimpsestState();
+	#cadenceState: CadenceEqualizerState = new CadenceEqualizerState();
+	#tidepoolState: RateLimitTidepoolState = new RateLimitTidepoolState();
+	#reflectionRippleState: ReflectionRippleState = new ReflectionRippleState();
+
+	/** Cadence's in-flight message tracking — mirrors `CadenceEqualizerController`'s own private `#current`/`#streaming` fields, which live outside `CadenceEqualizerState` itself. */
+	#cadenceCurrent: AssistantSample | undefined;
+	#cadenceStreaming = false;
+	/** Latches `true` on the first assistant `message_start` and never reverts — `CadenceEqualizerState`'s own EMA bands decay toward but never reach zero, so this is the segment's actual "has anything happened yet" signal (see `segments.ts`'s `buildCadenceEqualizerSegment` doc). */
+	#cadenceHasStreamed = false;
+
+	/** Tidepool's stashed header sample, not yet claimed by an assistant `message_start` — mirrors `RateLimitTidepoolController`'s own private `#pendingHeaders`. */
+	#tidepoolPendingHeaders: Readonly<Record<string, string>> | undefined;
 
 	constructor(options: AnimationsBoxControllerOptions) {
 		this.#scheduler = options.scheduler ?? DEFAULT_FRAME_SCHEDULER;
@@ -230,29 +285,134 @@ export class AnimationsBoxController {
 		this.#mount = { host };
 	}
 
-	/** Seam for future per-tick state mutation (cadence sampling, ripple settle, ...) — no-op until a later bead wires a segment that needs one. */
-	#onTick(_now: number): void {}
+	/** Sample the live tok/s rate at `wallNowMs` from the currently tracked message — identical call shape to `CadenceEqualizerController.sampleRate`. */
+	#sampleCadenceRate(wallNowMs: number): number | null {
+		return calculateTokensPerSecond(
+			this.#cadenceCurrent ? [this.#cadenceCurrent] : [],
+			this.#cadenceStreaming,
+			wallNowMs,
+		);
+	}
+
+	/**
+	 * Per-tick state mutation: Cadence samples the live tok/s rate and steps its
+	 * EMA bands every tick, mirroring the standalone widget's own `onFrame` ->
+	 * `pushSample` (this box has no per-segment `AnimatedWidget` of its own to
+	 * hang that on); Reflection Ripple checks whether its in-flight ripple has
+	 * settled, mirroring the standalone widget's own `onFrame` -> `settleIfDone`.
+	 * Both read `now` off the SAME wall clock this seam is always called with
+	 * (Decision 4) — never a second clock.
+	 */
+	#onTick(now: number): void {
+		this.#cadenceState.pushSample(normalizeAmplitude(this.#sampleCadenceRate(now) ?? 0));
+		this.#reflectionRippleState.settleIfDone(now);
+	}
 
 	#buildSamples(now: number, theme: BoxTheme): readonly SegmentSample[] {
 		// Priority order, not builder-list order — this array feeds detailed mode's
 		// row-per-segment loop directly (see `widget.ts`), which does not sort by
-		// priority itself. `dxi.4`'s cadenceEqualizer (pri 2) / rateLimitTidepool
-		// (pri 4) / reflectionRipple (pri 7) slot in between these on landing.
+		// priority itself.
 		const all: readonly SegmentSample[] = [
 			buildCacheMeterSegment(this.#cacheMeterState, now, theme),
+			buildCadenceEqualizerSegment(
+				this.#cadenceState,
+				this.#cadenceHasStreamed,
+				this.#sampleCadenceRate(now),
+				now,
+				theme,
+			),
 			buildAuditTrailBoxSegment(this.#auditTrailState, now, theme),
+			buildRateLimitTidepoolSegment(this.#tidepoolState, now, theme),
 			buildToolConstellationSegment(this.#constellationState, now, theme),
 			buildPalimpsestSegment(this.#palimpsestState, now, theme),
+			buildReflectionRippleSegment(this.#reflectionRippleState, now, theme),
 		];
 		return all.filter(s => segmentActive(this.#config, s.id));
 	}
 
-	/** `message_end`: feed a finalized assistant response's prompt-cache usage into the ledger. */
+	/**
+	 * `message_start`: Cadence tracks the newly-streaming assistant message and
+	 * latches `hasStreamed`, mirroring `CadenceEqualizerController.onMessageStart`;
+	 * Tidepool consumes any pending header sample the moment an assistant
+	 * message reveals its provider, mirroring
+	 * `RateLimitTidepoolController.onMessageStart`. The two standalone
+	 * controllers each subscribe to this event independently, so one handler
+	 * here does both — same precedent as `onToolResult`'s audit+palimpsest
+	 * merge below.
+	 */
+	onMessageStart(event: MessageStartEvent, ctx: Pick<AnimationsBoxContext, "hasUI">): void {
+		if (!ctx.hasUI) return;
+
+		const assistantSample = toAssistantSample(event.message);
+		if (assistantSample !== undefined) {
+			this.#cadenceCurrent = assistantSample;
+			this.#cadenceStreaming = true;
+			this.#cadenceHasStreamed = true;
+		}
+
+		if (event.message.role !== "assistant") return; // only an assistant message carries `provider`
+		const headers = this.#tidepoolPendingHeaders;
+		this.#tidepoolPendingHeaders = undefined;
+		if (headers === undefined) return;
+
+		const provider = event.message.provider;
+		const family = familyForProvider(provider);
+		if (family === undefined) return; // unwhitelisted gateway — stays invisible, never guessed
+
+		const now = this.#scheduler.now();
+		const reading = readRateLimitHeaders(family, headers, now);
+		if (reading === undefined) return; // absent or empty headers — nothing recognized to show
+		this.#tidepoolState.applySample({
+			provider,
+			family,
+			level: reading.level,
+			resetAtMs: reading.resetAtMs,
+			observedAtMs: now,
+		});
+	}
+
+	/** `message_update`: Cadence keeps the tracked in-flight message's usage current mid-stream — mirrors `CadenceEqualizerController.onMessageUpdate`. */
+	onMessageUpdate(event: MessageUpdateEvent, ctx: Pick<AnimationsBoxContext, "hasUI">): void {
+		if (!ctx.hasUI) return;
+		const sample = toAssistantSample(event.message);
+		if (sample !== undefined) this.#cadenceCurrent = sample;
+	}
+
+	/** `after_provider_response`: stash the headers until the next assistant `message_start` reveals whose they are — mirrors `RateLimitTidepoolController.onAfterProviderResponse`. */
+	onAfterProviderResponse(event: AfterProviderResponseEvent, ctx: Pick<AnimationsBoxContext, "hasUI">): void {
+		if (!ctx.hasUI) return;
+		this.#tidepoolPendingHeaders = event.headers;
+	}
+
+	/**
+	 * `ttsr_triggered`: (re)start the single ripple from the box's own clock —
+	 * mirrors `ReflectionRippleController.onTtsrTriggered`'s state transition.
+	 * That standalone controller's mount/teardown dance has no box equivalent:
+	 * here the segment's own `active` flag (`phase === "rippling"`, see
+	 * `segments.ts`) is the only "is it showing" signal there is.
+	 */
+	onTtsrTriggered(event: TtsrTriggeredEvent, ctx: Pick<AnimationsBoxContext, "hasUI">): void {
+		if (!ctx.hasUI) return;
+		const ruleNames = event.rules.map(rule => rule.name);
+		this.#reflectionRippleState.applyTrigger(ruleNames, this.#scheduler.now());
+	}
+
+	/**
+	 * `message_end`: feed a finalized assistant response's prompt-cache usage
+	 * into the ledger, and clear Cadence's tracked in-flight message — mirroring
+	 * `CadenceEqualizerController.onMessageEnd`'s own clear, so the next sample
+	 * settles back to idle instead of reporting the just-finished turn's average
+	 * rate indefinitely.
+	 */
 	onMessageEnd(event: MessageEndEvent, ctx: Pick<AnimationsBoxContext, "hasUI">): void {
 		if (!ctx.hasUI) return;
-		const sample = toCacheRequestSample(event.message);
-		if (sample === undefined) return;
-		this.#cacheMeterState.recordUsage(sample, this.#scheduler.now());
+		const cacheSample = toCacheRequestSample(event.message);
+		if (cacheSample !== undefined) this.#cacheMeterState.recordUsage(cacheSample, this.#scheduler.now());
+
+		if (toAssistantSample(event.message) !== undefined) {
+			this.#cadenceCurrent = undefined;
+			this.#cadenceStreaming = false;
+		}
 	}
 
 	/**
@@ -336,8 +496,11 @@ export class AnimationsBoxController {
 	 * immediately in the new session). Audit Trail's own `session_switch`
 	 * wiring drops its working set the same way, via its state's own
 	 * `noteSessionSwitch` (counting any still-POISONED/DIRTY path as a
-	 * teardown leak) rather than a fresh instance. Tool Constellation and
-	 * Palimpsest wire no `session_switch` handler at all in their own
+	 * teardown leak) rather than a fresh instance. Rate-Limit Tidepool's own
+	 * `session_switch` wiring also resets to a fresh instance and drops its
+	 * pending header buffer (`RateLimitTidepoolController.dispose`) — mirrored
+	 * the same way here. Tool Constellation, Palimpsest, Cadence Equalizer and
+	 * Reflection Ripple wire no `session_switch` handler at all in their own
 	 * standalone extensions, so their state is deliberately left untouched
 	 * here too.
 	 */
@@ -345,6 +508,8 @@ export class AnimationsBoxController {
 		if (!ctx.hasUI) return;
 		this.#cacheMeterState = new CacheMeterState();
 		this.#auditTrailState.noteSessionSwitch();
+		this.#tidepoolPendingHeaders = undefined;
+		this.#tidepoolState = new RateLimitTidepoolState();
 	}
 
 	/** Tear down the live mount: dispose the host and clear the widget. Idempotent. */

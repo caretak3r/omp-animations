@@ -5,10 +5,10 @@
  * SegmentSample}: the simple-mode `variants` ladder (fed straight into the
  * kit's `composeSegments`) plus the detailed-mode column fields, both derived
  * from that animation's own exported pure renderers/state — never reinvented
- * text. Cache Meter (`oh-my-pi-dxi.2`), Audit Trail, Tool Constellation and
- * Palimpsest (`oh-my-pi-dxi.3`) are wired here; Cadence Equalizer, Rate-Limit
- * Tidepool and Reflection Ripple land in `dxi.4`, the breathing border in
- * `dxi.5`.
+ * text. Cache Meter (`oh-my-pi-dxi.2`), Audit Trail, Tool Constellation,
+ * Palimpsest, Cadence Equalizer, Rate-Limit Tidepool and Reflection Ripple
+ * (`oh-my-pi-dxi.3`/`oh-my-pi-dxi.4`) are wired here; the breathing border
+ * lands in `oh-my-pi-dxi.5`.
  *
  * `active` mirrors the animation's own real mount policy (quiet until the
  * first usable event, mirroring `CacheMeterController`'s lazy mount), but
@@ -41,12 +41,38 @@ import {
 	renderCacheMeterRow,
 } from "../cache-meter";
 import {
+	type CadenceEqualizerColors,
+	type CadenceEqualizerState,
+	cadenceEqualizerColors,
+	renderCompactEqualizer,
+	renderEqualizerRow,
+	renderEqualizerText,
+} from "../cadence-equalizer";
+// `MAX_REFERENCE_RATE` lives in `scale.ts`, which the keeper's own `index.ts`
+// barrel does not re-export (only `bars`/`controller`/`state`/`widget` do) —
+// a deep import, not a reinvented constant, since editing that barrel is a
+// keeper-directory change out of this bead's scope (see `dxi.4`'s report).
+import { MAX_REFERENCE_RATE } from "../cadence-equalizer/scale";
+import {
 	GLOW_THRESHOLD,
 	PALIMPSEST_COLORS,
 	type PalimpsestColors,
 	type PalimpsestRow,
 	type PalimpsestState,
 } from "../palimpsest";
+import {
+	type RateLimitTidepoolState,
+	refillLevel,
+	renderTidepoolRow,
+	TIDEPOOL_COLORS,
+	type TidepoolColors,
+} from "../rate-limit-tidepool";
+import {
+	REFLECTION_RIPPLE_COLORS,
+	type ReflectionRippleColors,
+	type ReflectionRippleState,
+	renderReflectionRippleRow,
+} from "../reflection-ripple";
 import {
 	CATEGORY_ICON,
 	CATEGORY_ORDER,
@@ -153,6 +179,74 @@ export function buildCacheMeterSegment(
 	};
 }
 
+/** Same idle convention as the keeper's own `renderEqualizerText` ("--" when nothing is streaming), without that renderer's `eq ` row prefix — this is a column value, not a standalone row. */
+function cadenceRateLabel(tokensPerSecond: number | null): string {
+	if (tokensPerSecond === null || !Number.isFinite(tokensPerSecond) || tokensPerSecond <= 0) return "--";
+	return `${Math.round(tokensPerSecond)} t/s`;
+}
+
+/**
+ * Cadence Equalizer segment. Unlike every other builder in this file, its
+ * `state` alone can't answer "has anything ever happened" — the EMA bands
+ * decay back toward (but never quite reach) zero between turns, so the box
+ * controller tracks `hasStreamed` itself (latched `true` on the first
+ * assistant `message_start`, mirroring `CadenceEqualizerController`'s own
+ * mount trigger) and the live sampled rate (from the same
+ * `calculateTokensPerSecond` provider that controller's `sampleRate` calls),
+ * neither of which lives on `CadenceEqualizerState`. The detail glyph is
+ * always the live `renderCompactEqualizer` strip rather than a separate fixed
+ * resting badge (this keeper exports no badge glyph) — at true rest the bands
+ * are exactly zero, so the same call already renders the correct dim resting
+ * strip, reusing the exported renderer instead of inventing new text.
+ */
+export function buildCadenceEqualizerSegment(
+	state: CadenceEqualizerState,
+	hasStreamed: boolean,
+	tokensPerSecond: number | null,
+	_now: number,
+	theme: BoxTheme,
+	colors: CadenceEqualizerColors = cadenceEqualizerColors(),
+): SegmentSample {
+	const priority = priorityOf("cadenceEqualizer");
+	const bands = state.snapshotBands();
+	const glyph = renderCompactEqualizer(bands, theme, colors);
+	if (!hasStreamed) {
+		return {
+			id: "cadenceEqualizer",
+			priority,
+			...INACTIVE,
+			detail: { glyph, label: "cadence", primary: "—", secondary: "", trailing: "" },
+		};
+	}
+
+	const peaks = state.snapshotPeaks();
+	const variants = dedupe([
+		renderEqualizerRow(bands, peaks, theme, colors),
+		renderCompactEqualizer(bands, theme, colors),
+		renderEqualizerText(tokensPerSecond),
+	]);
+
+	// The peak-hold ceiling across every band, denormalized back to a tok/s-ish
+	// reading — same amplitude-to-rate projection `MAX_REFERENCE_RATE` anchors
+	// throughout `scale.ts` (see `normalizeAmplitude`'s inverse).
+	let peakAmplitude = 0;
+	for (const peak of peaks) if (peak > peakAmplitude) peakAmplitude = peak;
+
+	return {
+		id: "cadenceEqualizer",
+		priority,
+		active: true,
+		variants,
+		detail: {
+			glyph,
+			label: "cadence",
+			primary: cadenceRateLabel(tokensPerSecond),
+			secondary: `peak ${Math.round(peakAmplitude * MAX_REFERENCE_RATE)}`,
+			trailing: renderEqualizerRow(bands, peaks, theme, colors),
+		},
+	};
+}
+
 /**
  * Audit Trail segment. A dim resting row until the first tracked touch lands
  * (`state.size > 0`) — mirrors `AuditTrailBoxController`'s own real mount
@@ -212,6 +306,79 @@ export function buildAuditTrailBoxSegment(
 			primary: counts,
 			secondary: lastTouched === undefined ? "" : basename(lastTouched.path),
 			trailing: `r/w ${metrics.reads}/${metrics.writes} · ×${metrics.writeAmplification.toFixed(1)}`,
+		},
+	};
+}
+
+/** Rate-Limit Tidepool exports no badge glyph of its own — only bar-fill glyphs (`WATER_GLYPH`/`WATER_SHIMMER_GLYPH`/`PEBBLE_GLYPH`/`SAND_GLYPH`) parametrized by tier and animation phase. This is the box's own literal badge, matching Plan 017 Decision 1's table row (same precedent as `PALIMPSEST_GLYPH` below). */
+const TIDEPOOL_BADGE_GLYPH = "◗";
+
+/** `resets <N>m`/`resets <N>s`-style ETA to the binding bucket's reset, or `""` when the response reported none. */
+function resetEtaLabel(resetAtMs: number | undefined, now: number): string {
+	if (resetAtMs === undefined) return "";
+	const remainingMs = resetAtMs - now;
+	if (remainingMs <= 0) return "resets now";
+	const minutes = Math.floor(remainingMs / 60_000);
+	if (minutes >= 1) return `resets ${minutes}m`;
+	return `resets ${Math.max(1, Math.round(remainingMs / 1000))}s`;
+}
+
+/**
+ * Rate-Limit Tidepool segment. A dim resting row until the first recognized,
+ * provider-whitelisted response lands (`state.snapshot() !== undefined`) —
+ * mirrors `RateLimitTidepoolController`'s own lazy mount. The `{anthropic,
+ * openai}` family whitelist is enforced upstream, in `controller.ts`'s
+ * `onMessageStart` (mirroring `RateLimitTidepoolController.onMessageStart`
+ * exactly) — this builder only ever sees a snapshot that already passed that
+ * gate, so it never re-checks it. Like Cache Meter and Audit Trail, this
+ * segment never reproduces the standalone widget's per-frame cosmetic (the
+ * filled-edge-cell shimmer lives inside `TidepoolWidget` itself, gated on the
+ * `full` motion tier this box never requests), so every variant renders at
+ * the fixed `subtle` motion tier. The near-empty `sand` alarm color is fixed
+ * regardless of `colors` — `TidepoolColors`/`tidepoolColors` only ever
+ * override the `water` slot, so an accent override recolors the water alone,
+ * exactly as the standalone widget's own accent contract promises.
+ */
+export function buildRateLimitTidepoolSegment(
+	state: RateLimitTidepoolState,
+	now: number,
+	theme: BoxTheme,
+	colors: TidepoolColors = TIDEPOOL_COLORS,
+): SegmentSample {
+	const priority = priorityOf("rateLimitTidepool");
+	const snapshot = state.snapshot();
+	if (snapshot === undefined) {
+		return {
+			id: "rateLimitTidepool",
+			priority,
+			...INACTIVE,
+			detail: {
+				glyph: theme.fg("dim", TIDEPOOL_BADGE_GLYPH),
+				label: "limits",
+				primary: "—",
+				secondary: "",
+				trailing: "",
+			},
+		};
+	}
+
+	const level = refillLevel(snapshot.level, now, snapshot.observedAtMs, snapshot.resetAtMs);
+	const variants = dedupe(
+		[999, 30, 12].map(width => renderTidepoolRow(level, snapshot.provider, now, width, theme, "subtle", colors)),
+	);
+	const clampedLevel = level <= 0 ? 0 : level >= 1 ? 1 : level;
+
+	return {
+		id: "rateLimitTidepool",
+		priority,
+		active: true,
+		variants,
+		detail: {
+			glyph: theme.fg(colors.water, TIDEPOOL_BADGE_GLYPH),
+			label: "limits",
+			primary: `${Math.round(clampedLevel * 100)}%`,
+			secondary: snapshot.provider,
+			trailing: resetEtaLabel(snapshot.resetAtMs, now),
 		},
 	};
 }
@@ -353,6 +520,63 @@ export function buildPalimpsestSegment(
 			primary: basename(hottest.path),
 			secondary: `×${hottest.overlapCount}`,
 			trailing: `${visible.length} row${visible.length === 1 ? "" : "s"}`,
+		},
+	};
+}
+
+/** Reflection Ripple exports no badge glyph of its own (only the phase-parametrized `ringGlyph(brightness)`) — this is the box's own literal, matching Plan 017 Decision 1's table row (same precedent as `PALIMPSEST_GLYPH`/`TIDEPOOL_BADGE_GLYPH` above). */
+const REFLECTION_RIPPLE_GLYPH = "○";
+
+/**
+ * Reflection Ripple segment. Unlike every other segment in this file, its
+ * resting state — `phase === "idle"` — is the COMMON case (Decision 1): a
+ * ripple is only ever in flight for the ~1.6s its wave takes to settle, so
+ * `active` here means "a ripple is CURRENTLY in flight," not "has ever
+ * fired" (contrast Cadence Equalizer's `hasStreamed`, which latches
+ * permanently once true). `now` is the box's own `FrameScheduler` wall
+ * clock — the SAME clock `controller.ts` stamps `applyTrigger`'s trigger
+ * timestamp with — so `state.rippleElapsedMs(now)` renders the correct phase
+ * even when the trigger landed before the box's first repaint (Decision 4).
+ */
+export function buildReflectionRippleSegment(
+	state: ReflectionRippleState,
+	now: number,
+	theme: BoxTheme,
+	colors: ReflectionRippleColors = REFLECTION_RIPPLE_COLORS,
+): SegmentSample {
+	const priority = priorityOf("reflectionRipple");
+	const snapshot = state.snapshot();
+	if (snapshot.phase !== "rippling") {
+		return {
+			id: "reflectionRipple",
+			priority,
+			...INACTIVE,
+			detail: {
+				glyph: theme.fg("dim", REFLECTION_RIPPLE_GLYPH),
+				label: "reflect",
+				primary: "—",
+				secondary: "",
+				trailing: "",
+			},
+		};
+	}
+
+	const elapsed = state.rippleElapsedMs(now);
+	const variants = dedupe(
+		[999, 40, 12].map(width => renderReflectionRippleRow(elapsed, width, theme, "subtle", colors)),
+	);
+
+	return {
+		id: "reflectionRipple",
+		priority,
+		active: true,
+		variants,
+		detail: {
+			glyph: theme.fg(colors.ring, REFLECTION_RIPPLE_GLYPH),
+			label: "reflect",
+			primary: snapshot.ruleNames.join(", "),
+			secondary: String(snapshot.triggerCount),
+			trailing: "—",
 		},
 	};
 }

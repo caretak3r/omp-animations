@@ -713,3 +713,168 @@ above exactly). tsgo and biome both clean.
 `src/tool-constellation/`, `src/palimpsest/`) was touched; `src/animations-box/widget.ts` and
 `src/animations-box/settings.ts` were read but not modified; `src/registrar.ts` and `package.json`
 remain untouched (`dxi.7`'s scope).
+
+## Plan 017 — Animations Box: dxi.4 segments B (cadence equalizer, rate-limit tidepool, reflection ripple)
+
+**Status: DONE**
+
+- **`src/animations-box/segments.ts` — three new builders, inserted at their priority slots (not
+  appended), same template as `buildCacheMeterSegment` where the keeper's own state permits:**
+  - `buildCadenceEqualizerSegment(state: CadenceEqualizerState, hasStreamed, tokensPerSecond, now,
+    theme, colors?)` — the one builder in this file that DEVIATES from the `(state, now, theme,
+    colors?)` template, and the reason is structural, not stylistic: `CadenceEqualizerState`'s own
+    EMA bands decay *toward* but never *reach* exactly zero between turns, so the state alone can't
+    answer "has anything ever happened" the way `state.size > 0`/`snapshot().stars.length > 0` do
+    for Audit Trail/Tool Constellation. `hasStreamed` (latched permanently on the first assistant
+    `message_start`, owned by the controller) and `tokensPerSecond` (the live sampled rate, also
+    controller-owned — `CadenceEqualizerState` has no rate field, only bands/peaks) are threaded in
+    explicitly. Variants: the Decision-1 ladder is three DIFFERENT renderers, not one renderer at
+    three widths — `renderEqualizerRow` (full band bar with peak caps) → `renderCompactEqualizer`
+    (bare band strip) → `renderEqualizerText` (numeric fallback), deduped. Detail: glyph is always
+    the live `renderCompactEqualizer` strip over the state's *actual* current bands — including at
+    rest, where the bands are genuinely all-zero, so the same call already produces the correct dim
+    resting strip. This reuses the exported renderer instead of inventing a fixed resting-badge
+    literal (the pattern every other segment in this file uses), because unlike Palimpsest/Tidepool/
+    Ripple, Cadence Equalizer actually has real per-frame state to draw even at rest. Primary =
+    `<N> t/s` or the keeper's own idle convention `"--"` (reproduced locally as `cadenceRateLabel`,
+    since `renderEqualizerText`'s version carries an `"eq "` row prefix this column doesn't want).
+    Secondary = `peak <N>`, the highest live band-peak amplitude denormalized back through
+    `MAX_REFERENCE_RATE` (`normalizeAmplitude`'s inverse). Trailing = the full `renderEqualizerRow`
+    band bar (peak caps included) — distinct from the glyph column's bare compact strip, matching
+    Decision 1's table naming the two columns differently ("compact eq" vs. "band bar").
+  - `buildRateLimitTidepoolSegment(state: RateLimitTidepoolState, now, theme, colors?)` — active
+    once `state.snapshot() !== undefined`. The `{anthropic, openai}` family whitelist from Decision
+    1's table is enforced entirely upstream, in `controller.ts`'s `onMessageStart` (mirroring
+    `RateLimitTidepoolController.onMessageStart` exactly) — this builder only ever sees a snapshot
+    that already passed that gate, so it never re-checks it. Variants: `renderTidepoolRow` at the
+    999/30/12 budgets, fixed `subtle` motion tier (same fixed-tier choice `dxi.2`/`dxi.3` already
+    made for Cache Meter/Audit Trail, so the filled-edge shimmer — a `full`-tier-only,
+    per-frame-only cosmetic — never reproduces here). Level is refill-adjusted via the keeper's own
+    exported `refillLevel(level, now, observedAtMs, resetAtMs)` before rendering, off the SAME
+    `now` the controller stamped `observedAtMs` with (Decision 4 — verified with a dedicated test
+    asserting the percentage actually moves between two `now` readings, not just that it renders).
+    Detail: glyph = a new local literal `TIDEPOOL_BADGE_GLYPH = "◗"` (this keeper exports no badge
+    glyph of its own, only bar-fill glyphs — same precedent as `PALIMPSEST_GLYPH`), colored via the
+    `water` accent slot; primary = rounded level percentage; secondary = bare provider; trailing =
+    a new local `resetEtaLabel` (`"resets <N>m"` / `"resets <N>s"` / `"resets now"` / `""`) — no
+    exported formatter existed for this, so it's original text, not reused text; flagged here as
+    the one spot in this bead that isn't a straight reuse.
+  - `buildReflectionRippleSegment(state: ReflectionRippleState, now, theme, colors?)` — Decision
+    1's explicitly-called-out inversion: **idle is the COMMON state**, not a startup gap. `active`
+    means "a ripple is CURRENTLY in flight" (`phase === "rippling"`), never latching, unlike
+    Cadence's `hasStreamed`. Variants: `renderReflectionRippleRow` at 999/40/12, fixed `subtle`
+    tier, `elapsedMs = state.rippleElapsedMs(now)`. Detail: glyph = a new local literal
+    `REFLECTION_RIPPLE_GLYPH = "○"` (this keeper exports no badge either, only the
+    phase-parametrized `ringGlyph(brightness)`); primary = joined rule names; secondary = the bare
+    session trigger count (no exported formatter needed — a raw number, per Decision 1's table
+    naming this column "trigger count" with no template, unlike every other segment's columns);
+    trailing = the literal fixed string `"—"` — Decision 1's table names this column '—' verbatim
+    for this one segment, meaning there genuinely is no fifth data point here, not "empty because
+    idle" (resting trailing is `""`, matching every other segment; only the ACTIVE trailing is the
+    literal dash, straight from the spec table).
+  - **Deep-import gotcha, flagged for future cleanup:** `MAX_REFERENCE_RATE` (`cadence-equalizer`)
+    and `normalizeAmplitude` (`cadence-equalizer`, used in `controller.ts`) both live in
+    `cadence-equalizer/scale.ts`, which that keeper's own `index.ts` barrel does NOT re-export
+    (only `bars`/`controller`/`state`/`widget` do — `CadenceEqualizerColors`/`cadenceEqualizerColors`
+    happen to be re-exportable only because `widget.ts` itself defines them, not because `scale.ts`
+    is reachable). Fixing the keeper's own barrel is out of this bead's scope (keeper-directory
+    edits are explicitly excluded), so both imports go straight to `../cadence-equalizer/scale`
+    instead — documented inline at each import site. A future bead touching `cadence-equalizer/`
+    should add `export * from "./scale"` to its `index.ts` and these two imports can move to the
+    barrel.
+- **`src/animations-box/controller.ts`:**
+  - Three fresh state instances (`CadenceEqualizerState`, `RateLimitTidepoolState`,
+    `ReflectionRippleState`), never the standalone controllers — same Decision 6 pattern as every
+    prior bead.
+  - New `onMessageStart` handler does double duty: it's the ONE event both Cadence Equalizer
+    (`toAssistantSample`, mirrored byte-identical from `../cadence-equalizer/controller.ts`'s own
+    private helper, latches `#cadenceHasStreamed` permanently) and Rate-Limit Tidepool (consumes
+    `#tidepoolPendingHeaders`, mirroring `RateLimitTidepoolController.onMessageStart`'s own
+    stash-then-consume ordering trick) subscribe to independently in their standalone extensions —
+    same "one handler, two keepers" precedent `onToolResult` already set for Audit Trail+Palimpsest
+    in `dxi.3`.
+  - New `onMessageUpdate` (Cadence only) and `onAfterProviderResponse` (Tidepool only, stashes
+    headers) round out the two keepers' full event surfaces.
+  - New `onTtsrTriggered` (Ripple only) just calls `state.applyTrigger(ruleNames,
+    this.#scheduler.now())` — no mount/teardown dance to mirror, since the box has no per-segment
+    widget to construct/dispose; the segment's own `active` flag already IS the "is it showing"
+    signal.
+  - `onMessageEnd` (extended) now ALSO clears Cadence's tracked in-flight message
+    (`#cadenceCurrent`/`#cadenceStreaming`) on every finalized assistant message, mirroring
+    `CadenceEqualizerController.onMessageEnd`'s own clear — otherwise the next sample would keep
+    reporting the just-finished turn's average rate indefinitely instead of settling to idle.
+  - **New `#onTick(now)` seam wiring — the actual novel plumbing this bead adds.** Neither Cadence
+    Equalizer's per-tick EMA-band stepping nor Reflection Ripple's per-tick settle check has an
+    event to hang off; the standalone widgets drive both from their OWN `AnimatedWidget#onFrame`
+    hook, which this box doesn't have per segment. `#onTick` (previously a documented no-op,
+    exactly anticipating this) now calls `this.#cadenceState.pushSample(normalizeAmplitude(
+    this.#sampleCadenceRate(now) ?? 0))` and `this.#reflectionRippleState.settleIfDone(now)` every
+    tick, both off the SAME `now` the seam is called with — `AnimationsBoxWidget.onFrame` already
+    calls `this.#onTick(this.#clock.now())`, i.e. the scheduler's wall clock, never the host's
+    mount-relative `elapsedMs` (Decision 4 was already correctly wired in `dxi.2`; this bead is the
+    first to actually have per-tick mutation to run through it). `#sampleCadenceRate` is called a
+    second time, independently, inside `#buildSamples` for the render-time reading — both calls are
+    pure given the same `#cadenceCurrent`/`#cadenceStreaming`/`now`, so no double-counting risk.
+  - `onSessionSwitch` (extended) additionally resets Tidepool to a fresh instance and drops its
+    pending header buffer, mirroring `RateLimitTidepoolController`'s own `session_switch ->
+    dispose()` wiring. Cadence Equalizer and Reflection Ripple wire NO `session_switch` handler in
+    their own standalone extensions, so both are deliberately left untouched here too — verified
+    against each keeper's own `index.ts` event list, not an oversight.
+  - `#buildSamples`'s array literal — the ordering hazard `dxi.3`'s worker flagged for this bead —
+    now reads `[cacheMeter, cadenceEqualizer, auditTrailBox, rateLimitTidepool, toolConstellation,
+    palimpsest, reflectionRipple]`, i.e. `BOX_SEGMENT_IDS`' own priority order verbatim, each new
+    builder inserted between its correct neighbors rather than appended. Pinned by a new dedicated
+    controller test asserting all 7 detailed-mode rows render in that exact order regardless of
+    which segments were activated in which order.
+- **MANDATORY acceptance test (bead criterion) — wall-clock seam:** a new
+  `test/animations-box-controller.test.ts` test triggers a ripple BEFORE `controller.mount()` is
+  ever called (`onTtsrTriggered` only needs `ctx.hasUI`, not a live mount), advances the manual
+  scheduler to one tick short of `SETTLE_MS`, THEN mounts, and asserts the ripple is still active
+  at that point and settles exactly one tick later — proving `state.rippleElapsedMs(now)` is
+  measured off the ORIGINAL trigger timestamp on the shared scheduler, not reset to zero at mount
+  time. Chose an observable transition (active → resting timing) over string-matching rendered
+  ripple glyphs, since it's a strictly more direct probe of the actual clock-seam contract and
+  isn't sensitive to exact glyph-rendering details.
+- **Test-writing gotcha, worth flagging for future segments with a literal fixed `trailing`:** the
+  `dxi.2`/`dxi.3` convention of asserting "segment went active" via `expect(row).not.toContain("—
+  ")` (5 trailing spaces) false-positives on Reflection Ripple, because its ACTIVE `detail.trailing`
+  is ALSO always the literal `"—"` (see above) — the 27-column-wide trailing cell pads that dash
+  with plenty of trailing spaces, matching the same substring the idiom was checking for. Its tests
+  use a segment-specific resting-row substring (`"reflect  —"` — the exact two-space gap the
+  8-column label cell plus one join-space produces before a genuinely resting `primary`) instead.
+- **Cosmetic gaps (same accepted category as Cache Meter's hit-rate ease, `dxi.2`):** Tidepool's
+  filled-edge shimmer (`shimmerBeat`, `full`-tier only) is never reproduced, by construction (this
+  segment fixes `motionTier: "subtle"`, same as every prior segment's fixed-`subtle` choice) —
+  noted in `buildRateLimitTidepoolSegment`'s own doc comment. Neither Cadence Equalizer nor
+  Reflection Ripple's standalone widgets have any additional per-frame-only cosmetic beyond what
+  their own shared state already drives (peak-hold decay and ripple phase both live on `*State`
+  itself, sampled/ticked identically here), so there is no equivalent gap to note for those two.
+- **Tests (all new, literal pinned expectations, no snapshots):** 39 new tests in
+  `test/animations-box-segments.test.ts` (priority derivation, resting-row content and dim color
+  per builder, active-row content/variants/dedupe against the exact renderer call each keeper's own
+  widget would make, the cadence idle-vs-sampled primary label, the tidepool refill-adjusted level
+  and all four `resetEtaLabel` branches, the ripple idle-is-common-state assertion including a
+  force-settled round trip, and a same-inputs-same-output purity check for ripple's phase math); 21
+  new tests in `test/animations-box-controller.test.ts` (resting-before-first-event, active-flip
+  per event including the two-keepers-share-one-event cases for `onMessageStart`, `hasUI` gating,
+  the enabled-gate per segment, the `onFrame`-driven per-tick EMA step, Tidepool's
+  unwhitelisted-provider and message-role gates, Tidepool's `session_switch` reset, the ripple
+  settle-via-tick round trip, the MANDATORY wall-clock-seam acceptance test, and the 7-row
+  detailed-mode ordering test).
+
+**Gate:** `bun test && bun run check:types && biome check .` — **865 pass / 0 fail / 2660
+assertions / 23 files** (baseline immediately before this bead was 805 pass / 2560 assertions per
+`dxi.3`'s own gate line above; +60 new tests / +100 new assertions, matching the 39+21 test counts
+above exactly). tsgo and biome both clean (biome's own `--write` auto-fixed import ordering and a
+few multi-line-object reformats across all 4 touched files — no logic changes, re-verified with a
+full `bun test` + `bun run check:types` pass after).
+
+**Files touched:** `src/animations-box/segments.ts`, `src/animations-box/controller.ts`,
+`test/animations-box-segments.test.ts`, `test/animations-box-controller.test.ts`,
+`plans/PROGRESS.md` (this entry). No keeper directory (`src/cadence-equalizer/`,
+`src/rate-limit-tidepool/`, `src/reflection-ripple/`) was touched. `src/animations-box/widget.ts`
+and `src/animations-box/settings.ts` were read but not modified (both already anticipated the full
+7-segment set). `src/registrar.ts` and `package.json` remain untouched (`dxi.7`'s scope).
+`dxi.5`'s worker note: the border-breathing bead can now assume all 7 segments are wired and the
+`#onTick` seam is live (no longer a no-op) — any border-breathing per-tick state should be added
+alongside the two calls already there, not as a separate seam.
