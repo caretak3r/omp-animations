@@ -989,3 +989,101 @@ show colored border glyphs by default. Use `getBorderBrightness: () => undefined
 for a clean content-only comparison. `AnimationsBoxWidgetOptions` now requires `getBorderBrightness`
 — any golden test constructing the widget directly (not through `AnimationsBoxController`) needs
 that field or it won't compile.
+
+## Plan 017 — Animations Box: dxi.6 full-box golden-frame tests + width/height correctness
+
+**Status: DONE** (test bead — no source bugs surfaced; all 7 segment builders, the widget, the
+controller, and `composeSegments` behaved exactly as `dxi.2`–`dxi.5` left them)
+
+- **New file `test/animations-box-goldens.test.ts` (11 tests, 104 assertions).** Three sections,
+  per the bead's scope:
+  1. **Full-box golden frames** — `driveFullBox(detail)` mounts a real `AnimationsBoxController`
+     and drives it through its actual public event handlers (`onMessageEnd`, two `onMessageStart`
+     calls, two `onToolResult` calls, `onAfterProviderResponse`, two `onToolCall` calls, one
+     `scheduler.advance(50) + widget.onFrame(0)` tick) to build a representative "5 of 7 active"
+     scene — cache meter, cadence, audit trail, rate-limit tidepool, and tool constellation go
+     active; palimpsest and reflection ripple stay resting — matching Decision 5's own
+     detailed-mode mock's activation pattern. The exact literal frames were generated once by
+     running this same driven scene through a throwaway script, hand-verified against each
+     segment's real formula (cache warmth `600/(600+200+400) = 50.0%`; tok/s `(100×1000)/1000 =
+     100`; tool-constellation dominant-category tie broken by `CATEGORY_ORDER`'s `read` before
+     `write`; tidepool `resets 12m` from a deliberately non-round reset offset, `725_000ms`, chosen
+     so the one scheduler tick doesn't cross a minute boundary and flip the pinned string), then
+     pasted as `toEqual([...])` literals — a real golden, not a self-referential "call the builder,
+     assert it equals itself" test. Pinned at all three required widths (69/45/120) in both detail
+     modes (6 frame assertions total), plus one more test asserting every rendered row's
+     `visibleWidth` (from `@oh-my-pi/pi-tui`) equals the literal target width across both modes ×
+     all three widths — no overflow, no underflow anywhere.
+  2. **Height stability** — `restingSamples()`/`activeSamples()` build one real `SegmentSample`
+     per `BOX_SEGMENT_IDS` entry (idle vs. warmed `*State` instances, fed through the same
+     `build*Segment` functions `segments.ts` itself calls — never hand-rolled samples), asserted
+     1:1-aligned with `BOX_SEGMENT_IDS` order. Toggling any single segment active↔resting (looped
+     via `BOX_SEGMENT_IDS`, never a hardcoded id list) leaves `widget.render(69).length` unchanged
+     in both detail modes; so does flipping all 7 at once. A dedicated assertion pins detailed
+     height to `BOX_BORDER_ROWS + BOX_SEGMENT_IDS.length` and simple height to `BOX_BORDER_ROWS +
+     1` — both derived from the widget's own exported constants/id-list length, no magic 7/8/3.
+     Separately, `AnimationsBoxController — config-driven height changes` mounts real controllers
+     under `resolveAnimationsBoxConfig({...})` variants (no events driven — height is a pure
+     function of the enabled set and detail level, never of activity, per Decision 5) and, looping
+     over `BOX_SEGMENT_IDS`, confirms disabling any one segment shortens detailed-mode height by
+     exactly 1 and leaves simple mode's height untouched; a separate test confirms
+     `breathingBorder: false` changes height not at all in either mode (the border chrome survives,
+     just uncolored — already proven at the widget level by `dxi.5`'s own geometry-invariance test,
+     re-confirmed here through the controller/config seam).
+  3. **Degradation ladder** — builds the same `activeSamples()` (all 7 segments active at once),
+     converts each to a kit `Segment` via `segment(s.id, s.priority, s.variants)`, and calls the
+     kit's exported `composeSegments` directly (the same function `widget.ts`'s simple-mode branch
+     calls internally) at `width - BOX_BORDER_COLS` for width ∈ {69, 45, 120}. `LADDER` is expressed
+     as `{ 69: BOX_SEGMENT_IDS, 45: BOX_SEGMENT_IDS.slice(0, -1), 120: BOX_SEGMENT_IDS }` rather than
+     three independently hand-typed id arrays — since `composeSegments` returns `keptIds` already
+     sorted ascending by priority, and priority is exactly each id's index in `BOX_SEGMENT_IDS`, the
+     kept set at any width is always some prefix/subset of that same array in that same order; this
+     both derives the expectation from the id list (no magic list duplication) and gives the actual
+     ladder for free from the real computed narrow-variant widths. A second assertion maps `keptIds`
+     back to priority via a local `priorityOf` and checks the sequence is already ascending-sorted
+     (proves `composeSegments`'s priority-order guarantee, not just the specific membership).
+
+- **Ladder observed (everything active, simple mode):** at width 69 and 120, all 7 segments'
+  narrowest variants fit the budget (65 and 116 respectively) — nothing drops. At width 45 (inner
+  41), the combined narrowest-variant width across all 7 is exactly 56 with separators, which
+  doesn't fit 41; dropping the single lowest-priority segment (`reflectionRipple`, priority 7 —
+  its narrowest variant alone is 12 columns, since `renderReflectionRippleRow`'s "subtle" tier pads
+  to the FULL requested render width rather than a compact form) brings the remaining 6 down to
+  exactly 41, which fits with zero room to spare. So the pinned ladder is `{69: all 7, 45: all but
+  reflectionRipple, 120: all 7}` — a real, width-45-only degradation, not a fabricated one.
+
+- **No source bugs found.** All three test sections passed on first run against the `dxi.2`–`dxi.5`
+  implementation with zero source-file edits — this bead's acceptance criteria are entirely
+  test-authoring plus the one-time golden-generation/verification pass described above.
+
+- **Gotcha hit during authoring, worth flagging forward:** `expect(arr).toEqual(BOX_SEGMENT_IDS)`
+  fails `tsgo` (not at runtime) because `BOX_SEGMENT_IDS` is a `readonly [...] as const` tuple and
+  bun's `toEqual` overload wants a mutable array type on that side; spread it (`[...BOX_SEGMENT_IDS]`)
+  when asserting id-list equality, same as this file's own "restingSamples()/activeSamples() line up
+  1:1 with BOX_SEGMENT_IDS" test does. Comparing `readonly BoxSegmentId[]` against `keptIds` (typed
+  `readonly string[]`, not a literal tuple) did not hit this, so it's specifically the "both sides
+  are literal `as const` tuples" case that trips the overload.
+
+**Gate:** `bun test && bun run check:types && ./node_modules/.bin/biome check .` — **893 pass / 0
+fail / 2833 assertions / 24 files** (baseline immediately before this bead was 882 pass / 2729
+assertions per `dxi.5`'s own gate line above; +11 new tests / +104 new assertions / +1 file, exactly
+this bead's new file). tsgo clean after the `toEqual([...BOX_SEGMENT_IDS])` fix above. biome flagged
+formatting only (long import lines / call-argument wrapping) — `--write --unsafe` auto-fixed the one
+new file, re-verified clean with a full `bun test` + `bun run check:types` + `biome check .` pass
+after.
+
+**Files touched:** `test/animations-box-goldens.test.ts` (new), `plans/PROGRESS.md` (this entry). No
+`src/` file was touched — this bead's acceptance was met entirely by new tests against the existing
+`dxi.2`–`dxi.5` implementation; registrar/package.json wiring (`dxi.7`), keeper directories, and
+sandbox validation (`dxi.8`) remain untouched, as required by this bead's own scope.
+
+`dxi.7`'s worker note: this bead's `driveFullBox` helper (in the new goldens test file) is a second,
+independent proof — alongside `animations-box-controller.test.ts` — that the controller's full event
+surface (`onMessageEnd`/`onMessageStart`/`onMessageUpdate`/`onAfterProviderResponse`/`onToolResult`/
+`onToolCall`/`onTtsrTriggered`/`onAgentStart`/`onAgentEnd`/`onTurnStart`/`onTurnEnd`/
+`onSessionCompact`/`onAutoCompactionStart`/`onAutoCompactionEnd`/`onSessionSwitch`) is exactly what
+`dxi.7`'s registrar wiring needs to subscribe to `api.on(...)` — nothing new was discovered here that
+changes that list. Separately: `AnimationsBoxContext.cwd` is required by the controller
+(`onToolResult`'s Audit Trail adapter) — the registrar wiring must supply the real working directory,
+not a placeholder, or Audit Trail's box segment will resolve every touched path relative to the
+wrong root.
