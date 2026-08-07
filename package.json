@@ -63,7 +63,7 @@
 			},
 			"display": {
 				"type": "enum",
-				"description": "How the plugin's animations show up. 'rows' mounts each enabled animation as its own classic row. 'box' (default) consolidates them into one bordered box. 'both' shows rows and the box together, for debugging/comparison.",
+				"description": "How the plugin's animations show up. 'rows' mounts each enabled animation as its own classic row. 'box' (default) consolidates them into one bordered box. 'both' shows rows and the box together, for debugging/comparison. Applied at wire time (restart to change).",
 				"values": [
 					"rows",
 					"box",

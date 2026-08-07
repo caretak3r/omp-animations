@@ -74,7 +74,9 @@ controls the row. In `box` mode, it controls the row inside the box. In
 Two more settings shape the box:
 
 - `animationsBoxDetail` — `detailed` (default) shows one labeled row per
-  active signal. `simple` composes every active signal into a single line.
+  enabled signal; an idle signal keeps a dim resting row, so the box height
+  does not change while you work. `simple` composes every active signal into
+  a single line.
 - `animationsBoxPlacement` — which side of the editor the box mounts on:
   `aboveEditor` or `belowEditor` (default).
 
