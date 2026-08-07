@@ -1233,3 +1233,128 @@ own coverage, unchanged by this bead, but never re-verified against a REAL headl
 (3) the border's breathing motion and the box's own placement/detail rendering at a real terminal
 width, which this bead's registrar-level tests do not and should not attempt (that's `dxi.6`'s
 golden-frame territory, already covered).
+
+## Plan 017 — Animations Box: dxi.8 gates + live sandbox validation
+
+**Status: DONE (gates clean; 4 of 5 assigned sandbox scenarios proven with evidence; one assigned
+scenario surfaced a real settings-UI gap in the installed omp build rather than the expected result;
+worker-note item (2) above — Audit Trail Box's real stale-file alarm — was out of this bead's
+assigned scope and was not exercised. Final "perfect-bar" acceptance is Rohit's, per the bead.)**
+
+- **Gates, run at `/Users/rohit/Documents/omp-animations` HEAD `8d5c48cd05f8d06e7cf624e6211836b51aaf9d2f`:**
+  - `bun test` → **906 pass / 0 fail / 2858 expect() calls / 24 files**, exit 0. Matches `dxi.7`'s
+    own gate line above exactly (no drift since that bead's commit).
+  - `bun run check:types` → `tsgo -p tsconfig.json --noEmit`, no output, exit 0.
+  - `./node_modules/.bin/biome check .` → `Checked 84 files in 32ms. No fixes applied.`, exit 0.
+  - Logs: `/tmp/dxi8-evidence/bun-test.log`, `/tmp/dxi8-evidence/typecheck.log`,
+    `/tmp/dxi8-evidence/biome.log`.
+
+- **Sandbox discovery.** `tmux has-session -t anim-keepset` initially failed — the session did not
+  exist yet (only `2`, `pair3-base`, `pair3-fork`, `zen-sandbox-test` were live; `xxz6` was not
+  present either, so the "never touch it" hazard was moot by construction). Created it fresh:
+  `tmux new-session -d -s anim-keepset -x 69 -y 42 -c /tmp/omp-anim-keepset`. Profile selection:
+  `/Users/rohit/.omp/profiles/anim-keepset/plugins/node_modules/@oh-my-pi/animations` is a symlink
+  (`readlink -f` confirms) directly to `/Users/rohit/Documents/omp-animations` — not a copy — so
+  whatever is on disk there (HEAD `8d5c48c`) is exactly what loads; no re-link needed.
+  `omp-plugins.lock.json` for that profile shows `{"plugins": {"@oh-my-pi/animations": {"version":
+  "0.1.0", "enabled": true}}, "settings": {}}` — **`settings` is empty**, i.e. this profile has no
+  stored per-key overrides for `display`/`animationsBoxDetail`/`animationsBoxPlacement` at all. This
+  directly answers worker-note item (1) from `dxi.7` above: the box-by-default behavior observed
+  below is exercised through the REAL `getPluginsLockfile()` settings channel with a genuinely empty
+  settings object, not the injectable test seam.
+  **Correction to the brief's premise:** the sandbox is NOT auth-blocked. `omp --profile
+  anim-keepset` launched straight to a "Welcome back!" screen already authenticated (GPT-5.5 via
+  `openai-codex`, one prior session). No credentials were seeded, configured, or touched by this
+  bead — this is pre-existing profile state discovered, not created.
+
+- **(a) Default launch (`display=box`, detailed) — PROVEN.** `omp --profile anim-keepset`, idle
+  capture: a 9-row box (2 border + 7 segment rows — cache, cadence, audit, limits, tools, files,
+  reflect, matching `BOX_SEGMENT_IDS` minus `breathingBorder`) directly below the model-status
+  header, each of the 11 box+header rows measured at **exactly 69 columns** via a Python width
+  check (`len()` on the ANSI-stripped line), borders intact (`╭…╮`/`│…│`/`╰…╯`), no clipped glyphs,
+  no standalone animation rows anywhere in the capture. Drove a real read-only prompt ("List the
+  files… summarize README.md") through the live GPT-5.5 session: `cache` (47.3%, saved $0.12, r
+  27K/w 0), `audit` (2✓, MEMORY.md, r/w 2/0), and `tools` (3 calls, read, ⛏3) all populated with
+  real live data mid-generation; `limits`/`files`/`reflect` correctly stayed idle (`—`) — no rate
+  pressure, no file edits, no reflection event, exactly as their mount policies predict. Height
+  stayed fixed at 9 rows throughout. Evidence: `/tmp/dxi8-evidence/a-launch-idle.txt`,
+  `a-launch-idle-color.txt`, `a-during-tool-call-{1,2,3}.txt`, `a-after-tool-call.txt`.
+
+- **(b) `OMP_ANIMATIONS_BOX_DETAIL=simple` relaunch — PROVEN.** Box collapses to exactly **3 rows**
+  (border/content/border), 69 columns, both idle (blank content row) and mid-activity, where the
+  content row condensed cache+audit+tools into one line: `▤ H 47.5% (1/2) R 27K W 0 M 29K ·
+  · ▣ 3✓ · ⛏ 3`. Height never grew past 3 regardless of how many segments had data. Evidence:
+  `/tmp/dxi8-evidence/b-simple-detail-launch.txt`, `b-simple-detail-during{,2}.txt`.
+
+- **(c) `OMP_ANIMATIONS_DISPLAY=rows` relaunch — PROVEN.** No box anywhere in any capture — only the
+  pre-existing model-status header. Driving activity produced classic **standalone, unboxed** rows:
+  a cadence-equalizer strip (`──────━───…`), a cache row (`▤ SAVED $0.12 ▁█ HIT 47.5% (1/2) READ
+  27K WRITE 0 MISS 29K`), and an audit dot-grid block (`· · · · · · · · · ✦` / `▣ 2✓ r/w 2/0 ×0.0
+  ↻0%`) — no border characters anywhere near them, confirming `box` mode is fully suppressed.
+  Evidence: `/tmp/dxi8-evidence/c-rows-launch.txt`, `c-rows-during{,2,3}.txt`.
+
+- **(d) `/settings` → Plugins page — NOT FOUND, this is a real gap, not an auth-block.** Swept all
+  10 tabs the settings TUI actually has in this installed build (`omp v17.2.9`): Appearance, Model,
+  Interaction, Context, Memory, Files, Shell, Tools, Tasks, Providers — none contain any
+  animations/box/plugin-specific settings (checked every row of every tab, including scrolling
+  Appearance/Tools to their true bottom). There is no "Plugins" tab at all. `/plugin` and
+  `/plugins` both just print a static, non-interactive list (`npm plugins: @oh-my-pi/animations@0.1.0`)
+  — no drill-down, no per-plugin key/enum listing. This means the 3 box settings keys are
+  **not currently surfaced in the `/settings` TUI of the installed omp binary** (a newer version,
+  17.2.10, was flagged as available via an in-app banner but was not installed, per this bead's "no
+  workarounds, report the blockage" instruction extended to unexpected UI gaps — updating the
+  sandbox's omp binary was out of scope and not attempted). The 3 keys are confirmed working via
+  their env-var overrides (scenarios a/b/c above); whether they're reachable through
+  `omp plugin config set/get/list @oh-my-pi/animations <key> <val>` (the CLI path `dxi.1`'s README
+  rewrite documents as primary) was not tested — worth a quick follow-up, but is a CLI check, not a
+  `/settings` TUI one, and wasn't part of this bead's literal step (d). Evidence:
+  `/tmp/dxi8-evidence/d-settings-1.txt`, `d-settings-tabs-scan.txt`, `d-{model,interaction,context,
+  memory,files,shell,tools,tasks,providers}-tab.txt`, `d-appearance-{scrolled,bottom}.txt`,
+  `d-plugins-{list,cmd}.txt`.
+
+- **(e) Border breathing — PROVEN with an honest capture-method caveat.** Extracted the box's own
+  top-border RGB color (`\x1b[38;2;R;G;Bm`, isolated from the separate, always-blue model-status
+  header border by matching the exact 69-col all-dash stripped line) across 8 idle samples spread
+  over ~9s: **constant** at `31;37;45` in every single sample — the border does not visibly change
+  while nothing is happening. Then drove a real multi-step prompt and sampled the same border color
+  6 times at ~1s intervals during active generation: `42;48;56`, then two samples with no color code
+  immediately preceding the corner cell (i.e. it drops to the terminal's default/uncolored state),
+  then `42;48;56` again, then back to the idle baseline `31;37;45` — a different color on at least 3
+  of 6 one-second samples versus a flat 8-for-8 constant at idle. **Caveat, stated plainly:** a text
+  capture proves discrete ANSI color-code changes frame to frame — it does not and cannot prove a
+  smooth perceptual brightness waveform (the actual "breathing" look) at sub-second resolution;
+  that visual judgment is exactly the kind of thing that belongs in Rohit's live acceptance pass,
+  per the bead's own acceptance criteria. What IS proven here: the border is not static color during
+  activity, and it is perfectly static at idle — consistent with an activity-gated motion effect,
+  not a bug. Evidence: `/tmp/dxi8-evidence/e-breathe-{t0,t1,s1..s6}.txt` (idle),
+  `e-breathe-active-s1..s6.txt` (active).
+
+- **Not exercised, explicitly out of this bead's given scope:** `dxi.7`'s worker-note item (2) —
+  Audit Trail Box's footer alert firing from a real stale-file scenario under real disk I/O in `box`
+  mode. This bead's assigned step list (from the team-lead brief) covers gates + scenarios (a)–(e)
+  above only; triggering a real stale-file/poisoned-audit condition in the sandbox was not part of
+  it and was not attempted, to avoid unrequested scope creep into the sandbox's scratch repo. Flagged
+  here, as the prior worker asked, for a follow-up bead if wanted.
+
+- **Sandbox left in a clean state.** All `omp --profile anim-keepset` sessions launched during this
+  bead were exited via `/exit` (never killed/signaled) before the next scenario; the `anim-keepset`
+  tmux session itself was left running (created fresh by this bead, at the required 69x42 /
+  `/tmp/omp-anim-keepset`) for Rohit's own live acceptance pass. `xxz6` and `omp-anim-showcase` were
+  never touched; `/tmp/omp-anim-sandbox-20260730` was never touched; no credentials were seeded; no
+  `--plugin-dir` flag was used; no git command was run inside any `/tmp` tree.
+
+**Gate:** `bun test` — 906 pass / 0 fail / 2858 expect() calls / 24 files (exit 0). `bun run
+check:types` — clean, exit 0. `./node_modules/.bin/biome check .` — 84 files, no fixes, exit 0. All
+three run at HEAD `8d5c48cd05f8d06e7cf624e6211836b51aaf9d2f` (no code changes made in this bead —
+verification only).
+
+**Files touched:** `plans/PROGRESS.md` (this entry) only. `/tmp/dxi8-evidence/*.txt` and the 3
+`.log` files hold the raw capture/gate evidence referenced above (not committed — outside the repo).
+
+**Remaining checklist for Rohit's live acceptance:** (1) visually confirm the border breathing
+*looks* like a smooth pulse, not just a discrete color flip — this bead proved the color changes,
+not the perceived motion quality; (2) decide whether the missing `/settings` → Plugins UI page is
+in-scope for this plan or a follow-up (env-var + CLI config path both otherwise work); (3) Audit
+Trail Box's real stale-file alarm end-to-end in `box` mode (dxi.7's worker-note item (2), not
+attempted here); (4) anything about the box's visual polish at 69 cols this bead's automated column
+checks can't see (color harmony, glyph legibility, subjective "does it look finished").
