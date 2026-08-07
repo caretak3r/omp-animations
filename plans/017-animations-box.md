@@ -1,7 +1,7 @@
 # Plan 017 — Animations Box: one consolidated widget for the keeper set
 
 **Written against commit:** `7ffdaa6` · **Repo:** `/Users/rohit/Documents/omp-animations`
-**Axis:** native coherence (footprint) · **Effort:** L · **Risk:** MED · **Status:** SIGNED OFF 2026-08-06 (bead `oh-my-pi-dxi.1`) — in execution · **Supersedes:** Plan 009's spike question · **Depends on:** none (keeper extraction is done)
+**Axis:** native coherence (footprint) · **Effort:** L · **Risk:** MED · **Status:** IMPLEMENTED 2026-08-07 (beads `oh-my-pi-dxi.1`–`.8`, commits `ed48d42`…`e797f14`) — awaiting maintainer live acceptance · **Supersedes:** Plan 009's spike question · **Depends on:** none (keeper extraction is done)
 
 ## Why
 

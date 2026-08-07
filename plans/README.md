@@ -168,4 +168,4 @@ invoked/retained telemetry, no multi-source enumeration.
 | 014 | TODO — Session Bonsai labeled branches (subagent label dropped) |
 | 015 | DONE — executed + reviewed (advisor `execute`, 2026-07-17); worktree `/tmp/wt-015`, branch `advisor/015-goal-horizon-generic-budget` @ `e6c9c04`, gate 825/0/3638; awaiting maintainer merge |
 | 016 | TODO — Prompt Charge between-turn signals (thinking + context; approval deferred) |
-| 017 | IN EXECUTION — spec signed off by maintainer 2026-08-06 (bead `oh-my-pi-dxi.1`); implementation beads `dxi.2`–`dxi.8` running |
+| 017 | IMPLEMENTED — all 8 beads done + reviewed 2026-08-07 (gates 906/0/2858 at `e797f14`; sandbox evidence in PROGRESS.md); awaiting maintainer live acceptance |
