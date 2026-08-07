@@ -878,3 +878,114 @@ and `src/animations-box/settings.ts` were read but not modified (both already an
 `dxi.5`'s worker note: the border-breathing bead can now assume all 7 segments are wired and the
 `#onTick` seam is live (no longer a no-op) — any border-breathing per-tick state should be added
 alongside the two calls already there, not as a separate seam.
+
+## Plan 017 — Animations Box: dxi.5 breathing border (border chrome, not a segment)
+
+**Status: DONE**
+
+- **`src/animations-box/widget.ts`** — the border chrome itself now breathes (Decision 2).
+  `borderTop`/`borderBottom`/`contentLine` all gained a `theme`/`color: ThemeColor | undefined`
+  pair; `undefined` is the literal plain, pre-dxi.5 uncolored path (`colorize()` never calls
+  `theme.fg` at all when `color` is `undefined` — not "call it with a dim token", a hard branch),
+  which is exactly what both static cases fall back to. `renderFrame` computes ONE
+  `#resolveBorderColor(now)` per frame and threads it uniformly into every border glyph — top row,
+  bottom row, AND the two side pipes in `contentLine` (only the pipes, never the inner content,
+  which stays whatever the segment builders already colored). `#resolveBorderColor` is a hard
+  `policy.tier === "off"` check first (new `#policy: MotionPolicy` field, mirroring
+  `BreathingBorderWidget`'s own tier check exactly — the box previously had no reason to keep its
+  own `policy` reference), then defers to the new `getBorderBrightness(now): number | undefined`
+  option (`undefined` = `breathingBorder` disabled in config, same plain fallback as tier `off`).
+  A live brightness buckets through `brightnessToken` (re-exported from `../breathing-border`) into
+  a `ThemeColor` via a new local `colorForToken` — a byte-identical copy of
+  `../breathing-border/widget.ts`'s own private `resolveBorderColor`, which isn't exported from
+  that module's barrel (same "not exported from that barrel" precedent `segments.ts` already
+  documents for `formatCost`/`compareVisibleRows`). New `#colors: BreathingBorderColors =
+  breathingBorderColors(options.accentColor)` at construction — identical pattern to the standalone
+  `BreathingBorderWidget`'s own accent handling: peak-only recolor, muted/base stay fixed. Geometry
+  is untouched: `borderTop`/`borderBottom`/`contentLine` still produce exactly the same characters
+  at every width, colored or not — only wrapped, never resized (verified by a dedicated
+  geometry-invariance test asserting identical row count and exact `row.length === width` across
+  all three states at 45/69/120).
+- **`src/animations-box/controller.ts`** — owns a fresh `BreathingBorderState` instance (Decision
+  6, same reasoning as every other keeper here: `BreathingBorderController` only ever constructs
+  its own animated widget from inside ITS OWN `setWidget` factory, which this box must never
+  invoke). Three NEW handlers — `onAgentStart`, `onAgentEnd`, `onTurnStart` — plus one EXTENDED
+  handler — `onTurnEnd` now also calls `applyTurnEnd` — mirror `BreathingBorderController`'s own
+  four event handlers byte-for-byte (same `ctx.hasUI` gate, same `this.#scheduler.now()` stamping).
+  These are necessary, not speculative: without them the state can never leave `idle`, and there
+  would be no way to unit-test "brightness actually varies across the breath phase" at all (the
+  state field is private). Actual `api.on(...)` registration is still `dxi.7`'s scope — these are
+  class methods only, same posture as every other handler already in this file. `#onTick` gained
+  one more call, `this.#breathingBorderState.settleIfDone(now)`, riding the exact same per-tick
+  seam Reflection Ripple's settle check already uses — no second tick path. New private
+  `#getBorderBrightness(now)` is the seam the widget reads: `undefined` when `config.breathingBorder`
+  is `false`, otherwise a phase switch (`idle` → literal `0`; `active` → `breathEnvelope(elapsed,
+  breathPeriodMs())`; `exhaling` → `exhaleEnvelope(elapsed, EXHALE_DURATION_MS)`) — identical math
+  to `BreathingBorderWidget.renderFrame`'s own phase switch, just returning the bare envelope
+  instead of a fully rendered/colored row (coloring is the widget's job, not the controller's).
+  New constructor option `accentColor?: ThemeColor` threads straight through to the widget at
+  `mount()` time, unchanged — the registrar (`dxi.7`) will resolve it via the EXISTING
+  `resolveAnimationAppearance("breathingBorder", ...)` call and pass the result in; no new accent
+  key, per Decision 3.
+- **`src/animations-box/settings.ts`** — `AnimationsBoxConfig` gained one field,
+  `breathingBorder: boolean`, resolved through the SAME `breathingBorder` raw key/env
+  (`animationsEnvKey("breathingBorder")`) its standalone row's registrar entry already reads —
+  identical stored > env > default precedence to the 7 segment booleans, just not indexed by
+  `BoxSegmentId` (a new local `BREATHING_BORDER_ID` const, also reused to build
+  `BOX_MIGRATED_ANIMATION_IDS` in place of the old inline literal). Default `true`, matching every
+  other per-animation enable boolean's default.
+- **Deviation from the literal plan text, with evidence:** Decision 2's prose reads "Motion tier
+  `off`, or `breathingBorder: false`, renders a static plain border" as one sentence covering both
+  cases identically. I implemented both as the exact SAME output — zero `theme.fg` calls, the
+  literal pre-dxi.5 uncolored chrome — rather than a colored-but-static `borderMuted` frame (which
+  is what the STANDALONE widget's own `off`-tier/idle fallback does, `renderBreathingBorderOffText`/
+  `renderBreathingBorderIdleRow`, both `theme.fg("borderMuted", ...)`). Evidence for going
+  uncolored instead: `widget.ts`'s own pre-dxi.5 doc comment on the `theme` option said "the border
+  itself is static/plain until then" to describe literally-uncolored output — this bead's own
+  target module already used "static/plain" as established vocabulary for zero-`theme.fg` output,
+  not for a colored-but-frozen one. No test relies on the alternative reading; if the maintainer
+  wants the colored-idle variant instead, `#resolveBorderColor`'s two `undefined` branches are the
+  only two lines to change.
+- **Tests (all new, literal pinned/tagged-theme frames, no snapshots):** 7 new tests in
+  `test/animations-box-widget.test.ts` (brightness→token bucketing at three brightness levels,
+  side-pipe coloring, phase variance over two `nowMs` readings, peak-only accent override, the
+  motion-`off` hard override, the `breathingBorder`-disabled fallback, and geometry invariance
+  across all three states at 45/69/120 widths); 8 new tests in
+  `test/animations-box-controller.test.ts` (idle-before-any-event, `onAgentStart` phase variance,
+  `onAgentEnd` → exhale → `#onTick`-driven settle back to idle, `onTurnStart`/`onTurnEnd` cadence
+  modulation proven via two elapsed-time-identical scenarios with/without a fast turn, the
+  controller-level accent override, the `breathingBorder: false` config gate, and the `hasUI: false`
+  gate on all four new handlers); 2 new tests in `test/animations-box-settings.test.ts`
+  (`breathingBorder`'s default/boolean-string resolution, and its stored>env precedence through
+  the shared `animationsEnvKey`).
+
+**Gate:** `bun test && bun run check:types && ./node_modules/.bin/biome check .` — **882 pass / 0
+fail / 2729 assertions / 23 files** (baseline immediately before this bead was 865 pass / 2660
+assertions per `dxi.4`'s own gate line above; +17 new tests / +69 new assertions, matching the
+7+8+2 test counts above exactly). tsgo clean. biome flagged import-order/formatting only
+(`--write` auto-fixed 3 files: `src/animations-box/controller.ts`, `src/animations-box/widget.ts`,
+`test/animations-box-controller.test.ts` — no logic changes), re-verified clean with a full
+`bun test` + `bun run check:types` pass after.
+
+**Files touched:** `src/animations-box/widget.ts`, `src/animations-box/controller.ts`,
+`src/animations-box/settings.ts`, `test/animations-box-widget.test.ts`,
+`test/animations-box-controller.test.ts`, `test/animations-box-settings.test.ts`,
+`plans/PROGRESS.md` (this entry). No keeper directory (`src/breathing-border/`) was touched —
+every import from it is either already-exported barrel surface (`BreathingBorderState`,
+`breathEnvelope`, `exhaleEnvelope`, `EXHALE_DURATION_MS`, `brightnessToken`,
+`BorderBrightnessToken`, `breathingBorderColors`, `BreathingBorderColors`) or a documented local
+copy of a private helper (`colorForToken`). `renderBreathingBorderRow` and `BreathingBorderWidget`
+are never imported anywhere in `src/animations-box/` — confirmed by construction, not just by
+test, since the only breathing-border imports in the whole directory are the ones listed above.
+`src/registrar.ts` and `package.json` remain untouched (`dxi.7`'s scope — that bead still owns
+wiring `agent_start`/`agent_end`/`turn_start` into the box controller's new handlers, and resolving
+`accentColor` via `resolveAnimationAppearance("breathingBorder", ...)` into the controller's new
+constructor option).
+
+`dxi.6`'s worker note: the border now colors itself whenever `breathingBorder` is enabled and the
+motion tier isn't `off` — full-box golden frames built with a REAL (non-identity) theme stub will
+show colored border glyphs by default. Use `getBorderBrightness: () => undefined` (or leave
+`breathingBorder` disabled in the resolved config) if a golden needs the plain, pre-dxi.5 chrome
+for a clean content-only comparison. `AnimationsBoxWidgetOptions` now requires `getBorderBrightness`
+— any golden test constructing the widget directly (not through `AnimationsBoxController`) needs
+that field or it won't compile.

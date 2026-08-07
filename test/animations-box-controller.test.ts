@@ -5,6 +5,8 @@ import type {
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
 import type {
 	AfterProviderResponseEvent,
+	AgentEndEvent,
+	AgentStartEvent,
 	MessageEndEvent,
 	MessageStartEvent,
 	MessageUpdateEvent,
@@ -12,14 +14,24 @@ import type {
 	ToolResultEvent,
 	TtsrTriggeredEvent,
 	TurnEndEvent,
+	TurnStartEvent,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 import { type AnimationsBoxContext, AnimationsBoxController, BOX_WIDGET_KEY } from "../src/animations-box/controller";
 import { BOX_SEGMENT_IDS, resolveAnimationsBoxConfig } from "../src/animations-box/settings";
 import type { AnimationsBoxWidget } from "../src/animations-box/widget";
+import {
+	BASE_BREATH_PERIOD_MS,
+	BREATHING_BORDER_COLORS,
+	EXHALE_DURATION_MS,
+	MIN_BREATH_PERIOD_MS,
+} from "../src/breathing-border";
 import type { FrameScheduler } from "../src/kit";
 import { DIM_DURATION_MS, RIPPLE_DURATION_MS } from "../src/reflection-ripple";
 
+// Identity theme so most assertions see plain text instead of ANSI escapes.
 const idTheme = { fg: (_color: string, text: string) => text };
+// Color-tagging theme for tests that need to assert which border token the box chose.
+const taggedTheme = { fg: (color: string, text: string) => `${color}:${text}` };
 const noopTui = { requestComponentRender: () => {} };
 
 /** Manual frame scheduler: deterministic `now()`, never ticks on its own. */
@@ -59,10 +71,10 @@ function recordingContext(overrides: Partial<AnimationsBoxContext> = {}): {
 	return { ctx, calls };
 }
 
-/** Builds the widget from the factory `setWidget` was called with, so state-wiring tests can inspect real render output. */
-function buildWidget(call: SetWidgetCall): AnimationsBoxWidget {
+/** Builds the widget from the factory `setWidget` was called with, so state-wiring tests can inspect real render output. Defaults to the identity theme; border-coloring tests pass `taggedTheme`. */
+function buildWidget(call: SetWidgetCall, theme: unknown = idTheme): AnimationsBoxWidget {
 	const factory = call.content as (tui: unknown, theme: unknown) => AnimationsBoxWidget;
-	return factory(noopTui, idTheme);
+	return factory(noopTui, theme);
 }
 
 interface UsageOverrides {
@@ -199,6 +211,18 @@ function editResult(path: string): ToolResultEvent {
 
 function turnEnd(turnIndex: number): TurnEndEvent {
 	return { type: "turn_end", turnIndex, message: {}, toolResults: [] } as unknown as TurnEndEvent;
+}
+
+function agentStart(): AgentStartEvent {
+	return { type: "agent_start" } as unknown as AgentStartEvent;
+}
+
+function agentEnd(): AgentEndEvent {
+	return { type: "agent_end", messages: [] } as unknown as AgentEndEvent;
+}
+
+function turnStart(turnIndex: number): TurnStartEvent {
+	return { type: "turn_start", turnIndex, timestamp: 0 } as unknown as TurnStartEvent;
 }
 
 describe("AnimationsBoxController — mount lifecycle", () => {
@@ -929,6 +953,145 @@ describe("AnimationsBoxController — detailed-mode row order (ordering hazard)"
 		for (let i = 0; i < expectedLabels.length; i++) {
 			expect(frame[i + 1]).toContain(expectedLabels[i] as string);
 		}
+		widget.dispose();
+	});
+});
+
+describe("AnimationsBoxController — breathing border wiring (Decision 2)", () => {
+	it("the mounted widget starts on the idle envelope (muted, static) before any agent_start", () => {
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({
+			scheduler: manualScheduler(),
+			initialConfig: resolveAnimationsBoxConfig({}),
+		});
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall, taggedTheme);
+		const row = widget.renderFrame(20)[0];
+		expect(row).toBe(`${BREATHING_BORDER_COLORS.muted}:╭${"─".repeat(18)}╮`);
+		widget.dispose();
+	});
+
+	it("onAgentStart flips the border to the active breathing cycle, brightness varying across the phase", () => {
+		const scheduler = manualScheduler();
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall, taggedTheme);
+
+		controller.onAgentStart(agentStart(), ctx);
+		const atStart = widget.renderFrame(20)[0]; // elapsed 0: envelope 0, still muted
+
+		scheduler.advance(BASE_BREATH_PERIOD_MS / 2); // mid-cycle: the breath envelope peaks here
+		const atMidCycle = widget.renderFrame(20)[0];
+
+		expect(atStart).toContain(`${BREATHING_BORDER_COLORS.muted}:`);
+		expect(atMidCycle).toContain(`${BREATHING_BORDER_COLORS.peak}:`);
+		expect(atMidCycle).not.toBe(atStart);
+		widget.dispose();
+	});
+
+	it("onAgentEnd begins the wind-down exhale, and settling via the #onTick seam lands back at the idle envelope", () => {
+		const scheduler = manualScheduler();
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall, taggedTheme);
+
+		controller.onAgentStart(agentStart(), ctx);
+		controller.onAgentEnd(agentEnd(), ctx);
+		const midExhale = widget.renderFrame(20)[0]; // elapsedSinceEnd 0: exhale envelope starts at peak brightness
+		expect(midExhale).toContain(`${BREATHING_BORDER_COLORS.peak}:`);
+
+		scheduler.advance(EXHALE_DURATION_MS);
+		widget.onFrame(0); // drives #onTick -> settleIfDone
+		const settled = widget.renderFrame(20)[0];
+		expect(settled).toContain(`${BREATHING_BORDER_COLORS.muted}:`); // back at the idle envelope, 0
+		widget.dispose();
+	});
+
+	it("turn_start/turn_end modulate the breath cadence: a fast turn pulls the period down toward MIN_BREATH_PERIOD_MS", () => {
+		const scheduler = manualScheduler();
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall, taggedTheme);
+
+		controller.onAgentStart(agentStart(), ctx);
+		controller.onTurnStart(turnStart(0), ctx);
+		scheduler.advance(1);
+		controller.onTurnEnd(turnEnd(0), ctx); // 1ms turn duration -> the fast MIN_BREATH_PERIOD_MS cadence
+
+		scheduler.advance(MIN_BREATH_PERIOD_MS / 2 - 1); // mid-cycle on the FAST cadence: envelope peaks here
+		const row = widget.renderFrame(20)[0];
+		expect(row).toContain(`${BREATHING_BORDER_COLORS.peak}:`);
+		widget.dispose();
+	});
+
+	it("without a modulating turn, the same elapsed time is nowhere near the (slower) base-period peak", () => {
+		const scheduler = manualScheduler();
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall, taggedTheme);
+
+		controller.onAgentStart(agentStart(), ctx); // no turn_start/turn_end -> stays at BASE_BREATH_PERIOD_MS
+		scheduler.advance(MIN_BREATH_PERIOD_MS / 2 - 1);
+		const row = widget.renderFrame(20)[0];
+		expect(row).not.toContain(`${BREATHING_BORDER_COLORS.peak}:`);
+		widget.dispose();
+	});
+
+	it("threads the controller's accentColor option through to the border's peak brightness only", () => {
+		const scheduler = manualScheduler();
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({
+			scheduler,
+			initialConfig: resolveAnimationsBoxConfig({}),
+			accentColor: "success",
+		});
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall, taggedTheme);
+
+		controller.onAgentStart(agentStart(), ctx);
+		scheduler.advance(BASE_BREATH_PERIOD_MS / 2); // mid-cycle: the breath envelope peaks here
+		const row = widget.renderFrame(20)[0];
+		expect(row).toContain("success:");
+		expect(row).not.toContain(`${BREATHING_BORDER_COLORS.peak}:`);
+		widget.dispose();
+	});
+
+	it("breathingBorder disabled in config renders the plain, uncolored chrome even while the agent is actively breathing", () => {
+		const scheduler = manualScheduler();
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({
+			scheduler,
+			initialConfig: resolveAnimationsBoxConfig({ breathingBorder: false }),
+		});
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall, taggedTheme);
+
+		controller.onAgentStart(agentStart(), ctx);
+		scheduler.advance(BASE_BREATH_PERIOD_MS / 2); // would-be peak, if enabled
+		const row = widget.renderFrame(20)[0];
+		expect(row).toBe(`╭${"─".repeat(18)}╮`); // plain — no theme.fg call at all, exactly the pre-dxi.5 chrome
+		widget.dispose();
+	});
+
+	it("ignores agent_start/agent_end/turn_start/turn_end when hasUI is false", () => {
+		const scheduler = manualScheduler();
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall, taggedTheme);
+
+		controller.onAgentStart(agentStart(), { hasUI: false });
+		controller.onTurnStart(turnStart(0), { hasUI: false });
+		controller.onTurnEnd(turnEnd(0), { hasUI: false });
+		controller.onAgentEnd(agentEnd(), { hasUI: false });
+		scheduler.advance(BASE_BREATH_PERIOD_MS / 2);
+
+		const row = widget.renderFrame(20)[0];
+		expect(row).toBe(`${BREATHING_BORDER_COLORS.muted}:╭${"─".repeat(18)}╮`); // still idle
 		widget.dispose();
 	});
 });

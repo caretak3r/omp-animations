@@ -71,6 +71,13 @@ describe("resolveAnimationsBoxConfig — defaults and validation", () => {
 		const config = resolveAnimationsBoxConfig({ animationsBoxOnly: "cacheMeter" });
 		for (const id of BOX_SEGMENT_IDS) expect(config.enabled[id]).toBe(true);
 	});
+
+	it("breathingBorder defaults to enabled and resolves through the same raw key as the segment booleans (Decision 2)", () => {
+		expect(resolveAnimationsBoxConfig({}).breathingBorder).toBe(true);
+		expect(resolveAnimationsBoxConfig({ breathingBorder: false }).breathingBorder).toBe(false);
+		expect(resolveAnimationsBoxConfig({ breathingBorder: "false" }).breathingBorder).toBe(false);
+		expect(resolveAnimationsBoxConfig({ breathingBorder: "true" }).breathingBorder).toBe(true);
+	});
 });
 
 describe("resolveAnimationsBoxConfigFromSources — stored > env > default precedence", () => {
@@ -111,6 +118,17 @@ describe("resolveAnimationsBoxConfigFromSources — stored > env > default prece
 
 	it("defaults env to Bun.env and never throws on an empty pluginSettings record", () => {
 		expect(() => resolveAnimationsBoxConfigFromSources({})).not.toThrow();
+	});
+
+	it("resolves breathingBorder through the SAME key/env pair its standalone row already uses (Decision 2)", () => {
+		const fromEnv = resolveAnimationsBoxConfigFromSources({}, { [animationsEnvKey("breathingBorder")]: "false" });
+		expect(fromEnv.breathingBorder).toBe(false);
+
+		const stored = resolveAnimationsBoxConfigFromSources(
+			{ breathingBorder: false },
+			{ [animationsEnvKey("breathingBorder")]: "true" },
+		);
+		expect(stored.breathingBorder).toBe(false); // stored wins over env
 	});
 });
 

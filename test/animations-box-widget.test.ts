@@ -1,9 +1,14 @@
 import { describe, expect, it } from "bun:test";
+import type { ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import type { SegmentSample } from "../src/animations-box/segments";
 import { AnimationsBoxWidget, BOX_BORDER_COLS, BOX_BORDER_ROWS } from "../src/animations-box/widget";
+import { BREATHING_BORDER_COLORS } from "../src/breathing-border";
 import { AnimationHost, type FrameScheduler, MotionPolicy } from "../src/kit";
 
+// Identity theme so most assertions see plain text instead of ANSI escapes.
 const idTheme = { fg: (_color: string, text: string) => text };
+// Color-tagging theme for tests that need to assert which token the border chose.
+const taggedTheme = { fg: (color: string, text: string) => `${color}:${text}` };
 const noopTui = { requestComponentRender: () => {} };
 const fullEnv = { hasUI: true, isTTY: true, env: {} as Record<string, string | undefined> };
 
@@ -50,19 +55,27 @@ function makeWidget(opts: {
 	detail?: "simple" | "detailed";
 	onTick?: (now: number) => void;
 	scheduler?: FrameScheduler;
+	motionSetting?: "off" | "subtle" | "full";
+	theme?: { fg: (color: string, text: string) => string };
+	getBorderBrightness?: (now: number) => number | undefined;
+	accentColor?: ThemeColor;
 }): AnimationsBoxWidget {
 	const scheduler = opts.scheduler ?? manualScheduler();
-	const policy = new MotionPolicy(fullEnv, "full");
+	const policy = new MotionPolicy(fullEnv, opts.motionSetting ?? "full");
 	const host = new AnimationHost({ policy, scheduler });
 	return new AnimationsBoxWidget({
 		tui: noopTui,
 		host,
 		policy,
-		theme: idTheme,
+		theme: opts.theme ?? idTheme,
 		clock: scheduler,
 		onTick: opts.onTick ?? (() => {}),
 		buildSamples: () => opts.samples,
 		getDetail: () => opts.detail ?? "detailed",
+		// `undefined` is the plain, pre-dxi.5 chrome — the sensible default for every
+		// test above that doesn't care about border coloring.
+		getBorderBrightness: opts.getBorderBrightness ?? (() => undefined),
+		accentColor: opts.accentColor,
 	});
 }
 
@@ -162,6 +175,7 @@ describe("AnimationsBoxWidget — lifecycle and per-tick hook", () => {
 			onTick: () => {},
 			buildSamples: () => [ACTIVE],
 			getDetail: () => "detailed",
+			getBorderBrightness: () => undefined,
 		});
 
 		widget.render(69);
@@ -181,5 +195,93 @@ describe("AnimationsBoxWidget — lifecycle and per-tick hook", () => {
 		scheduler.advance(50);
 		expect(seen).toContain(50);
 		widget.dispose();
+	});
+});
+
+describe("AnimationsBoxWidget — border chrome breathing (Decision 2)", () => {
+	it("buckets the live brightness through brightnessToken, coloring every border glyph uniformly", () => {
+		const dim = makeWidget({ samples: [RESTING], theme: taggedTheme, getBorderBrightness: () => 0 }).render(20);
+		expect(dim[0]).toBe(`${BREATHING_BORDER_COLORS.muted}:╭${"─".repeat(18)}╮`);
+		expect(dim[2]).toBe(`${BREATHING_BORDER_COLORS.muted}:╰${"─".repeat(18)}╯`);
+
+		const mid = makeWidget({ samples: [RESTING], theme: taggedTheme, getBorderBrightness: () => 0.3 }).render(20);
+		expect(mid[0]).toBe(`${BREATHING_BORDER_COLORS.base}:╭${"─".repeat(18)}╮`);
+
+		const peak = makeWidget({ samples: [RESTING], theme: taggedTheme, getBorderBrightness: () => 0.9 }).render(20);
+		expect(peak[0]).toBe(`${BREATHING_BORDER_COLORS.peak}:╭${"─".repeat(18)}╮`);
+	});
+
+	it("colors the side pipes too, not just the top/bottom rows", () => {
+		const rows = makeWidget({ samples: [RESTING], theme: taggedTheme, getBorderBrightness: () => 0.9 }).render(20);
+		const contentRow = rows[1] as string;
+		expect(contentRow.startsWith(`${BREATHING_BORDER_COLORS.peak}:│`)).toBe(true);
+		expect(contentRow.endsWith(`${BREATHING_BORDER_COLORS.peak}:│`)).toBe(true);
+	});
+
+	it("brightness actually varies across the breath phase, driven by the same nowMs the widget always reads", () => {
+		const scheduler = manualScheduler();
+		const widget = makeWidget({
+			samples: [RESTING],
+			theme: taggedTheme,
+			scheduler,
+			getBorderBrightness: now => (now < 50 ? 0 : 0.9),
+		});
+		const before = widget.render(20)[0];
+		scheduler.advance(100);
+		widget.markDirty();
+		const after = widget.render(20)[0];
+		expect(before).not.toBe(after);
+		expect(before).toContain(`${BREATHING_BORDER_COLORS.muted}:`);
+		expect(after).toContain(`${BREATHING_BORDER_COLORS.peak}:`);
+		widget.dispose();
+	});
+
+	it("an accent override recolors only the peak brightness, leaving muted/base on their fixed tokens", () => {
+		const rows = makeWidget({
+			samples: [RESTING],
+			theme: taggedTheme,
+			getBorderBrightness: () => 0.9,
+			accentColor: "accent",
+		}).render(20);
+		expect(rows[0]).toContain("accent:");
+		expect(rows[0]).not.toContain(`${BREATHING_BORDER_COLORS.peak}:`);
+	});
+
+	it("motion tier off renders the plain, uncolored chrome — a hard override regardless of a live brightness value", () => {
+		const rows = makeWidget({
+			samples: [RESTING],
+			theme: taggedTheme,
+			motionSetting: "off",
+			getBorderBrightness: () => 0.9,
+		}).render(20);
+		expect(rows[0]).toBe(`╭${"─".repeat(18)}╮`);
+		expect(rows[2]).toBe(`╰${"─".repeat(18)}╯`);
+	});
+
+	it("getBorderBrightness returning undefined (breathingBorder disabled) renders the same plain, uncolored chrome", () => {
+		const rows = makeWidget({
+			samples: [RESTING],
+			theme: taggedTheme,
+			getBorderBrightness: () => undefined,
+		}).render(20);
+		expect(rows[0]).toBe(`╭${"─".repeat(18)}╮`);
+		expect(rows[2]).toBe(`╰${"─".repeat(18)}╯`);
+	});
+
+	it("geometry (row count, exact row width) is identical across breathing / motion-off / breathingBorder-disabled, at 45/69/120", () => {
+		for (const width of [45, 69, 120]) {
+			const breathing = makeWidget({ samples: [RESTING], getBorderBrightness: () => 0.5 }).render(width);
+			const motionOff = makeWidget({
+				samples: [RESTING],
+				motionSetting: "off",
+				getBorderBrightness: () => 0.5,
+			}).render(width);
+			const disabled = makeWidget({ samples: [RESTING], getBorderBrightness: () => undefined }).render(width);
+
+			for (const rows of [breathing, motionOff, disabled]) {
+				expect(rows).toHaveLength(3); // 2 border rows + 1 enabled segment (detailed mode)
+				for (const row of rows) expect(row.length).toBe(width);
+			}
+		}
 	});
 });

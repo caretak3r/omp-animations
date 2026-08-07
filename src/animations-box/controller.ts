@@ -44,6 +44,19 @@
  * Registrar wiring — actually mounting this controller from `session_start`
  * — is `dxi.7`'s scope; this controller is fully unit-testable in isolation
  * until then.
+ *
+ * The breathing border (`oh-my-pi-dxi.5`) is wired the same way as every
+ * other segment here: a fresh `BreathingBorderState` instance owned by this
+ * controller (never `BreathingBorderController`'s own instance, for the same
+ * Decision 6 reason as `CacheMeterState` above — that controller only ever
+ * constructs its own animated widget from inside its own `setWidget` factory,
+ * which this box must never invoke), fed by `onAgentStart`/`onAgentEnd`/
+ * `onTurnStart` (new) and `onTurnEnd` (extended) mirroring
+ * `BreathingBorderController`'s own event handlers exactly. Unlike the other
+ * segments, it contributes no row and no `SegmentSample` — `#getBorderBrightness`
+ * exposes its live envelope directly to `AnimationsBoxWidget`, which paints
+ * it into the border chrome itself (Decision 2), not a composed row. Its
+ * `settleIfDone` check rides the SAME `#onTick` seam as Reflection Ripple's.
  */
 import type {
 	ExtensionWidgetContent,
@@ -52,6 +65,8 @@ import type {
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
 import type {
 	AfterProviderResponseEvent,
+	AgentEndEvent,
+	AgentStartEvent,
 	AutoCompactionStartEvent,
 	EditToolResultEvent,
 	MessageEndEvent,
@@ -61,10 +76,13 @@ import type {
 	ToolResultEvent,
 	TtsrTriggeredEvent,
 	TurnEndEvent,
+	TurnStartEvent,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
+import type { ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import { getDiffStats } from "@oh-my-pi/pi-coding-agent/tools/render-utils";
 import { calculateTokensPerSecond } from "@oh-my-pi/pi-coding-agent/utils/token-rate";
 import { AuditLedgerState, auditTouchesFromToolResult } from "../audit-trail-box";
+import { BreathingBorderState, breathEnvelope, EXHALE_DURATION_MS, exhaleEnvelope } from "../breathing-border";
 import { CacheMeterState, type CacheRequestSample } from "../cache-meter";
 import { CadenceEqualizerState } from "../cadence-equalizer";
 // `normalizeAmplitude` lives in `scale.ts`, not re-exported by the keeper's
@@ -216,6 +234,8 @@ export interface AnimationsBoxControllerOptions {
 	motionSetting?: MotionSetting;
 	/** Wire-time initial config, from the registrar's synchronous settings read (`dxi.7`). */
 	initialConfig: AnimationsBoxConfig;
+	/** Accent override for the border's peak brightness — the existing `breathingBorderAccentColor` setting; `undefined` keeps the breathing-border keeper's built-in palette. */
+	accentColor?: ThemeColor;
 }
 
 /** Drives the Animations Box. See the module doc above for why this owns a fresh `CacheMeterState` rather than delegating to `CacheMeterController`. */
@@ -223,6 +243,7 @@ export class AnimationsBoxController {
 	#scheduler: FrameScheduler;
 	#widgetOptions: ExtensionWidgetOptions;
 	#motionSetting: MotionSetting;
+	#accentColor: ThemeColor | undefined;
 
 	#config: AnimationsBoxConfig;
 	#mount: { host: AnimationHost } | undefined;
@@ -234,6 +255,7 @@ export class AnimationsBoxController {
 	#cadenceState: CadenceEqualizerState = new CadenceEqualizerState();
 	#tidepoolState: RateLimitTidepoolState = new RateLimitTidepoolState();
 	#reflectionRippleState: ReflectionRippleState = new ReflectionRippleState();
+	#breathingBorderState: BreathingBorderState = new BreathingBorderState();
 
 	/** Cadence's in-flight message tracking — mirrors `CadenceEqualizerController`'s own private `#current`/`#streaming` fields, which live outside `CadenceEqualizerState` itself. */
 	#cadenceCurrent: AssistantSample | undefined;
@@ -249,6 +271,7 @@ export class AnimationsBoxController {
 		this.#widgetOptions = { placement: options.placement ?? DEFAULT_PLACEMENT };
 		this.#motionSetting = options.motionSetting ?? "full";
 		this.#config = options.initialConfig;
+		this.#accentColor = options.accentColor;
 	}
 
 	/** Live-resolved box config — read-only accessor for tests/introspection. */
@@ -278,6 +301,8 @@ export class AnimationsBoxController {
 					onTick: now => this.#onTick(now),
 					buildSamples: now => this.#buildSamples(now, theme),
 					getDetail: () => this.#config.detail,
+					getBorderBrightness: now => this.#getBorderBrightness(now),
+					accentColor: this.#accentColor,
 				});
 			},
 			this.#widgetOptions,
@@ -299,13 +324,45 @@ export class AnimationsBoxController {
 	 * EMA bands every tick, mirroring the standalone widget's own `onFrame` ->
 	 * `pushSample` (this box has no per-segment `AnimatedWidget` of its own to
 	 * hang that on); Reflection Ripple checks whether its in-flight ripple has
-	 * settled, mirroring the standalone widget's own `onFrame` -> `settleIfDone`.
-	 * Both read `now` off the SAME wall clock this seam is always called with
-	 * (Decision 4) — never a second clock.
+	 * settled, mirroring the standalone widget's own `onFrame` -> `settleIfDone`;
+	 * the breathing border checks whether its wind-down exhale has settled the
+	 * same way, mirroring `BreathingBorderWidget`'s own `onFrame` ->
+	 * `settleIfDone` (the box has no dedicated static-widget swap to perform on
+	 * that transition — the ONE box widget just renders envelope 0 next frame).
+	 * All three read `now` off the SAME wall clock this seam is always called
+	 * with (Decision 4) — never a second clock.
 	 */
 	#onTick(now: number): void {
 		this.#cadenceState.pushSample(normalizeAmplitude(this.#sampleCadenceRate(now) ?? 0));
 		this.#reflectionRippleState.settleIfDone(now);
+		this.#breathingBorderState.settleIfDone(now);
+	}
+
+	/**
+	 * Border brightness (Decision 2): `undefined` when `breathingBorder` is
+	 * disabled in config — the widget's cue to render the plain, uncolored
+	 * chrome instead of any border token at all. Otherwise the live `0..1`
+	 * envelope off the breathing-border keeper's own phase math (idle ->
+	 * active -> exhaling), sampled off the SAME wall clock this seam is always
+	 * called with (Decision 4) — identical math to `BreathingBorderWidget`'s
+	 * own `renderFrame` phase switch, just returning the bare envelope instead
+	 * of a fully rendered row (the widget itself owns coloring/tokens).
+	 */
+	#getBorderBrightness(now: number): number | undefined {
+		if (!this.#config.breathingBorder) return undefined;
+		switch (this.#breathingBorderState.phase) {
+			case "idle":
+				return 0;
+			case "active": {
+				const period = this.#breathingBorderState.breathPeriodMs();
+				const elapsed = this.#breathingBorderState.breathElapsedMs(now);
+				return breathEnvelope(elapsed, period);
+			}
+			case "exhaling": {
+				const elapsed = this.#breathingBorderState.exhaleElapsedMs(now);
+				return exhaleEnvelope(elapsed, EXHALE_DURATION_MS);
+			}
+		}
 	}
 
 	#buildSamples(now: number, theme: BoxTheme): readonly SegmentSample[] {
@@ -460,13 +517,45 @@ export class AnimationsBoxController {
 	}
 
 	/**
+	 * `agent_start`: (re)start the breathing border's continuous inhale/exhale
+	 * cycle — mirrors `BreathingBorderController.onAgentStart`'s own state
+	 * transition. The box has no widget mount/teardown dance to mirror
+	 * alongside it: the box's ONE widget is either already mounted or
+	 * (`!ctx.hasUI`) never will be, independent of agent lifecycle.
+	 */
+	onAgentStart(_event: AgentStartEvent, ctx: Pick<AnimationsBoxContext, "hasUI">): void {
+		if (!ctx.hasUI) return;
+		this.#breathingBorderState.applyAgentStart(this.#scheduler.now());
+	}
+
+	/** `agent_end`: begin the breathing border's single wind-down exhale — mirrors `BreathingBorderController.onAgentEnd`. */
+	onAgentEnd(_event: AgentEndEvent, ctx: Pick<AnimationsBoxContext, "hasUI">): void {
+		if (!ctx.hasUI) return;
+		this.#breathingBorderState.applyAgentEnd(this.#scheduler.now());
+	}
+
+	/**
+	 * `turn_start`: record the breathing border's turn start, so the matching
+	 * `turn_end` below can measure its duration and modulate the breath
+	 * cadence — mirrors `BreathingBorderController.onTurnStart`.
+	 */
+	onTurnStart(event: TurnStartEvent, ctx: Pick<AnimationsBoxContext, "hasUI">): void {
+		if (!ctx.hasUI) return;
+		this.#breathingBorderState.applyTurnStart(event.turnIndex, this.#scheduler.now());
+	}
+
+	/**
 	 * `turn_end`: Audit Trail's cold-eviction sweep and Palimpsest's region fade
-	 * clock both advance on turn boundaries.
+	 * clock both advance on turn boundaries; the breathing border measures the
+	 * just-finished turn's duration to modulate its breath cadence, mirroring
+	 * `BreathingBorderController.onTurnEnd` — one more "one event, several
+	 * keepers" handler, same precedent as `onMessageStart`/`onToolResult` above.
 	 */
 	onTurnEnd(event: TurnEndEvent, ctx: Pick<AnimationsBoxContext, "hasUI">): void {
 		if (!ctx.hasUI) return;
 		this.#auditTrailState.noteTurn();
 		this.#palimpsestState.advanceTurn(event.turnIndex);
+		this.#breathingBorderState.applyTurnEnd(event.turnIndex, this.#scheduler.now());
 	}
 
 	/** `session_compact`: attribute a nearby cache invalidation to this compaction, and correlate any recent Audit Trail poison flag with the user's recovery. */

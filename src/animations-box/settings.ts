@@ -34,13 +34,16 @@ export const BOX_SEGMENT_IDS = [
 
 export type BoxSegmentId = (typeof BOX_SEGMENT_IDS)[number];
 
+/** Breathing Border's own animation id. Not a {@link BoxSegmentId} — its row is replaced by the box's own border chrome (Decision 2), not a composed segment — but its existing per-animation enable boolean still gates whether that chrome breathes. */
+const BREATHING_BORDER_ID = "breathingBorder";
+
 /**
  * The 8 animations that stop mounting their own standalone row once the box
  * owns them (`display !== "rows"`): the 7 segments above, plus Breathing
  * Border, whose row is replaced by the box's own breathing chrome (Decision
- * 2, landing in `oh-my-pi-dxi.5`) rather than a segment of its own.
+ * 2) rather than a segment of its own.
  */
-export const BOX_MIGRATED_ANIMATION_IDS: readonly string[] = [...BOX_SEGMENT_IDS, "breathingBorder"];
+export const BOX_MIGRATED_ANIMATION_IDS: readonly string[] = [...BOX_SEGMENT_IDS, BREATHING_BORDER_ID];
 
 /** `rows` is today's behavior unchanged; `box` mounts the one consolidated widget; `both` is a debug/compare mode. */
 export type BoxDisplay = "rows" | "box" | "both";
@@ -66,6 +69,13 @@ export interface AnimationsBoxConfig {
 	 * key.
 	 */
 	enabled: Readonly<Record<BoxSegmentId, boolean>>;
+	/**
+	 * Whether the box's own border chrome breathes (Decision 2) — the SAME
+	 * `breathingBorder` enable boolean that gates its standalone row in `rows`
+	 * mode, resolved the same way as the 7 segment booleans above. Not a
+	 * `BoxSegmentId`: it colors the frame itself, not a composed row.
+	 */
+	breathingBorder: boolean;
 }
 
 /** Flat manifest setting keys (package.json#omp.settings — no nesting). */
@@ -115,6 +125,7 @@ export function resolveAnimationsBoxConfig(raw: Record<string, unknown>): Animat
 		detail: resolveEnum(raw[BOX_SETTING_KEYS.detail], BOX_DETAIL_VALUES, BOX_DEFAULTS.detail),
 		placement: resolveEnum(raw[BOX_SETTING_KEYS.placement], BOX_PLACEMENT_VALUES, BOX_DEFAULTS.placement),
 		enabled,
+		breathingBorder: resolveBoolean(raw[BREATHING_BORDER_ID], true),
 	};
 }
 
@@ -141,6 +152,8 @@ export function resolveAnimationsBoxConfigFromSources(
 		const stored = pluginSettings[id] ?? env[animationsEnvKey(id)];
 		if (stored !== undefined) raw[id] = stored;
 	}
+	const breathingBorderStored = pluginSettings[BREATHING_BORDER_ID] ?? env[animationsEnvKey(BREATHING_BORDER_ID)];
+	if (breathingBorderStored !== undefined) raw[BREATHING_BORDER_ID] = breathingBorderStored;
 	return resolveAnimationsBoxConfig(raw);
 }
 
