@@ -3,6 +3,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import type { ExtensionContext } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
+import { BOX_WIDGET_KEY } from "../src/animations-box/controller";
+import { BOX_DEFAULTS, BOX_MIGRATED_ANIMATION_IDS, BOX_SETTING_KEYS } from "../src/animations-box/settings";
 import { ANIMATIONS, createAnimationsPlugin, readPluginSettingsSync, resolveAnimationsConfig } from "../src/registrar";
 
 /**
@@ -34,10 +37,16 @@ function makeApi(): { api: ExtensionAPI; events: string[]; labels: string[]; com
 const ALL_IDS = ANIMATIONS.map(a => a.id);
 const noopRead = async (): Promise<Record<string, unknown>> => ({});
 
-/** Mount the registrar with an explicit per-animation enable record and capture subscriptions. */
+/**
+ * Mount the registrar with an explicit per-animation enable record and capture
+ * subscriptions. Forces `display: "rows"` unless `enabled` overrides it: every test in
+ * this file below the `display modes` describe block exercises the per-animation
+ * standalone-mount contract, i.e. today's `rows` behavior — `display` now defaults to
+ * `"box"` (Plan 017), which would otherwise suppress most of what these tests assert.
+ */
 function mount(enabled: Record<string, unknown>): { events: string[]; labels: string[]; commands: string[] } {
 	const { api, events, labels, commands } = makeApi();
-	createAnimationsPlugin({ settings: enabled, env: {}, readPluginSettings: noopRead })(api);
+	createAnimationsPlugin({ settings: { display: "rows", ...enabled }, env: {}, readPluginSettings: noopRead })(api);
 	return { events, labels, commands };
 }
 
@@ -162,6 +171,124 @@ describe("animations registrar", () => {
 	});
 });
 
+/** Mount with `settings` passed through unmodified — no forced `display`, unlike `mount()` above. */
+function mountRaw(settings: Record<string, unknown>): { events: string[]; labels: string[]; commands: string[] } {
+	const { api, events, labels, commands } = makeApi();
+	createAnimationsPlugin({ settings, env: {}, readPluginSettings: noopRead })(api);
+	return { events, labels, commands };
+}
+
+describe("display modes (Animations Box integration, Plan 017)", () => {
+	// The box-mode arithmetic below (subtracting every migrated animation's own solo
+	// subscriptions except Audit Trail Box's) only holds because every shipped animation is
+	// currently migrated — pin that as a documented invariant rather than assume it silently.
+	it("BOX_MIGRATED_ANIMATION_IDS is exactly the shipped animation set", () => {
+		expect(BOX_MIGRATED_ANIMATION_IDS.slice().sort()).toEqual([...ALL_IDS].sort());
+	});
+
+	it("`display` defaults to 'box' when entirely unstored — mountRaw, not mount(), unmasks the real default", () => {
+		const rows = mountRaw({ display: "rows", ...only(...ALL_IDS) })
+			.events.slice()
+			.sort();
+		const unstored = mountRaw(only(...ALL_IDS))
+			.events.slice()
+			.sort();
+		expect(unstored).not.toEqual(rows);
+	});
+
+	it("box mode: every migrated animation but Audit Trail Box contributes zero subscriptions", () => {
+		// The box's own solo event surface — nothing enabled, `display: "box"` alone still
+		// mounts it (mounting is unconditional on `display`, never per-segment).
+		const boxOwnEvents = mountRaw({ display: "box", ...only() })
+			.events.slice()
+			.sort();
+		// Audit Trail Box's own rows-mode solo subscriptions — unaffected by `suppressRow`,
+		// which only changes whether its row widget is drawn, never what it subscribes to.
+		const auditRowsSolo = mount(only("auditTrailBox")).events.slice().sort();
+
+		const boxAllEnabled = mountRaw({ display: "box", ...only(...ALL_IDS) });
+		expect(boxAllEnabled.events.slice().sort()).toEqual([...boxOwnEvents, ...auditRowsSolo].sort());
+
+		// The row is gone (no `/cache`: Cache Meter's own factory never runs), but Audit
+		// Trail Box's command survives — proof its standalone controller stayed mounted.
+		expect(boxAllEnabled.commands).toEqual(["audit-trail"]);
+	});
+
+	it("both mode: every row mounts unsuppressed, alongside the box", () => {
+		const boxOwnEvents = mountRaw({ display: "box", ...only() })
+			.events.slice()
+			.sort();
+		const rowsAllEnabled = mount(only(...ALL_IDS));
+		const bothAllEnabled = mountRaw({ display: "both", ...only(...ALL_IDS) });
+
+		expect(bothAllEnabled.events.slice().sort()).toEqual([...rowsAllEnabled.events, ...boxOwnEvents].sort());
+		expect(bothAllEnabled.commands.slice().sort()).toEqual(rowsAllEnabled.commands.slice().sort());
+	});
+
+	it("rows mode mounts no box: nothing subscribes to `session_start`, the box's own mount hook", () => {
+		expect(mount(only(...ALL_IDS)).events).not.toContain("session_start");
+	});
+
+	it("box and both modes each mount the box exactly once", () => {
+		expect(mountRaw({ display: "box", ...only() }).events.filter(e => e === "session_start")).toHaveLength(1);
+		expect(mountRaw({ display: "both", ...only() }).events.filter(e => e === "session_start")).toHaveLength(1);
+	});
+
+	describe("widgets actually mounted, driven through a real session_start", () => {
+		/** Like `makeApi`, but keeps `session_start` handlers so they can be fired against a fake `ExtensionContext`. */
+		function makeDrivableApi(): { api: ExtensionAPI; fireSessionStart(): void; mountedWidgetKeys(): string[] } {
+			const sessionStartHandlers: Array<(event: unknown, ctx: ExtensionContext) => void> = [];
+			const mounted = new Map<string, boolean>();
+			const api = {
+				on: (event: string, handler: (event: unknown, ctx: ExtensionContext) => void) => {
+					if (event === "session_start") sessionStartHandlers.push(handler);
+				},
+				setLabel: () => {},
+				registerCommand: () => {},
+				logger: { error() {}, warn() {}, debug() {}, info() {} },
+			} as unknown as ExtensionAPI;
+			const ctx = {
+				hasUI: true,
+				cwd: "/tmp/oh-my-pi-animations-registrar-test",
+				ui: {
+					theme: {},
+					setWidget: (key: string, content: unknown) => mounted.set(key, content !== undefined),
+					setStatus: () => {},
+				},
+			} as unknown as ExtensionContext;
+			return {
+				api,
+				fireSessionStart: () => {
+					for (const handler of sessionStartHandlers) handler(undefined, ctx);
+				},
+				mountedWidgetKeys: () => [...mounted.entries()].filter(([, isMounted]) => isMounted).map(([key]) => key),
+			};
+		}
+
+		it("box mode mounts exactly one widget: BOX_WIDGET_KEY", () => {
+			const { api, fireSessionStart, mountedWidgetKeys } = makeDrivableApi();
+			createAnimationsPlugin({
+				settings: { display: "box", ...only(...ALL_IDS) },
+				env: {},
+				readPluginSettings: noopRead,
+			})(api);
+			fireSessionStart();
+			expect(mountedWidgetKeys()).toEqual([BOX_WIDGET_KEY]);
+		});
+
+		it("rows mode mounts nothing on session_start — the box never subscribes", () => {
+			const { api, fireSessionStart, mountedWidgetKeys } = makeDrivableApi();
+			createAnimationsPlugin({
+				settings: { display: "rows", ...only(...ALL_IDS) },
+				env: {},
+				readPluginSettings: noopRead,
+			})(api);
+			fireSessionStart();
+			expect(mountedWidgetKeys()).toEqual([]);
+		});
+	});
+});
+
 describe("resolveAnimationsConfig", () => {
 	it("defaults to tier 'full' with every animation enabled", () => {
 		const cfg = resolveAnimationsConfig({}, {});
@@ -256,14 +383,20 @@ describe("readPluginSettingsSync", () => {
 	it("wires end to end through the production factory (not the settings-injection seam)", () => {
 		// This exercises exactly the code path `export default createAnimationsPlugin()` uses —
 		// only `cwd`/`home` are supplied, so `settings` resolves via the real readPluginSettingsSync.
+		// `display: "rows"` keeps this test on the per-animation standalone-mount contract it was
+		// written against — see `mount()`'s own doc above.
 		const { home, cwd } = isolatedRoots();
-		writeProjectOverrides(cwd, { animations: "subtle", cacheMeter: false });
+		writeProjectOverrides(cwd, { animations: "subtle", cacheMeter: false, display: "rows" });
 		const { api, events } = makeApi();
 		createAnimationsPlugin({ cwd, home, env: {} })(api);
 
 		const soloEvents = (id: string): string[] => {
 			const solo = makeApi();
-			createAnimationsPlugin({ settings: only(id), env: {}, readPluginSettings: noopRead })(solo.api);
+			createAnimationsPlugin({
+				settings: { display: "rows", ...only(id) },
+				env: {},
+				readPluginSettings: noopRead,
+			})(solo.api);
 			return solo.events;
 		};
 
@@ -287,6 +420,9 @@ describe("package.json#omp.settings — this package's native default", () => {
 		const settings = pkg.omp.settings as Record<string, { default?: unknown }>;
 
 		expect(settings.animations?.default).toBe("subtle");
+		expect(settings[BOX_SETTING_KEYS.display]?.default).toBe(BOX_DEFAULTS.display);
+		expect(settings[BOX_SETTING_KEYS.detail]?.default).toBe(BOX_DEFAULTS.detail);
+		expect(settings[BOX_SETTING_KEYS.placement]?.default).toBe(BOX_DEFAULTS.placement);
 
 		for (const id of ALL_IDS) expect(settings[id]?.default).toBe(true);
 
@@ -308,16 +444,19 @@ describe("package.json#omp.settings — this package's native default", () => {
 		];
 		for (const id of excludedIds) expect(settings[id]).toBeUndefined();
 
-		// Exactly the tier setting + per shipped animation: the enable boolean, a Placement
-		// appearance setting for every animation, and an AccentColor appearance setting for
-		// every animation except toolConstellation — its per-category rainbow palette has
-		// no single overridable slot (see `tool-constellation/index.ts`), so that key was
-		// dropped rather than left inert. No leftover excluded keys.
+		// Exactly the tier setting + the 3 Animations Box settings (Plan 017 Decision 3) +
+		// per shipped animation: the enable boolean, a Placement appearance setting for
+		// every animation, and an AccentColor appearance setting for every animation except
+		// toolConstellation — its per-category rainbow palette has no single overridable
+		// slot (see `tool-constellation/index.ts`), so that key was dropped rather than left
+		// inert. No leftover excluded keys, no inert box keys (`BOX_SETTING_KEYS` is exactly
+		// 3 — no `animationsBoxOnly` subset key, no separate box accent key).
 		const accentCapableIds = ALL_IDS.filter(id => id !== "toolConstellation");
 		const appearanceKeys = [
 			...ALL_IDS.map(id => `${id}Placement`),
 			...accentCapableIds.map(id => `${id}AccentColor`),
 		];
-		expect(Object.keys(settings).sort()).toEqual(["animations", ...ALL_IDS, ...appearanceKeys].sort());
+		const boxKeys = Object.values(BOX_SETTING_KEYS);
+		expect(Object.keys(settings).sort()).toEqual(["animations", ...boxKeys, ...ALL_IDS, ...appearanceKeys].sort());
 	});
 });

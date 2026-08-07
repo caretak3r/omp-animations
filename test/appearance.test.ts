@@ -811,7 +811,10 @@ describe("registrar end-to-end placement", () => {
 	it("passes a stored placement override through registrar, factory, and controller", async () => {
 		const { api, handlers } = makeRecordingApi();
 		createAnimationsPlugin({
-			settings: { ...only("auditTrailBox"), auditTrailBoxPlacement: "aboveEditor" },
+			// `display: "rows"` — Animations Box mode (the default) would suppress Audit
+			// Trail Box's own row and mount it headless instead (Plan 017 Decision 6),
+			// which is exactly what this test's row-widget assertion below must not hit.
+			settings: { display: "rows", ...only("auditTrailBox"), auditTrailBoxPlacement: "aboveEditor" },
 			env: {},
 			readPluginSettings: async () => ({}),
 		})(api);

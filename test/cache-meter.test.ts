@@ -1592,7 +1592,13 @@ describe("cache meter — registrar/appearance wiring", () => {
 		} as unknown as ExtensionAPI;
 		const only = Object.fromEntries(ANIMATIONS.map(a => [a.id, a.id === "cacheMeter"]));
 
-		createAnimationsPlugin({ settings: only, env: {}, readPluginSettings: async () => ({}) })(api);
+		// `display: "rows"` — Cache Meter is a box-migrated animation (Plan 017), so the
+		// default `display: "box"` would suppress its standalone mount entirely.
+		createAnimationsPlugin({
+			settings: { display: "rows", ...only },
+			env: {},
+			readPluginSettings: async () => ({}),
+		})(api);
 
 		expect(events.sort()).toEqual([
 			"auto_compaction_start",

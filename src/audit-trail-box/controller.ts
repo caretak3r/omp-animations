@@ -74,9 +74,21 @@ export interface AuditTrailBoxControllerOptions {
 	probeIntervalMs?: number;
 	/** Paths inspected per probe tick. Defaults to the probe's own batch size. */
 	probeBatchSize?: number;
+	/**
+	 * Run headless: never mount the {@link WIDGET_KEY} row, while the ledger,
+	 * probe, and `setStatus` alarm (see {@link isAlarming}) all stay live. Set by
+	 * the registrar when the Animations Box owns the row instead (Plan 017
+	 * Decision 6) — the box's own audit segment is ledger-only, so this
+	 * controller's own probe-fed alarm remains the sole POISONED surface.
+	 * Defaults to `false` (today's behavior: the row mounts).
+	 */
+	suppressRow?: boolean;
 }
 
-type Mount = { mode: "animated"; host: AnimationHost; policy: MotionPolicy } | { mode: "static" };
+type Mount =
+	| { mode: "animated"; host: AnimationHost; policy: MotionPolicy }
+	| { mode: "static" }
+	| { mode: "headless"; policy: MotionPolicy };
 
 /**
  * The {@link AnimationHost} backpressure field must be wired at construction,
@@ -119,6 +131,12 @@ function isAlarming(snapshot: AuditSnapshot): boolean {
  * own. Both go through the same width-tiered renderer, so the footer degrades to
  * a single count exactly like the widget does.
  *
+ * **Headless mode** (`options.suppressRow`) drops only the widget: the ledger,
+ * the probe, and the `setStatus` alarm all keep running. The registrar uses
+ * this when the Animations Box (`../animations-box`) owns the row instead —
+ * that box's own audit segment is ledger-only (Plan 017 Decision 6), so this
+ * controller's alarm stays the one surface that ever announces POISONED.
+ *
  * **Probing.** Ticks are event-triggered rather than timer-driven: any tracked
  * event may kick a round-robin batch, rate-limited to one tick per
  * {@link PROBE_INTERVAL_MS} and guarded against overlap. This is still off-path
@@ -143,6 +161,7 @@ export class AuditTrailBoxController {
 	#colors: AuditTrailBoxColors;
 	#accentColor: ThemeColor | undefined;
 	#statusShown = false;
+	#suppressRow: boolean;
 
 	constructor(options: AuditTrailBoxControllerOptions = {}) {
 		this.#scheduler = options.scheduler ?? DEFAULT_FRAME_SCHEDULER;
@@ -153,6 +172,7 @@ export class AuditTrailBoxController {
 			batchSize: options.probeBatchSize,
 		});
 		this.#probeIntervalMs = options.probeIntervalMs ?? PROBE_INTERVAL_MS;
+		this.#suppressRow = options.suppressRow ?? false;
 	}
 
 	/** Read-only state accessor for tests/introspection. */
@@ -253,8 +273,9 @@ export class AuditTrailBoxController {
 		this.#state.noteSessionSwitch();
 		if (!this.#mount) return;
 		if (this.#mount.mode === "animated") this.#mount.host.dispose();
+		const mode = this.#mount.mode;
 		this.#mount = undefined;
-		ctx.setWidget(WIDGET_KEY, undefined, this.#widgetOptions);
+		if (mode !== "headless") ctx.setWidget(WIDGET_KEY, undefined, this.#widgetOptions);
 		ctx.setStatus(STATUS_KEY, undefined);
 		this.#statusShown = false;
 	}
@@ -281,21 +302,27 @@ export class AuditTrailBoxController {
 			ctx.setWidget(WIDGET_KEY, [renderAuditOffText(this.#state.snapshot())], this.#widgetOptions);
 		}
 		// Animated mode: the widget's own frame subscription re-renders from the shared state.
+		// Headless mode: no row to maintain at all.
 		this.#refreshStatus(ctx);
 	}
 
 	#refreshStatus(ctx: AuditTrailBoxContext): void {
-		// The `off` tier already says everything on its static widget line; a second
-		// static line in the footer would just be the same counts twice.
-		const policy = this.#mount?.mode === "animated" ? this.#mount.policy : undefined;
+		const mount = this.#mount;
 		const snapshot = this.#state.snapshot();
-		if (policy === undefined || !isAlarming(snapshot)) {
+		// The `off` tier's row is a static text line that already shows the counts — a
+		// second static line in the footer would just repeat them, so the alarm stays
+		// silent there. Headless mode (`suppressRow`) mounts no row at all, static or
+		// otherwise, so it is exempt from that rule: it is the SOLE surface for
+		// POISONED in that mode (Plan 017 Decision 6) and must not go dark just
+		// because the shared motion tier happens to be `off`.
+		if (mount?.mode === "static" || !isAlarming(snapshot)) {
 			if (!this.#statusShown) return;
 			ctx.setStatus(STATUS_KEY, undefined);
 			this.#statusShown = false;
 			return;
 		}
-		const tier = policy.tier === "full" ? "full" : "subtle";
+		const policy = mount?.mode === "animated" || mount?.mode === "headless" ? mount.policy : undefined;
+		const tier = policy?.tier === "full" ? "full" : "subtle";
 		const row = renderAuditMeterRow(
 			snapshot,
 			statusWidthFor(ctx.columns),
@@ -310,6 +337,7 @@ export class AuditTrailBoxController {
 
 	#mountWidget(ctx: AuditTrailBoxContext): Mount {
 		const policy = new MotionPolicy({ hasUI: ctx.hasUI, isTTY: ctx.isTTY, env: ctx.env }, ctx.motionSetting);
+		if (this.#suppressRow) return { mode: "headless", policy };
 		if (policy.tier === "off") {
 			ctx.setWidget(WIDGET_KEY, [renderAuditOffText(this.#state.snapshot())], this.#widgetOptions);
 			return { mode: "static" };

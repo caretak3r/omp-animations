@@ -61,6 +61,37 @@
 				"default": "subtle",
 				"env": "OMP_ANIMATIONS"
 			},
+			"display": {
+				"type": "enum",
+				"description": "How the plugin's animations show up. 'rows' mounts each enabled animation as its own classic row. 'box' (default) consolidates them into one bordered box. 'both' shows rows and the box together, for debugging/comparison.",
+				"values": [
+					"rows",
+					"box",
+					"both"
+				],
+				"default": "box",
+				"env": "OMP_ANIMATIONS_DISPLAY"
+			},
+			"animationsBoxDetail": {
+				"type": "enum",
+				"description": "How much the Animations Box shows per enabled segment. 'detailed' gives one labeled row per segment. 'simple' composes everything into a single line. Applied at wire time (restart to change).",
+				"values": [
+					"simple",
+					"detailed"
+				],
+				"default": "detailed",
+				"env": "OMP_ANIMATIONS_BOX_DETAIL"
+			},
+			"animationsBoxPlacement": {
+				"type": "enum",
+				"description": "Which side of the editor the Animations Box mounts on. Applied at wire time (restart to change).",
+				"values": [
+					"aboveEditor",
+					"belowEditor"
+				],
+				"default": "belowEditor",
+				"env": "OMP_ANIMATIONS_BOX_PLACEMENT"
+			},
 			"auditTrailBox": {
 				"type": "boolean",
 				"description": "Mount Audit Trail Box.",

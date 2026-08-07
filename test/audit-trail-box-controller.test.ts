@@ -516,6 +516,89 @@ describe("audit trail box controller — the alarm status line", () => {
 	});
 });
 
+describe("audit trail box controller — headless mode (suppressRow)", () => {
+	/** Same drive `describe("... the alarm status line")` uses above, scoped locally per this file's own convention. */
+	function alarmingPath(controller: AuditTrailBoxController, ctx: AuditTrailBoxContext, path = "a.ts") {
+		controller.noteRead(path, seen("v1"), ctx);
+		controller.noteRead(path, seen("v1"), ctx);
+		controller.noteWrite(path, seen("v2"), ctx);
+		controller.noteWrite(path, seen("v3"), ctx);
+		controller.noteWrite(path, seen("v4"), ctx);
+	}
+
+	it("never mounts the WIDGET_KEY row, in any motion tier", () => {
+		for (const motionSetting of ["off", "subtle", "full"] as const) {
+			const disk = fakeDisk({ "a.ts": "v1" });
+			const controller = new AuditTrailBoxController({
+				scheduler: manualScheduler(),
+				probeSource: disk.source,
+				suppressRow: true,
+			});
+			const { ctx, widgets } = recordingContext({ motionSetting });
+
+			alarmingPath(controller, ctx);
+			expect(widgets).toEqual([]);
+		}
+	});
+
+	it("the alarm still fires at motion tier 'off' — headless mode is the sole POISONED surface, so it is not gated by motion", () => {
+		const disk = fakeDisk({ "a.ts": "v1" });
+		const controller = new AuditTrailBoxController({
+			scheduler: manualScheduler(),
+			probeSource: disk.source,
+			suppressRow: true,
+		});
+		const { ctx, statuses } = recordingContext({ motionSetting: "off" });
+
+		alarmingPath(controller, ctx);
+		const shown = statuses.filter(entry => entry.text !== undefined);
+		expect(shown.length).toBeGreaterThan(0);
+		expect(shown.at(-1)?.key).toBe(STATUS_KEY);
+		expect(shown.at(-1)?.text).toContain(BADGE_GLYPH);
+	});
+
+	it("the row-mounted 'off' tier stays silent for comparison — only headless mode is exempt from that rule", () => {
+		const disk = fakeDisk({ "a.ts": "v1" });
+		const controller = new AuditTrailBoxController({ scheduler: manualScheduler(), probeSource: disk.source });
+		const { ctx, statuses } = recordingContext({ motionSetting: "off" });
+
+		alarmingPath(controller, ctx);
+		expect(statuses).toHaveLength(0);
+	});
+
+	it("clears the alarm and stays clear once the working set stops being alarming", () => {
+		const disk = fakeDisk({ "a.ts": "v1" });
+		const controller = new AuditTrailBoxController({
+			scheduler: manualScheduler(),
+			probeSource: disk.source,
+			suppressRow: true,
+		});
+		const { ctx, statuses } = recordingContext();
+
+		alarmingPath(controller, ctx);
+		expect(statuses.at(-1)?.text).toBeDefined();
+
+		controller.noteSessionSwitch(ctx);
+		expect(statuses.at(-1)).toEqual({ key: STATUS_KEY, text: undefined });
+	});
+
+	it("dispose clears the alarm but never touches the widget key — headless mode never set it", () => {
+		const disk = fakeDisk({ "a.ts": "v1" });
+		const controller = new AuditTrailBoxController({
+			scheduler: manualScheduler(),
+			probeSource: disk.source,
+			suppressRow: true,
+		});
+		const { ctx, widgets, statuses } = recordingContext();
+
+		alarmingPath(controller, ctx);
+		controller.dispose(ctx);
+
+		expect(widgets).toEqual([]);
+		expect(statuses.at(-1)).toEqual({ key: STATUS_KEY, text: undefined });
+	});
+});
+
 describe("audit trail box controller — remedy and panel", () => {
 	it("diffs the held copy against disk BEFORE the stale copy is discarded", async () => {
 		const scheduler = manualScheduler();

@@ -18,13 +18,31 @@
  * `readPluginSettings`/`env` stay on `MountContext` as a generic seam for any animation
  * that self-resolves richer settings beyond the shared enable+tier map — none of this
  * package's shipped animations currently use it.
+ *
+ * A second setting, `display` (`rows` · `box` · `both`, default `box`), governs whether
+ * each animation still mounts its own standalone row or the consolidated Animations Box
+ * (`./animations-box`) owns it instead — see `resolveAnimationsBoxConfigFromSources` and
+ * Plan 017 for the full contract. `display: "box"` suppresses the standalone row of every
+ * id in `BOX_MIGRATED_ANIMATION_IDS`, with one exception: Audit Trail Box's row is
+ * suppressed but its own controller stays mounted headless, because its probe-fed
+ * `setStatus` alarm is the sole POISONED surface in box mode (Plan 017 Decision 6).
  */
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import type { ExtensionFactory, WidgetPlacement } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
+import type {
+	ExtensionContext,
+	ExtensionFactory,
+	WidgetPlacement,
+} from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
 import { getPluginSettings } from "@oh-my-pi/pi-coding-agent/extensibility/plugins/loader";
 import { CONFIG_DIR_NAME, getPluginsLockfile } from "@oh-my-pi/pi-utils";
+import { type AnimationsBoxContext, AnimationsBoxController } from "./animations-box/controller";
+import {
+	type AnimationsBoxConfig,
+	BOX_MIGRATED_ANIMATION_IDS,
+	resolveAnimationsBoxConfigFromSources,
+} from "./animations-box/settings";
 import { type AnimationAppearance, animationsEnvKey, resolveAnimationAppearance } from "./appearance";
 import { createAuditTrailBoxExtension } from "./audit-trail-box";
 import { createBreathingBorderExtension } from "./breathing-border";
@@ -257,12 +275,14 @@ export interface AnimationsPluginOptions {
 
 /**
  * Build the single config-driven registrar extension. Synchronously mounts exactly the
- * enabled animations and nothing for the disabled ones.
+ * enabled animations and nothing for the disabled ones, then — per `display` — the
+ * Animations Box instead of, or alongside, their rows.
  */
 export function createAnimationsPlugin(options: AnimationsPluginOptions = {}): ExtensionFactory {
 	const env = options.env ?? Bun.env;
 	const settings = options.settings ?? readPluginSettingsSync(options.cwd, options.home);
 	const config = resolveAnimationsConfig(settings, env);
+	const boxConfig = resolveAnimationsBoxConfigFromSources(settings, env);
 	const readPluginSettings = options.readPluginSettings ?? ((cwd: string) => getPluginSettings(PLUGIN_NAME, cwd));
 
 	return api => {
@@ -273,7 +293,25 @@ export function createAnimationsPlugin(options: AnimationsPluginOptions = {}): E
 			env,
 		};
 		for (const animation of ANIMATIONS) {
-			if (config.enabled[animation.id]) animation.mount(api, mountContext);
+			if (!config.enabled[animation.id]) continue;
+			if (boxConfig.display === "box" && BOX_MIGRATED_ANIMATION_IDS.includes(animation.id)) {
+				// The box owns this animation's row now (Plan 017 Decision 3). Audit Trail
+				// Box is the one exception (Decision 6): its `setStatus` alarm is fed by a
+				// probe no other surface runs, so its own controller stays mounted headless
+				// — row suppressed, ledger/probe/alarm/`/audit-trail` command all still live.
+				if (animation.id === "auditTrailBox") {
+					createAuditTrailBoxExtension({
+						motionSetting: config.tier,
+						...config.appearance.auditTrailBox,
+						suppressRow: true,
+					})(api);
+				}
+				continue;
+			}
+			animation.mount(api, mountContext);
+		}
+		if (boxConfig.display === "box" || boxConfig.display === "both") {
+			mountAnimationsBox(api, boxConfig, config);
 		}
 		// Set last: `setLabel` is last-write-wins on the shared extension, so the
 		// registrar's own label must win over any mounted animation's own setLabel call
@@ -282,6 +320,51 @@ export function createAnimationsPlugin(options: AnimationsPluginOptions = {}): E
 		// same).
 		api.setLabel("oh-my-pi animations");
 	};
+}
+
+/** Adapt the host's `ExtensionContext` to the box controller's own narrower context. */
+function toAnimationsBoxContext(ctx: ExtensionContext): AnimationsBoxContext {
+	return {
+		hasUI: ctx.hasUI,
+		isTTY: process.stdout.isTTY === true,
+		env: Bun.env,
+		cwd: ctx.cwd,
+		setWidget: (key, content, widgetOptions) => ctx.ui.setWidget(key, content, widgetOptions),
+	};
+}
+
+/**
+ * Mount the Animations Box and subscribe its full event surface — the same union
+ * `src/animations-box/controller.ts`'s own module doc enumerates. `mount()` runs once,
+ * unconditionally, off `session_start`: every other event handler below narrows
+ * `ExtensionContext` structurally to whichever `Pick<AnimationsBoxContext, ...>` that
+ * controller method needs, with no per-event adapter (the two share field names).
+ */
+function mountAnimationsBox(api: ExtensionAPI, boxConfig: AnimationsBoxConfig, config: AnimationsConfig): void {
+	const controller = new AnimationsBoxController({
+		placement: boxConfig.placement,
+		motionSetting: config.tier,
+		initialConfig: boxConfig,
+		accentColor: config.appearance.breathingBorder.accentColor,
+	});
+
+	api.on("session_start", (_event, ctx) => controller.mount(toAnimationsBoxContext(ctx)));
+	api.on("message_start", (event, ctx) => controller.onMessageStart(event, ctx));
+	api.on("message_update", (event, ctx) => controller.onMessageUpdate(event, ctx));
+	api.on("message_end", (event, ctx) => controller.onMessageEnd(event, ctx));
+	api.on("after_provider_response", (event, ctx) => controller.onAfterProviderResponse(event, ctx));
+	api.on("tool_call", (event, ctx) => controller.onToolCall(event, ctx));
+	api.on("tool_result", (event, ctx) => controller.onToolResult(event, ctx));
+	api.on("turn_start", (event, ctx) => controller.onTurnStart(event, ctx));
+	api.on("turn_end", (event, ctx) => controller.onTurnEnd(event, ctx));
+	api.on("agent_start", (event, ctx) => controller.onAgentStart(event, ctx));
+	api.on("agent_end", (event, ctx) => controller.onAgentEnd(event, ctx));
+	api.on("session_compact", (_event, ctx) => controller.onSessionCompact(ctx));
+	api.on("auto_compaction_start", (event, ctx) => controller.onAutoCompactionStart(event, ctx));
+	api.on("auto_compaction_end", (_event, ctx) => controller.onAutoCompactionEnd(ctx));
+	api.on("ttsr_triggered", (event, ctx) => controller.onTtsrTriggered(event, ctx));
+	api.on("session_switch", (event, ctx) => controller.onSessionSwitch(event, ctx));
+	api.on("session_shutdown", (_event, ctx) => controller.dispose(toAnimationsBoxContext(ctx)));
 }
 
 export default createAnimationsPlugin();

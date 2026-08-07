@@ -36,9 +36,13 @@ import { ANIMATIONS, createAnimationsPlugin } from "../src/registrar";
 
 const noopRead = async (): Promise<Record<string, unknown>> => ({});
 
-/** A flat enable record with exactly one animation on — mirrors `registrar.test.ts`'s `only`. */
-function only(id: string): Record<string, boolean> {
-	return Object.fromEntries(ANIMATIONS.map(a => [a.id, a.id === id]));
+/**
+ * A flat enable record with exactly one animation on — mirrors `registrar.test.ts`'s `only`.
+ * Forces `display: "rows"`: Audit Trail Box is a box-migrated animation (Plan 017), so the
+ * default `display: "box"` would mount it headless instead of the row widget this file drives.
+ */
+function only(id: string): Record<string, unknown> {
+	return { ...Object.fromEntries(ANIMATIONS.map(a => [a.id, a.id === id])), display: "rows" };
 }
 
 /** Recording `ExtensionAPI` double that actually stores handlers (not just event names) so they can be fired. */

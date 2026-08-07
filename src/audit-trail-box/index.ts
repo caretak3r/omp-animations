@@ -257,6 +257,8 @@ export interface AuditTrailBoxExtensionOptions {
 	accentColor?: ThemeColor;
 	/** Filesystem seam for the divergence probe. Defaults to the real one; tests inject a fake. */
 	probeSource?: ProbeSource;
+	/** Run headless — no widget row, ledger/probe/alarm unchanged. See `AuditTrailBoxController`'s own doc. */
+	suppressRow?: boolean;
 }
 
 export function createAuditTrailBoxExtension(options: AuditTrailBoxExtensionOptions = {}): ExtensionFactory {
@@ -265,6 +267,7 @@ export function createAuditTrailBoxExtension(options: AuditTrailBoxExtensionOpti
 			placement: options.placement,
 			accentColor: options.accentColor,
 			probeSource: options.probeSource,
+			suppressRow: options.suppressRow,
 		});
 
 		api.on("tool_result", (event, ctx) => {

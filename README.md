@@ -1,11 +1,12 @@
 # @oh-my-pi/animations
 
-`@oh-my-pi/animations` is one [oh-my-pi](https://omp.sh) plugin. It shows eight
-ambient animated widgets in the terminal UI. Each widget shows one live signal
-from the current agent session. The plugin is built on a vendored
-`pi-animation` kit (`src/kit/`). Every widget respects a shared motion tier and
-turns itself off on a non-TTY terminal, under `NO_COLOR`, in CI, or when the
-terminal falls behind on rendering.
+`@oh-my-pi/animations` is one [oh-my-pi](https://omp.sh) plugin. It shows
+eight live signals from the current agent session in the terminal UI, as one
+consolidated [Animations Box](#the-animations-box) by default, or as eight
+separate ambient widgets. The plugin is built on a vendored `pi-animation`
+kit (`src/kit/`). Every widget respects a shared motion tier and turns itself
+off on a non-TTY terminal, under `NO_COLOR`, in CI, or when the terminal
+falls behind on rendering.
 
 ## The animations
 
@@ -49,6 +50,47 @@ type is a fixed star. A tool call lights up its star and draws a line from the
 star of the previously used tool, so the shape of a session's work builds up
 over time.
 
+## The Animations Box
+
+By default, the plugin draws its signals as one bordered box instead of
+separate rows. The box sits above or below the editor, next to the status
+bar. It shows one line per active signal — cache use, response speed, file
+trust, rate-limit headroom, tool use, edit hotspots, and TTSR ripples — and
+its border breathes with the agent's work rhythm. The box shows the same
+signals the rows show. It does not add a new one.
+
+The `display` setting picks how the plugin shows its signals:
+
+- `box` (default) — one consolidated box.
+- `rows` — separate rows, one per animation. This is the plugin's old
+  behavior.
+- `both` — rows and the box together. Use this to compare the two.
+
+Each animation's own enable setting (`auditTrailBox`, `cacheMeter`, and so
+on) still decides whether that signal shows. In `rows` mode, the setting
+controls the row. In `box` mode, it controls the row inside the box. In
+`both` mode, it controls both.
+
+Two more settings shape the box:
+
+- `animationsBoxDetail` — `detailed` (default) shows one labeled row per
+  active signal. `simple` composes every active signal into a single line.
+- `animationsBoxPlacement` — which side of the editor the box mounts on:
+  `aboveEditor` or `belowEditor` (default).
+
+Each animation's own `Placement` setting (for example
+`cacheMeterPlacement`) applies only in `rows` mode; in `box` mode, the box
+picks placement for every signal it holds. Each animation's own
+`AccentColor` setting still colors its signal inside the box. Breathing
+Border has no row of its own inside the box — its motion becomes the box's
+border, and its `breathingBorderAccentColor` setting colors the border's
+peak brightness.
+
+Audit Trail Box is a special case. Its footer alert — the line that warns
+you when a file you trust may be stale — stays active in `box` mode even
+though its row moves inside the box. The alert never repeats the box's row;
+it appears only while a file needs your attention.
+
 ## Install
 
 Install the plugin into an oh-my-pi profile from a local path:
@@ -63,7 +105,7 @@ mounts only the animations that are enabled.
 
 ## Turn animations on and off
 
-Two kinds of settings control the plugin, both read through the omp plugin
+Three kinds of settings control the plugin, all read through the omp plugin
 settings channel (with an `OMP_*` environment variable as a fallback for
 scripted or CI setups):
 
@@ -75,6 +117,12 @@ scripted or CI setups):
   `reflectionRipple`, and `toolConstellation`. Each default is `true`. Each
   environment fallback follows the pattern `OMP_ANIMATIONS_<ID>` (for example
   `OMP_ANIMATIONS_TOOL_CONSTELLATION`).
+- Three settings for [the Animations Box](#the-animations-box): `display`
+  (`rows` / `box` / `both`, default `box`, environment fallback
+  `OMP_ANIMATIONS_DISPLAY`), `animationsBoxDetail` (`simple` / `detailed`,
+  default `detailed`, environment fallback `OMP_ANIMATIONS_BOX_DETAIL`), and
+  `animationsBoxPlacement` (`aboveEditor` / `belowEditor`, default
+  `belowEditor`, environment fallback `OMP_ANIMATIONS_BOX_PLACEMENT`).
 
 Use `omp plugin config` to read and change these settings:
 

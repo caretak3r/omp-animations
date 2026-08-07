@@ -1087,3 +1087,149 @@ changes that list. Separately: `AnimationsBoxContext.cwd` is required by the con
 (`onToolResult`'s Audit Trail adapter) — the registrar wiring must supply the real working directory,
 not a placeholder, or Audit Trail's box segment will resolve every touched path relative to the
 wrong root.
+
+## Plan 017 — Animations Box: dxi.7 manifest + registrar + README
+
+**Status: DONE**
+
+- **`package.json#omp.settings`** — added exactly 3 keys, grouped together right after
+  `animations` (both are shared, non-per-animation settings) rather than pure alphabetical
+  order, mirroring how each animation's own boolean/Placement/AccentColor trio is already
+  grouped: `display` (enum `rows`/`box`/`both`, default `box`, env `OMP_ANIMATIONS_DISPLAY`),
+  `animationsBoxDetail` (enum `simple`/`detailed`, default `detailed`, env
+  `OMP_ANIMATIONS_BOX_DETAIL` — matches `BOX_SETTING_ENV.detail` in `settings.ts` exactly),
+  `animationsBoxPlacement` (enum `aboveEditor`/`belowEditor`, default `belowEditor`, env
+  `OMP_ANIMATIONS_BOX_PLACEMENT`). Manifest: 24 -> 27 keys. Zero new accent keys, zero subset
+  keys, zero inert keys, per the stale-bead-text correction in this bead's brief — confirmed
+  by `test/registrar.test.ts`'s own key-set test, which now derives the 3 new names from
+  `BOX_SETTING_KEYS` (`Object.values(...)`) rather than a literal list.
+
+- **`src/registrar.ts`** — `createAnimationsPlugin` now resolves a second config,
+  `boxConfig = resolveAnimationsBoxConfigFromSources(settings, env)`, alongside the existing
+  `config`. The mount loop over `ANIMATIONS` gained one guard: when `boxConfig.display ===
+  "box"` and the animation's id is in `BOX_MIGRATED_ANIMATION_IDS`, its standalone `mount()`
+  is skipped (`continue`) instead of called — rows mode and both mode are byte-for-byte
+  unchanged (the guard only fires for `display === "box"`). A new `mountAnimationsBox` helper
+  constructs one `AnimationsBoxController` (placement from `boxConfig.placement`,
+  `motionSetting` from the SAME shared `config.tier` every row uses, `accentColor` from
+  `config.appearance.breathingBorder.accentColor` — the existing `breathingBorderAccentColor`
+  setting, reused per Decision 3/no-new-accent-key) and subscribes its full 16-event surface
+  (`session_start` for `mount()`, plus the 15 `on...` methods `dxi.6`'s note above enumerated)
+  via the same `api.on(event, (event, ctx) => controller.onX(event, ctx))` convention every
+  other keeper's `index.ts` uses. It mounts whenever `display` is `"box"` or `"both"`. A small
+  discovery simplified the wiring considerably: `AnimationsBoxContext`'s per-event methods
+  only need `Pick<AnimationsBoxContext, "hasUI">` or `"hasUI" | "cwd"`, both of which
+  `ExtensionContext` already has under the same field names — so no per-event adapter
+  function was needed (unlike every other keeper's `toXContext`), only one
+  `toAnimationsBoxContext(ctx)` for `mount()`/`dispose()`, which additionally need
+  `setWidget` (adapted from `ctx.ui.setWidget`), matching the real (non-placeholder) `ctx.cwd`
+  `dxi.6`'s note flagged as load-bearing for Audit Trail Box's box segment.
+
+- **Audit Trail alarm surface — option (b), a minimal addition to `audit-trail-box/`** (per
+  this bead's own hazard ordering: prefer an existing flag, then a minimal addition, then
+  document a gap). No existing flag suppressed only the row while keeping the ledger/probe/
+  alarm live, so `AuditTrailBoxControllerOptions` gained `suppressRow?: boolean` (threaded
+  through `AuditTrailBoxExtensionOptions` in `index.ts`). Internally, `Mount` gained a third
+  variant, `{ mode: "headless"; policy: MotionPolicy }`, returned by `#mountWidget` before the
+  existing `tier === "off"` check when `suppressRow` is set — so headless mode preempts the
+  static-widget fallback rather than falling through into it. `#refresh` skips widget
+  maintenance for headless mode (nothing to draw), and `#refreshStatus` was restructured
+  around one real behavioral decision: the existing "off tier already shows the counts on its
+  static line, so stay silent" rule is scoped to `mode === "static"` specifically (not `policy
+  === undefined` as before) — a headless controller has NO static line at any tier, so its
+  alarm must not go dark just because the shared `animations` tier happens to resolve to
+  `"off"`; it is the SOLE surface for POISONED in that mode (Decision 6) and the one thing
+  this bead's brief called out as a hard requirement. `dispose()` skips the now-unnecessary
+  `setWidget(WIDGET_KEY, undefined, ...)` clear call for headless mode (nothing was ever set).
+  The registrar wires this via the SAME `createAuditTrailBoxExtension(...)` factory the normal
+  `ANIMATIONS` entry calls (same `motionSetting`/`...appearance.auditTrailBox` spread, plus
+  `suppressRow: true`) — so its probe, ledger, `setStatus` alarm, and `/audit-trail` command
+  (including `/audit-trail remedy`) all stay wired exactly as in rows mode, only the row itself
+  is gone. This only fires in `display === "box"`; in `"both"` mode Audit Trail Box mounts
+  fully normally (row + alarm) via its regular `ANIMATIONS` entry, so there is never a second,
+  duplicate probe running — `AuditLedgerState` inside `AnimationsBoxController` (the box's own
+  audit segment, per `dxi.3`) never runs a probe in any variant, matching this bead's
+  no-duplicate-probe-IO hazard.
+
+- **`README.md`** — new "The Animations Box" section (ASD-STE100: short sentences, one idea
+  each) between "The animations" and "Install", explaining what the box is, the `display`
+  three-way switch and how it interacts with each animation's own enable boolean, the two
+  box-only settings, how per-animation `Placement`/`AccentColor` settings apply differently in
+  `rows` vs `box` mode, Breathing Border's row-less border-only role, and Audit Trail Box's
+  alarm-survives-row-suppression special case. The top intro paragraph and the "Turn animations
+  on and off" settings list were updated to mention the box and its 3 settings without
+  duplicating the new section's explanation.
+
+- **Tests (`test/registrar.test.ts`)** — the file's own `mount()`/`only()` helpers predate
+  `display` and implicitly tested `rows`-mode behavior throughout; `mount()` now defaults
+  `settings` to `{ display: "rows", ...enabled }` (callers can still override), which was the
+  minimal fix keeping every pre-existing assertion in this file — and in `test/boot-smoke.test.ts`,
+  `test/cache-meter.test.ts`, and `test/appearance.test.ts`'s own registrar-integration tests,
+  none of which had ever needed a `display` key before — meaningful, rather than rewriting each
+  one's internal assertions. All four call sites are now explicit about which mode they exercise
+  (each with a one-line comment explaining why `display: "box"`, the new default, would have
+  broken them). A new `describe("display modes (Animations Box integration, Plan 017)")` block
+  covers: `BOX_MIGRATED_ANIMATION_IDS` is exactly the shipped `ANIMATIONS` set (a documented
+  invariant the box-mode multiset arithmetic below depends on); the production default really is
+  `"box"` when unstored (via a new `mountRaw` helper that, unlike `mount()`, never forces
+  `display`); box mode's subscription multiset equals Audit Trail Box's own rows-mode solo
+  events plus the box's own solo event set (proving every OTHER migrated animation contributes
+  literally zero subscriptions, and that Audit Trail's own event wiring is byte-for-byte
+  unchanged by `suppressRow`), plus `commands === ["audit-trail"]` (proves `/cache` is gone but
+  `/audit-trail` survives); both mode's multiset equals the full rows-mode union plus the box's
+  own events, with the same command set as rows mode; rows mode never subscribes to
+  `session_start` (the box's own mount hook); and box/both mode each subscribe to it exactly
+  once. A nested `describe("widgets actually mounted, driven through a real session_start")`
+  adds a `makeDrivableApi()` (captures `session_start` handlers and simulates firing them
+  against a fake `ExtensionContext`, recording `setWidget` calls by key) proving directly, not
+  just via subscription counts, that box mode mounts exactly one widget — `BOX_WIDGET_KEY` —
+  and rows mode mounts nothing on `session_start` at all. Widget-mount checks were deliberately
+  scoped to the box's own key only (not every migrated animation's WIDGET_KEY): the other 8
+  keepers mount lazily on their own first event, not `session_start`, and their per-animation
+  mount correctness is already exhaustively covered by each keeper's own test file — re-driving
+  all of them here would duplicate that coverage without adding proof beyond what the
+  subscription-multiset tests above already establish.
+
+- **No hardcoded counts.** Per this bead's own COUNTER HAZARD: nowhere does a test or
+  source file write a literal `3`, `24`, or `27` for a settings-key count — the manifest test
+  derives the 3 box keys from `Object.values(BOX_SETTING_KEYS)` and the per-animation keys from
+  `ALL_IDS`/`ANIMATIONS`, exactly as it already did pre-dxi.7.
+
+- **Headless-mode unit tests, `test/audit-trail-box-controller.test.ts`.** The registrar-level
+  tests above prove `suppressRow`'s *wiring* survives (subscriptions/commands unchanged); this
+  new `describe("audit trail box controller — headless mode (suppressRow)")` block proves the
+  *behavior* directly, against the real controller, reusing this file's own `alarmingPath`/
+  `recordingContext`/`fakeDisk` fixtures: never mounts `WIDGET_KEY` at any motion tier
+  (`off`/`subtle`/`full`); the alarm fires at tier `off` in headless mode specifically — the one
+  new behavioral decision this bead made (`#refreshStatus`'s silence rule now scopes to `mode
+  === "static"`, not "any tier-off policy") — with a paired control test proving the ROW-mounted
+  `off` tier still stays silent, unchanged; the alarm still clears on `noteSessionSwitch`; and
+  `dispose()` clears the status without ever touching the widget key. All 5 passed against the
+  implementation with no further source changes, confirming the off-tier exemption is correct
+  and not just type-safe.
+
+**Gate:** `bun test && bun run check:types && ./node_modules/.bin/biome check .` — **906 pass / 0
+fail / 2858 assertions / 24 files** (baseline immediately before this bead was 893 pass / 2833
+assertions per `dxi.6`'s own gate line above; +13 new tests / +25 new assertions, 0 new files —
+this bead only extended existing test files, per its own scope). tsgo clean. biome flagged
+import-sort and formatting only in `src/registrar.ts` and `test/registrar.test.ts` —
+`--write --unsafe` auto-fixed both, re-verified clean with a full `bun test` +
+`bun run check:types` + `biome check .` pass after.
+
+**Files touched:** `package.json`, `src/registrar.ts`, `src/audit-trail-box/controller.ts`,
+`src/audit-trail-box/index.ts`, `README.md`, `test/registrar.test.ts`, `test/boot-smoke.test.ts`,
+`test/cache-meter.test.ts`, `test/appearance.test.ts`, `test/audit-trail-box-controller.test.ts`,
+`plans/PROGRESS.md` (this entry). No other `src/` directory was touched, per this bead's own
+scope — `audit-trail-box/` was touched for exactly the `suppressRow` seam (hazard option (b)),
+nothing else in that directory changed.
+
+`dxi.8`'s worker note: live-sandbox validation should specifically check (1) that `display=box`'s
+default actually renders the box on a fresh install with no stored settings (nothing here exercises
+the REAL `getPluginsLockfile()`/RPC settings channel end to end, only the injectable `settings`
+seam); (2) that Audit Trail Box's footer alert genuinely fires from a real stale-file scenario in
+`box` mode — this bead's tests prove the wiring survives `suppressRow`, not that the probe/alarm
+sequence itself still behaves correctly end-to-end under real disk I/O (that's `audit-trail-box-*`'s
+own coverage, unchanged by this bead, but never re-verified against a REAL headless mount here); and
+(3) the border's breathing motion and the box's own placement/detail rendering at a real terminal
+width, which this bead's registrar-level tests do not and should not attempt (that's `dxi.6`'s
+golden-frame territory, already covered).
