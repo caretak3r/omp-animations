@@ -5,8 +5,10 @@
  * SegmentSample}: the simple-mode `variants` ladder (fed straight into the
  * kit's `composeSegments`) plus the detailed-mode column fields, both derived
  * from that animation's own exported pure renderers/state — never reinvented
- * text. Only Cache Meter is wired in this bead (`oh-my-pi-dxi.2`); the
- * remaining six keepers land in `dxi.3`/`dxi.4`/`dxi.5`.
+ * text. Cache Meter (`oh-my-pi-dxi.2`), Audit Trail, Tool Constellation and
+ * Palimpsest (`oh-my-pi-dxi.3`) are wired here; Cadence Equalizer, Rate-Limit
+ * Tidepool and Reflection Ripple land in `dxi.4`, the breathing border in
+ * `dxi.5`.
  *
  * `active` mirrors the animation's own real mount policy (quiet until the
  * first usable event, mirroring `CacheMeterController`'s lazy mount), but
@@ -18,8 +20,19 @@
  * `now` is always a wall-clock reading from the box's own `FrameScheduler`,
  * never the host `AnimatedWidget`'s mount-relative `elapsedMs` (Decision 4).
  */
+import { basename } from "node:path";
 import type { Theme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import { formatNumber } from "@oh-my-pi/pi-utils";
+import {
+	BADGE_GLYPH as AUDIT_BADGE_GLYPH,
+	AUDIT_TRAIL_BOX_COLORS,
+	type AuditLedgerState,
+	type AuditTrailBoxColors,
+	type PathRecord,
+	renderAuditMeterRow,
+	STATUS_GLYPHS,
+	STATUS_RISK_ORDER,
+} from "../audit-trail-box";
 import {
 	BADGE_GLYPH,
 	CACHE_METER_COLORS,
@@ -27,6 +40,22 @@ import {
 	type CacheMeterState,
 	renderCacheMeterRow,
 } from "../cache-meter";
+import {
+	GLOW_THRESHOLD,
+	PALIMPSEST_COLORS,
+	type PalimpsestColors,
+	type PalimpsestRow,
+	type PalimpsestState,
+} from "../palimpsest";
+import {
+	CATEGORY_ICON,
+	CATEGORY_ORDER,
+	CATEGORY_THEME_COLOR,
+	type ConstellationState,
+	EMPTY_GLYPH,
+	renderConstellationTally,
+	type ToolCategory,
+} from "../tool-constellation";
 import { BOX_SEGMENT_IDS, type BoxSegmentId } from "./settings";
 
 /** The slice of {@link Theme} every segment builder needs — just foreground coloring. */
@@ -120,6 +149,210 @@ export function buildCacheMeterSegment(
 					? `saved ${formatCost(snapshot.savedCost)}`
 					: `${snapshot.hitCount}/${snapshot.requestCount}`,
 			trailing: `r ${formatNumber(snapshot.cacheReadTokens)} · w ${formatNumber(snapshot.cacheWriteTokens)}`,
+		},
+	};
+}
+
+/**
+ * Audit Trail segment. A dim resting row until the first tracked touch lands
+ * (`state.size > 0`) — mirrors `AuditTrailBoxController`'s own real mount
+ * policy, which pushes its first widget content from the very first
+ * `noteRead`/`noteWrite`. Like Cache Meter, this segment never reproduces
+ * the standalone widget's per-frame cosmetics: the alarm badge's pulse blink
+ * lives inside `AuditTrailBoxWidget` itself (see `controller.ts`'s module
+ * doc), so the glyph here always draws the plain poisoned/badge color,
+ * unpulsed.
+ */
+export function buildAuditTrailBoxSegment(
+	state: AuditLedgerState,
+	now: number,
+	theme: BoxTheme,
+	colors: AuditTrailBoxColors = AUDIT_TRAIL_BOX_COLORS,
+): SegmentSample {
+	const priority = priorityOf("auditTrailBox");
+	if (state.size === 0) {
+		return {
+			id: "auditTrailBox",
+			priority,
+			...INACTIVE,
+			detail: {
+				glyph: theme.fg("dim", AUDIT_BADGE_GLYPH),
+				label: "audit",
+				primary: "—",
+				secondary: "",
+				trailing: "",
+			},
+		};
+	}
+
+	const snapshot = state.snapshot();
+	const variants = dedupe(
+		[999, 40, 18].map(width => renderAuditMeterRow(snapshot, width, now, theme, "subtle", colors)),
+	);
+
+	const counts = STATUS_RISK_ORDER.filter(status => snapshot.counts[status] > 0)
+		.map(status => `${snapshot.counts[status]}${STATUS_GLYPHS[status]}`)
+		.join(" ");
+	// Most recently touched path, for the "last path" column — snapshot.paths is
+	// already risk-sorted, not recency-sorted, so this needs its own scan.
+	let lastTouched: PathRecord | undefined;
+	for (const record of snapshot.paths) {
+		if (lastTouched === undefined || record.lastTouchTurn > lastTouched.lastTouchTurn) lastTouched = record;
+	}
+	const metrics = snapshot.metrics;
+
+	return {
+		id: "auditTrailBox",
+		priority,
+		active: true,
+		variants,
+		detail: {
+			glyph: theme.fg(snapshot.counts.poisoned > 0 ? colors.poisoned : colors.badge, AUDIT_BADGE_GLYPH),
+			label: "audit",
+			primary: counts,
+			secondary: lastTouched === undefined ? "" : basename(lastTouched.path),
+			trailing: `r/w ${metrics.reads}/${metrics.writes} · ×${metrics.writeAmplification.toFixed(1)}`,
+		},
+	};
+}
+
+/** Highest-fire-count category, ties broken by {@link CATEGORY_ORDER}'s own canonical order. `undefined` when nothing has fired. */
+function dominantCategory(counts: ReadonlyMap<ToolCategory, number>): ToolCategory | undefined {
+	let best: ToolCategory | undefined;
+	let bestCount = 0;
+	for (const category of CATEGORY_ORDER) {
+		const count = counts.get(category) ?? 0;
+		if (count > bestCount) {
+			best = category;
+			bestCount = count;
+		}
+	}
+	return best;
+}
+
+/**
+ * Tool Constellation segment. A dim resting row until the first `tool_call`
+ * fires a star (`state.snapshot().stars.length > 0`) — mirrors
+ * `ToolConstellationController`'s own mount policy. Its grid renderer is 3
+ * rows tall and does not fit a one-row segment (Decision 1's first stated
+ * exception), so both the widest and truncated simple-mode variants reuse
+ * the exported `renderConstellationTally` instead — the widest variant over
+ * every category that has fired, the truncated one over the dominant
+ * category alone. Keeps the 7-way `CATEGORY_THEME_COLOR` rainbow: unlike
+ * every other segment, there is no single accent slot to override here, so
+ * this builder takes no `colors` parameter.
+ */
+export function buildToolConstellationSegment(state: ConstellationState, _now: number, theme: BoxTheme): SegmentSample {
+	const priority = priorityOf("toolConstellation");
+	const snapshot = state.snapshot();
+	if (snapshot.stars.length === 0) {
+		return {
+			id: "toolConstellation",
+			priority,
+			...INACTIVE,
+			detail: { glyph: theme.fg("dim", EMPTY_GLYPH), label: "tools", primary: "—", secondary: "", trailing: "" },
+		};
+	}
+
+	const counts = state.categoryCounts();
+	const dominant = dominantCategory(counts);
+	const full = renderConstellationTally(counts, theme);
+	const narrow =
+		dominant === undefined ? full : renderConstellationTally(new Map([[dominant, counts.get(dominant) ?? 0]]), theme);
+	const variants = dedupe([full, narrow]);
+
+	const total = [...counts.values()].reduce((sum, count) => sum + count, 0);
+	const tally = CATEGORY_ORDER.filter(category => (counts.get(category) ?? 0) > 0)
+		.map(category => `${CATEGORY_ICON[category]}${counts.get(category)}`)
+		.join(" ");
+
+	return {
+		id: "toolConstellation",
+		priority,
+		active: true,
+		variants,
+		detail: {
+			glyph:
+				dominant === undefined
+					? theme.fg("dim", EMPTY_GLYPH)
+					: theme.fg(CATEGORY_THEME_COLOR[dominant], CATEGORY_ICON[dominant]),
+			label: "tools",
+			primary: `${total} calls`,
+			secondary: dominant ?? "",
+			trailing: tally,
+		},
+	};
+}
+
+/** Palimpsest exports no badge glyph of its own (unlike Cache Meter's badge or Audit Trail's badge) — this is the box's own literal, matching Plan 017 Decision 5's detailed-mode mock. */
+const PALIMPSEST_GLYPH = "▓";
+
+/**
+ * Same recency/overlap/path ordering `renderPalimpsestRows` sorts its visible
+ * rows by — reproduced here since that comparator lives inline in that
+ * function, not exported (same precedent as `formatCost` above).
+ */
+function compareVisibleRows(a: PalimpsestRow, b: PalimpsestRow): number {
+	return b.lastTouchedTurn - a.lastTouchedTurn || b.overlapCount - a.overlapCount || a.path.localeCompare(b.path);
+}
+
+/**
+ * Palimpsest segment. `renderPalimpsestRows` is multi-row and width-blind
+ * (Decision 1's second stated exception), so this segment derives its own
+ * one-line summary straight from `snapshot().rows` instead of calling it:
+ * the single hottest visible row (overlap count at or above
+ * `GLOW_THRESHOLD`, same threshold `PalimpsestController` mounts on),
+ * narrowing from the full path to the basename to the bare count. Resting
+ * until at least one row clears that threshold, mirroring
+ * `PalimpsestController`'s own visibility-driven mount policy. Never
+ * reproduces the ember tier's per-frame hot-pulse bolding — an
+ * `AnimatedWidget`-only cosmetic, the same accepted gap as Cache Meter's
+ * hit-rate ease (see `controller.ts`'s module doc).
+ */
+export function buildPalimpsestSegment(
+	state: PalimpsestState,
+	_now: number,
+	theme: BoxTheme,
+	colors: PalimpsestColors = PALIMPSEST_COLORS,
+): SegmentSample {
+	const priority = priorityOf("palimpsest");
+	const visible = state
+		.snapshot()
+		.rows.filter(row => row.overlapCount >= GLOW_THRESHOLD)
+		.sort(compareVisibleRows);
+	if (visible.length === 0) {
+		return {
+			id: "palimpsest",
+			priority,
+			...INACTIVE,
+			detail: {
+				glyph: theme.fg("dim", PALIMPSEST_GLYPH),
+				label: "files",
+				primary: "—",
+				secondary: "",
+				trailing: "",
+			},
+		};
+	}
+
+	const hottest = visible[0] as PalimpsestRow;
+	const variants = dedupe([
+		`${hottest.path} ×${hottest.overlapCount}`,
+		`${basename(hottest.path)} ×${hottest.overlapCount}`,
+		`×${hottest.overlapCount}`,
+	]);
+
+	return {
+		id: "palimpsest",
+		priority,
+		active: true,
+		variants,
+		detail: {
+			glyph: theme.fg(colors.ember, PALIMPSEST_GLYPH),
+			label: "files",
+			primary: basename(hottest.path),
+			secondary: `×${hottest.overlapCount}`,
+			trailing: `${visible.length} row${visible.length === 1 ? "" : "s"}`,
 		},
 	};
 }

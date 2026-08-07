@@ -3,7 +3,12 @@ import type {
 	ExtensionWidgetContent,
 	ExtensionWidgetOptions,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
-import type { MessageEndEvent } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
+import type {
+	MessageEndEvent,
+	ToolCallEvent,
+	ToolResultEvent,
+	TurnEndEvent,
+} from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 import { type AnimationsBoxContext, AnimationsBoxController, BOX_WIDGET_KEY } from "../src/animations-box/controller";
 import { resolveAnimationsBoxConfig } from "../src/animations-box/settings";
 import type { AnimationsBoxWidget } from "../src/animations-box/widget";
@@ -40,6 +45,7 @@ function recordingContext(overrides: Partial<AnimationsBoxContext> = {}): {
 		hasUI: true,
 		isTTY: true,
 		env: {},
+		cwd: "/repo",
 		setWidget: (key, content, options) => {
 			calls.push({ key, content, options });
 		},
@@ -74,6 +80,51 @@ function messageEnd(usage: UsageOverrides = {}): MessageEndEvent {
 			timestamp: 0,
 		},
 	} as unknown as MessageEndEvent;
+}
+
+function toolCall(toolName: string): ToolCallEvent {
+	return { type: "tool_call", toolCallId: "tc-1", toolName, input: {} } as unknown as ToolCallEvent;
+}
+
+function readResult(path: string): ToolResultEvent {
+	return {
+		type: "tool_result",
+		toolCallId: "tc-read",
+		toolName: "read",
+		input: { path },
+		content: [],
+		isError: false,
+		details: { resolvedPath: path },
+	} as unknown as ToolResultEvent;
+}
+
+function writeResult(path: string): ToolResultEvent {
+	return {
+		type: "tool_result",
+		toolCallId: "tc-write",
+		toolName: "write",
+		input: { path, content: "hello" },
+		content: [],
+		isError: false,
+		details: undefined,
+	} as unknown as ToolResultEvent;
+}
+
+/** An `edit` tool result carrying one parseable hunk header — feeds both Audit Trail's ledger and Palimpsest's span ledger from the same event. */
+function editResult(path: string): ToolResultEvent {
+	return {
+		type: "tool_result",
+		toolCallId: "tc-edit",
+		toolName: "edit",
+		input: { path },
+		content: [],
+		isError: false,
+		details: { path, op: "update", diff: "@@ -1,3 +1,5 @@\n" },
+	} as unknown as ToolResultEvent;
+}
+
+function turnEnd(turnIndex: number): TurnEndEvent {
+	return { type: "turn_end", turnIndex, message: {}, toolResults: [] } as unknown as TurnEndEvent;
 }
 
 describe("AnimationsBoxController — mount lifecycle", () => {
@@ -160,9 +211,10 @@ describe("AnimationsBoxController — cache-meter state wiring", () => {
 		const widget = buildWidget(calls[0] as SetWidgetCall);
 
 		controller.onMessageEnd(messageEnd({ input: 400, cacheRead: 600, cacheWrite: 200 }), ctx);
-		const rows = widget.renderFrame(69).join("\n");
-		expect(rows).toContain("cache");
-		expect(rows).not.toContain("—     "); // the resting placeholder is gone
+		const frame = widget.renderFrame(69);
+		const cacheRow = frame.find(row => row.includes("cache"));
+		expect(cacheRow).toBeDefined();
+		expect(cacheRow).not.toContain("—     "); // the resting placeholder is gone, even though the other enabled-but-idle segments still show theirs
 		widget.dispose();
 	});
 
@@ -214,7 +266,8 @@ describe("AnimationsBoxController — cache-meter state wiring", () => {
 		controller.onMessageEnd(messageEnd({ input: 400, cacheRead: 600 }), ctx);
 
 		const activeWidget = buildWidget(calls[0] as SetWidgetCall);
-		expect(activeWidget.renderFrame(69).join("\n")).not.toContain("—     ");
+		const activeCacheRow = activeWidget.renderFrame(69).find(row => row.includes("cache"));
+		expect(activeCacheRow).not.toContain("—     ");
 		activeWidget.dispose();
 
 		controller.onSessionSwitch(undefined, ctx);
@@ -222,7 +275,8 @@ describe("AnimationsBoxController — cache-meter state wiring", () => {
 		expect(calls).toHaveLength(1);
 
 		const afterSwitch = buildWidget(calls[0] as SetWidgetCall);
-		expect(afterSwitch.renderFrame(69).join("\n")).toContain("—");
+		const restingCacheRow = afterSwitch.renderFrame(69).find(row => row.includes("cache"));
+		expect(restingCacheRow).toContain("—");
 		afterSwitch.dispose();
 	});
 
@@ -237,7 +291,210 @@ describe("AnimationsBoxController — cache-meter state wiring", () => {
 		controller.onMessageEnd(messageEnd({ input: 400, cacheRead: 600 }), ctx);
 
 		const widget = buildWidget(calls[0] as SetWidgetCall);
-		expect(widget.renderFrame(69)).toEqual([]);
+		const rows = widget.renderFrame(69).join("\n");
+		expect(rows).not.toContain("cache");
+		widget.dispose();
+	});
+});
+
+describe("AnimationsBoxController — audit trail state wiring", () => {
+	it("the mounted widget starts on the resting row before any tool_result lands", () => {
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({
+			scheduler: manualScheduler(),
+			initialConfig: resolveAnimationsBoxConfig({}),
+		});
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall);
+		const auditRow = widget.renderFrame(69).find(row => row.includes("audit"));
+		expect(auditRow).toContain("—");
+		widget.dispose();
+	});
+
+	it("onToolResult(read) feeds the ledger, flipping the segment to its active row", () => {
+		const scheduler = manualScheduler();
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall);
+
+		controller.onToolResult(readResult("/repo/src/foo.ts"), ctx);
+		const auditRow = widget.renderFrame(69).find(row => row.includes("audit"));
+		expect(auditRow).toBeDefined();
+		expect(auditRow).not.toContain("—     ");
+		widget.dispose();
+	});
+
+	it("onToolResult(write) feeds the ledger too", () => {
+		const scheduler = manualScheduler();
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall);
+
+		controller.onToolResult(writeResult("/repo/src/foo.ts"), ctx);
+		const auditRow = widget.renderFrame(69).find(row => row.includes("audit"));
+		expect(auditRow).not.toContain("—     ");
+		widget.dispose();
+	});
+
+	it("ignores tool_result when hasUI is false", () => {
+		const scheduler = manualScheduler();
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall);
+
+		controller.onToolResult(readResult("/repo/src/foo.ts"), { hasUI: false, cwd: "/repo" });
+		const auditRow = widget.renderFrame(69).find(row => row.includes("audit"));
+		expect(auditRow).toContain("—");
+		widget.dispose();
+	});
+
+	it("onSessionCompact / onAutoCompactionEnd run cleanly as Audit Trail's recovery-correlation signal", () => {
+		const scheduler = manualScheduler();
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		controller.mount(ctx);
+		controller.onToolResult(readResult("/repo/src/foo.ts"), ctx);
+		controller.onSessionCompact(ctx);
+		controller.onAutoCompactionEnd(ctx);
+
+		const widget = buildWidget(calls[0] as SetWidgetCall);
+		const auditRow = widget.renderFrame(69).find(row => row.includes("audit"));
+		expect(auditRow).not.toContain("—     ");
+		widget.dispose();
+	});
+
+	it("onSessionSwitch resets the ledger to a fresh, empty state without tearing down the mount", () => {
+		const scheduler = manualScheduler();
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		controller.mount(ctx);
+		controller.onToolResult(readResult("/repo/src/foo.ts"), ctx);
+
+		const activeWidget = buildWidget(calls[0] as SetWidgetCall);
+		const activeAuditRow = activeWidget.renderFrame(69).find(row => row.includes("audit"));
+		expect(activeAuditRow).not.toContain("—     ");
+		activeWidget.dispose();
+
+		controller.onSessionSwitch(undefined, ctx);
+		expect(calls).toHaveLength(1); // the mount itself is untouched
+
+		const afterSwitch = buildWidget(calls[0] as SetWidgetCall);
+		const restingAuditRow = afterSwitch.renderFrame(69).find(row => row.includes("audit"));
+		expect(restingAuditRow).toContain("—");
+		afterSwitch.dispose();
+	});
+});
+
+describe("AnimationsBoxController — tool constellation state wiring", () => {
+	it("the mounted widget starts on the resting row before any tool_call lands", () => {
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({
+			scheduler: manualScheduler(),
+			initialConfig: resolveAnimationsBoxConfig({}),
+		});
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall);
+		const toolsRow = widget.renderFrame(69).find(row => row.includes("tools"));
+		expect(toolsRow).toContain("—");
+		widget.dispose();
+	});
+
+	it("onToolCall fires a star, flipping the segment to its active row", () => {
+		const scheduler = manualScheduler();
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall);
+
+		controller.onToolCall(toolCall("read"), ctx);
+		const toolsRow = widget.renderFrame(69).find(row => row.includes("tools"));
+		expect(toolsRow).toBeDefined();
+		expect(toolsRow).not.toContain("—     ");
+		widget.dispose();
+	});
+
+	it("ignores tool_call when hasUI is false", () => {
+		const scheduler = manualScheduler();
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall);
+
+		controller.onToolCall(toolCall("read"), { hasUI: false });
+		const toolsRow = widget.renderFrame(69).find(row => row.includes("tools"));
+		expect(toolsRow).toContain("—");
+		widget.dispose();
+	});
+});
+
+describe("AnimationsBoxController — palimpsest state wiring", () => {
+	it("the mounted widget starts on the resting row before any region crosses GLOW_THRESHOLD", () => {
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({
+			scheduler: manualScheduler(),
+			initialConfig: resolveAnimationsBoxConfig({}),
+		});
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall);
+		const filesRow = widget.renderFrame(69).find(row => row.includes("files"));
+		expect(filesRow).toContain("—");
+		widget.dispose();
+	});
+
+	it("a second onToolResult(edit) touch on the same region flips the segment to its active row, and onTurnEnd fades it back out", () => {
+		const scheduler = manualScheduler();
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall);
+
+		controller.onToolResult(editResult("/repo/src/foo.ts"), ctx);
+		const oneTouchRow = widget.renderFrame(69).find(row => row.includes("files"));
+		expect(oneTouchRow).toContain("—"); // one touch alone doesn't cross GLOW_THRESHOLD
+
+		controller.onToolResult(editResult("/repo/src/foo.ts"), ctx);
+		const twoTouchRow = widget.renderFrame(69).find(row => row.includes("files"));
+		expect(twoTouchRow).not.toContain("—     ");
+
+		// FADE_AFTER_TURNS turns without a re-touch and the region ages back out.
+		for (let turn = 1; turn <= 3; turn++) controller.onTurnEnd(turnEnd(turn), ctx);
+		const fadedRow = widget.renderFrame(69).find(row => row.includes("files"));
+		expect(fadedRow).toContain("—");
+		widget.dispose();
+	});
+
+	it("ignores tool_result when hasUI is false", () => {
+		const scheduler = manualScheduler();
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall);
+
+		controller.onToolResult(editResult("/repo/src/foo.ts"), { hasUI: false, cwd: "/repo" });
+		controller.onToolResult(editResult("/repo/src/foo.ts"), { hasUI: false, cwd: "/repo" });
+		const filesRow = widget.renderFrame(69).find(row => row.includes("files"));
+		expect(filesRow).toContain("—");
+		widget.dispose();
+	});
+
+	it("one edit tool_result feeds both Audit Trail's ledger and Palimpsest's span ledger from the same event", () => {
+		const scheduler = manualScheduler();
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall);
+
+		controller.onToolResult(editResult("/repo/src/foo.ts"), ctx);
+		controller.onToolResult(editResult("/repo/src/foo.ts"), ctx);
+
+		const frame = widget.renderFrame(69);
+		const auditRow = frame.find(row => row.includes("audit"));
+		const filesRow = frame.find(row => row.includes("files"));
+		expect(auditRow).not.toContain("—     ");
+		expect(filesRow).not.toContain("—     ");
 		widget.dispose();
 	});
 });

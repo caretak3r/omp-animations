@@ -595,3 +595,121 @@ tests across the 5 new test files matches exactly). tsgo and biome both clean.
 `test/animations-box-controller.test.ts` (new), `plans/PROGRESS.md` (this entry). No existing
 file besides `src/kit/index.ts` was modified; nothing in `src/registrar.ts`, `package.json`, or
 any of the 8 keeper animations' own directories was touched.
+
+## Plan 017 — Animations Box: dxi.3 segments A (audit trail, tool constellation, palimpsest)
+
+**Status: DONE**
+
+- **`src/animations-box/segments.ts` — three new builders, same template as `buildCacheMeterSegment`:**
+  - `buildAuditTrailBoxSegment(state: AuditLedgerState, now, theme, colors?)` — active once
+    `state.size > 0` (mirrors `AuditTrailBoxController`'s own lazy-mount-from-first-touch policy).
+    Variants: `renderAuditMeterRow` at the exact 999/40/18 budgets from Decision 1's table, deduped.
+    Detail: glyph = badge (poisoned color when `snapshot.counts.poisoned > 0`, else the badge
+    accent) — never pulsed, the same accepted per-widget-cosmetic gap `buildCacheMeterSegment`
+    already takes for the hit-rate ease; primary = status counts (`STATUS_RISK_ORDER`/`STATUS_GLYPHS`,
+    both exported from the keeper); secondary = basename of the most-recently-touched path (own
+    scan over `snapshot.paths`, since that list is risk-sorted, not recency-sorted); trailing =
+    `r/w <reads>/<writes> · ×<write amplification>`.
+  - `buildToolConstellationSegment(state: ConstellationState, now, theme)` — **no `colors` param**:
+    the keeper's own extension exposes no `accentColor` option either (seven-way
+    `CATEGORY_THEME_COLOR` rainbow, no single accent slot — Decision 1 says keep it, don't invent
+    one). Active once a star exists. Its grid renderer is 3 rows tall (Decision 1's first stated
+    exception), so both simple-mode variants reuse the exported `renderConstellationTally`: the
+    widest variant over every fired category, the narrow one filtered to the dominant category
+    alone (ties broken by `CATEGORY_ORDER`'s own canonical order, not insertion order). Detail:
+    primary = total fire count, secondary = dominant category name, trailing = a plain (uncolored)
+    icon+count tally in `CATEGORY_ORDER`.
+  - `buildPalimpsestSegment(state: PalimpsestState, now, theme, colors?)` — Decision 1's second
+    stated exception: `renderPalimpsestRows` is multi-row and width-blind, so this segment derives
+    its own one-line summary directly from `snapshot().rows` instead of calling it — the single
+    hottest row at or above `GLOW_THRESHOLD`, sorted by the exact same recency/overlap/path
+    comparator `renderPalimpsestRows` uses internally (reproduced locally as
+    `compareVisibleRows`, since that comparator isn't exported), narrowing `path ×N` → `basename
+    ×N` → `×N` per Decision 1's literal ladder. Active once one row clears the threshold (same gate
+    `PalimpsestController` mounts on). Palimpsest exports no badge glyph of its own — added a local
+    `PALIMPSEST_GLYPH = "▓"`, matching Decision 5's own detailed-mode mock row (`▓ files —`)
+    verbatim, so the resting row is pinned exactly against the spec.
+- **`src/animations-box/controller.ts`:**
+  - Three fresh state instances (`AuditLedgerState`, `ConstellationState`, `PalimpsestState`), never
+    the standalone controllers.
+  - `onToolResult` fans one `tool_result` event out to both Audit Trail (via the keeper's own
+    exported `auditTouchesFromToolResult(event, ctx.cwd)`, so `AnimationsBoxContext` gained a
+    required `cwd: string` field — the one adapter surface Audit Trail's ledger needs that no
+    existing box event carried) and Palimpsest (a local `applyPalimpsestTouch`/`isEditToolResult`/
+    `PalimpsestFileTouch`, byte-identical reproductions of `../palimpsest/controller.ts`'s own
+    private, unexported helpers of the same names — same precedent `toCacheRequestSample` already
+    set for Cache Meter in `dxi.2`).
+  - `onToolCall` feeds Tool Constellation's `recordFire`.
+  - `onTurnEnd` (new) advances both Audit Trail's cold-eviction sweep (`noteTurn()`) and
+    Palimpsest's fade clock (`advanceTurn(event.turnIndex)`) from the one `turn_end` event.
+  - `onSessionCompact` (extended) and the new `onAutoCompactionEnd` both call Audit Trail's
+    `noteRecovery`, alongside Cache Meter's existing compaction attribution.
+  - `onSessionSwitch` (extended) additionally calls `AuditLedgerState.noteSessionSwitch()` — mirrors
+    the standalone `AuditTrailBoxController`'s own `session_switch` wiring exactly (resets the
+    ledger map in place, not a fresh instance, since its own `noteSessionSwitch` already counts
+    unresolved POISONED/DIRTY paths as a teardown leak). Tool Constellation and Palimpsest wire no
+    `session_switch` handler in their own standalone extensions either, so their state is
+    deliberately left untouched by this method too — not an oversight, verified against both
+    keepers' own `index.ts` event lists.
+  - `#buildSamples`'s array literal order is priority order (`[cacheMeter, auditTrailBox,
+    toolConstellation, palimpsest]`), not builder-declaration order — `widget.ts`'s detailed mode
+    renders `samples` top-to-bottom with no sort of its own, so this array's order IS the render
+    order. **Gotcha flagged for `dxi.4`'s worker:** `cadenceEqualizer` (pri 2) and
+    `rateLimitTidepool` (pri 4) must be *inserted between* existing entries at their correct
+    priority slots, not appended after `palimpsest` — appending would render them in the wrong
+    position in detailed mode even though simple mode (which sorts by priority via
+    `composeSegments`) would still look correct, masking the bug.
+- **Deviation, evidence-backed — the Audit Trail segment never sees POISONED via its own probe.**
+  `AuditTrailBoxController` additionally owns an async, rate-limited, round-robin `DiskProbe`
+  (`probeNow`/`#maybeProbe`) that is the *only* source of the `divergence` family (hence POISONED
+  status) beyond the exact 2-tick hysteresis. The task brief's own framing — "Only the row/ledger
+  state feeds the box," contrasted explicitly with the `setStatus` alarm surface it excludes — reads
+  as scoping out this off-path filesystem I/O too: it is no more "row/ledger state" than the alarm
+  surface it's called out alongside. Not wiring it means the box's Audit Trail segment can still
+  show POISONED (verified — `test/animations-box-segments.test.ts`'s "colors the glyph with the
+  poisoned token..." test drives two `state.noteProbe(...)` calls directly against the ledger to
+  reach it), but only if something external calls `noteProbe` on the shared state — nothing in this
+  bead's wiring ever does that on its own. Flagged for `dxi.7`'s registrar wiring to decide
+  explicitly rather than resolve implicitly by omission.
+- **Cosmetic gaps (same accepted category as Cache Meter's hit-rate ease/invalidation blink,
+  `dxi.2`):** Audit Trail's alarm badge pulse (`badgeCell`'s blink while POISONED, `full` tier only)
+  and Palimpsest's ember hot-pulse bolding (`isEmberHot`) both live inside their standalone
+  `AnimatedWidget` classes' own per-frame state, not on the shared `*State`, so neither segment
+  reproduces them — both always draw the plain, unpulsed/unbolded color. Noted in each builder's own
+  doc comment in `segments.ts`.
+- **Pre-existing `dxi.2` tests updated, not broken:** three `test/animations-box-controller.test.ts`
+  cache-meter tests asserted the *whole* rendered box excluded `"—"` once cache went active, which
+  was only true while cache meter was the box's sole segment. With audit/tools/files now enabled by
+  default and genuinely resting alongside an active cache row, those assertions were narrowed to the
+  cache row specifically (`frame.find(row => row.includes("cache"))`) — same intent, correct once
+  more than one segment exists. The "disabled cacheMeter never appears" test was changed from
+  asserting an empty widget (`toEqual([])`) to asserting the rendered text excludes `"cache"`, since
+  the box is no longer empty once other segments are enabled by default.
+- **`test/animations-box-controller.test.ts`'s `recordingContext()` helper gained a `cwd: "/repo"`
+  field**, required by the new `AnimationsBoxContext.cwd` member.
+- **`biome check --write .`** reordered a few import groups (alphabetical-within-group,
+  `assist/source/organizeImports`) and reformatted two multi-line object literals in `segments.ts`
+  that Biome's own formatter wanted split further — no logic changes, re-verified with a full
+  `bun test` + `bun run check:types` pass after the auto-fix.
+- **Tests (all new, literal pinned expectations, no snapshots):** 34 new tests in
+  `test/animations-box-segments.test.ts` (priority derivation, resting-row content and dim color per
+  builder, active-row content/variants/dedupe, the Audit Trail POISONED-glyph path via two
+  `noteProbe` ticks, the Tool Constellation single-vs-multi-category variant collapse and
+  `CATEGORY_ORDER` tie-break, the Palimpsest hottest-region pick and bare-filename ladder collapse);
+  13 new tests in `test/animations-box-controller.test.ts` (resting-before-first-event, active-flip
+  per event, `hasUI` gating, the `session_compact`/`auto_compaction_end` recovery smoke test, the
+  `session_switch` reset, Palimpsest's `onTurnEnd` fade-out across `FADE_AFTER_TURNS`, and one
+  integration test proving a single `edit` `tool_result` feeds both Audit Trail's and Palimpsest's
+  ledgers from the same event).
+
+**Gate:** `bun test && bun run check:types && biome check .` — **805 pass / 0 fail / 2560
+assertions / 23 files** (baseline immediately before this bead was 758 pass / 2497 assertions per
+`dxi.2`'s own gate line above; +47 new tests / +63 assertions, matching the 34+13 test counts
+above exactly). tsgo and biome both clean.
+
+**Files touched:** `src/animations-box/segments.ts`, `src/animations-box/controller.ts`,
+`test/animations-box-segments.test.ts`, `test/animations-box-controller.test.ts`,
+`plans/PROGRESS.md` (this entry). No keeper directory (`src/audit-trail-box/`,
+`src/tool-constellation/`, `src/palimpsest/`) was touched; `src/animations-box/widget.ts` and
+`src/animations-box/settings.ts` were read but not modified; `src/registrar.ts` and `package.json`
+remain untouched (`dxi.7`'s scope).
