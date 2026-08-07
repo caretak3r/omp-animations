@@ -68,7 +68,12 @@ const taggedTheme: Pick<Theme, "fg" | "underline" | "bold"> = {
 	underline: text => `U(${text})`,
 	bold: text => `B(${text})`,
 };
-const fullEnv = { hasUI: true, isTTY: true, env: {} as Record<string, string | undefined> };
+const fullEnv = {
+	hasUI: true,
+	isTTY: true,
+	env: {} as Record<string, string | undefined>,
+	glyphPreset: "unicode" as const,
+};
 const noopTui = { requestComponentRender() {} };
 
 function manualScheduler(): FrameScheduler & { advance(ms: number): void; readonly running: boolean } {
@@ -841,7 +846,7 @@ describe("registrar end-to-end placement", () => {
 			hasUI: true,
 			cwd: process.cwd(),
 			ui: {
-				theme: idTheme,
+				theme: { ...idTheme, getSymbolPreset: () => "unicode" as const },
 				setWidget: (key: string, _content: unknown, options?: { placement?: string }) =>
 					calls.push({ key, options }),
 				setStatus: () => {},

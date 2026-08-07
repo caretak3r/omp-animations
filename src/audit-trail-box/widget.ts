@@ -12,7 +12,8 @@
  * Everything here is a pure function of an {@link AuditSnapshot} plus a phase —
  * no wall-clock reads, no filesystem, no state of its own.
  */
-import type { Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { SymbolPreset, Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import { resolveGlyph } from "../glyph-presets";
 import type { AnimatedWidgetOptions, FrameScheduler, MotionPolicy } from "../kit";
 import { AnimatedWidget } from "../kit";
 import type { AuditSnapshot, LedgerMetrics, PathStatus } from "./state";
@@ -58,20 +59,26 @@ export function auditColors(accentColor?: ThemeColor): AuditTrailBoxColors {
 	return accentColor === undefined ? AUDIT_TRAIL_BOX_COLORS : { ...AUDIT_TRAIL_BOX_COLORS, badge: accentColor };
 }
 
-/** One width-1 glyph per status, highest risk first. */
-export const STATUS_GLYPHS: Readonly<Record<PathStatus, string>> = {
-	poisoned: "⊘",
-	dirty: "✎",
-	redundant: "⟳",
-	cold: "❄",
-	fresh: "✓",
-};
+/** One width-1 glyph per status, highest risk first, resolved for `preset` via `../glyph-presets.ts`. Defaults to `"unicode"` — the original hardcoded values. */
+export function statusGlyphs(preset: SymbolPreset = "unicode"): Readonly<Record<PathStatus, string>> {
+	return {
+		poisoned: resolveGlyph("auditTrail.status.poisoned", preset),
+		dirty: resolveGlyph("auditTrail.status.dirty", preset),
+		redundant: resolveGlyph("auditTrail.status.redundant", preset),
+		cold: resolveGlyph("auditTrail.status.cold", preset),
+		fresh: resolveGlyph("auditTrail.status.fresh", preset),
+	};
+}
 
-/** Resting badge; the box itself. */
-export const BADGE_GLYPH = "▣";
+/** Resting badge; the box itself. Resolved for `preset`. */
+export function badgeGlyph(preset: SymbolPreset = "unicode"): string {
+	return resolveGlyph("auditTrail.badge", preset);
+}
 
-/** Hollow badge shown on the off-beat of the poisoned pulse. */
-export const BADGE_PULSE_GLYPH = "▢";
+/** Hollow badge shown on the off-beat of the poisoned pulse. Resolved for `preset`. */
+export function badgePulseGlyph(preset: SymbolPreset = "unicode"): string {
+	return resolveGlyph("auditTrail.badgePulse", preset);
+}
 
 /** Full period of the alarm pulse, in ms. Slow on purpose — an ambient row that strobes is a row people turn off. */
 export const PULSE_PERIOD_MS = 1_200;
@@ -116,18 +123,20 @@ function badgeCell(
 	elapsedMs: number,
 	tier: "full" | "subtle",
 	colors: AuditTrailBoxColors,
+	preset: SymbolPreset,
 ): Cell {
 	const pulsing = tier === "full" && snapshot.counts.poisoned > 0 && !alarmPulse(elapsedMs);
 	return {
-		text: pulsing ? BADGE_PULSE_GLYPH : BADGE_GLYPH,
+		text: pulsing ? badgePulseGlyph(preset) : badgeGlyph(preset),
 		color: snapshot.counts.poisoned > 0 ? colors.poisoned : colors.badge,
 	};
 }
 
 /** One `<count><glyph>` cell per non-empty status, highest risk first. */
-function countCells(snapshot: AuditSnapshot, colors: AuditTrailBoxColors): readonly Cell[] {
+function countCells(snapshot: AuditSnapshot, colors: AuditTrailBoxColors, preset: SymbolPreset): readonly Cell[] {
+	const glyphs = statusGlyphs(preset);
 	return STATUS_RISK_ORDER.filter(status => snapshot.counts[status] > 0).map(status => ({
-		text: `${snapshot.counts[status]}${STATUS_GLYPHS[status]}`,
+		text: `${snapshot.counts[status]}${glyphs[status]}`,
 		color: colors[status],
 	}));
 }
@@ -159,20 +168,21 @@ export function renderAuditMeterRow(
 	theme: AuditTrailBoxTheme,
 	tier: "full" | "subtle",
 	colors: AuditTrailBoxColors = AUDIT_TRAIL_BOX_COLORS,
+	preset: SymbolPreset = "unicode",
 ): string {
 	if (width <= 0) return "";
 
-	const badge = badgeCell(snapshot, elapsedMs, tier, colors);
+	const badge = badgeCell(snapshot, elapsedMs, tier, colors, preset);
 	const top = topRiskStatus(snapshot);
 	if (top === undefined) {
 		const idle: readonly Cell[] = [badge, { text: IDLE_TEXT, color: colors.label }];
 		return cellsWidth(idle) <= width ? paint(idle, theme) : paint([badge], theme);
 	}
 
-	const counts = countCells(snapshot, colors);
+	const counts = countCells(snapshot, colors, preset);
 	const single: readonly Cell[] = [
 		badge,
-		{ text: `${snapshot.counts[top]}${STATUS_GLYPHS[top]}`, color: colors[top] },
+		{ text: `${snapshot.counts[top]}${statusGlyphs(preset)[top]}`, color: colors[top] },
 	];
 	const candidates: readonly (readonly Cell[])[] = [
 		[badge, ...counts, ...economicsCells(snapshot.metrics, colors)],
@@ -203,6 +213,8 @@ export interface AuditPanelOptions {
 	/** Column budget for the path column. Defaults to {@link PANEL_PATH_WIDTH}. */
 	readonly pathWidth?: number;
 	readonly colors?: AuditTrailBoxColors;
+	/** The host's live symbol preset (see `../glyph-presets.ts`). Defaults to `"unicode"`. */
+	readonly preset?: SymbolPreset;
 }
 
 /**
@@ -221,15 +233,17 @@ export function renderAuditPanel(
 	const colors = options.colors ?? AUDIT_TRAIL_BOX_COLORS;
 	const maxRows = Math.max(1, options.maxRows ?? DEFAULT_MAX_PANEL_ROWS);
 	const pathWidth = Math.max(4, options.pathWidth ?? PANEL_PATH_WIDTH);
+	const preset = options.preset ?? "unicode";
+	const glyphs = statusGlyphs(preset);
 
-	const heading = `${theme.fg(colors.badge, BADGE_GLYPH)} ${theme.fg(colors.label, `audit trail box · turn ${snapshot.turn} · ${snapshot.paths.length} path${snapshot.paths.length === 1 ? "" : "s"}`)}`;
+	const heading = `${theme.fg(colors.badge, badgeGlyph(preset))} ${theme.fg(colors.label, `audit trail box · turn ${snapshot.turn} · ${snapshot.paths.length} path${snapshot.paths.length === 1 ? "" : "s"}`)}`;
 	if (snapshot.paths.length === 0) {
 		return [heading, theme.fg(colors.label, `  ${IDLE_TEXT}`)];
 	}
 
 	const lines: string[] = [heading];
 	for (const record of snapshot.paths.slice(0, maxRows)) {
-		const glyph = theme.fg(colors[record.status], STATUS_GLYPHS[record.status]);
+		const glyph = theme.fg(colors[record.status], glyphs[record.status]);
 		const path = theme.fg(colors[record.status], padRight(elidePath(record.path, pathWidth), pathWidth));
 		// Canonical family order, not the set's insertion order — the same path must
 		// render identically whichever signal happened to fire for it first.
@@ -256,13 +270,14 @@ export function renderAuditPanel(
  * Static one-line fallback for the motion-`off` tier: no color, no phase, no
  * frame clock — just the counts that matter, leading with risk.
  */
-export function renderAuditOffText(snapshot: AuditSnapshot): string {
+export function renderAuditOffText(snapshot: AuditSnapshot, preset: SymbolPreset = "unicode"): string {
+	const badge = badgeGlyph(preset);
 	const top = topRiskStatus(snapshot);
-	if (top === undefined) return `${BADGE_GLYPH} ${IDLE_TEXT}`;
+	if (top === undefined) return `${badge} ${IDLE_TEXT}`;
 	const cells = STATUS_RISK_ORDER.filter(status => snapshot.counts[status] > 0).map(
 		status => `${snapshot.counts[status]} ${status}`,
 	);
-	return `${BADGE_GLYPH} ${snapshot.paths.length} tracked · ${cells.join(", ")}`;
+	return `${badge} ${snapshot.paths.length} tracked · ${cells.join(", ")}`;
 }
 
 /** Minimal clock seam the widget needs — shared with the controller so the pulse phase and probe timestamps agree. */
@@ -280,6 +295,8 @@ export interface AuditTrailBoxWidgetOptions extends AnimatedWidgetOptions {
 	clock: AuditTrailBoxClock;
 	/** Accent override for the primary accent slot (the box badge); `undefined` keeps the built-in palette. */
 	accentColor?: ThemeColor;
+	/** The host's live symbol preset; `undefined` keeps the `"unicode"` default (see `../glyph-presets.ts`). */
+	glyphPreset?: SymbolPreset;
 }
 
 /**
@@ -298,6 +315,7 @@ export class AuditTrailBoxWidget extends AnimatedWidget {
 	#policy: MotionPolicy;
 	#clock: AuditTrailBoxClock;
 	#colors: AuditTrailBoxColors;
+	#glyphPreset: SymbolPreset;
 
 	constructor(options: AuditTrailBoxWidgetOptions) {
 		super(options);
@@ -306,10 +324,21 @@ export class AuditTrailBoxWidget extends AnimatedWidget {
 		this.#policy = options.policy;
 		this.#clock = options.clock;
 		this.#colors = auditColors(options.accentColor);
+		this.#glyphPreset = options.glyphPreset ?? "unicode";
 	}
 
 	renderFrame(width: number): readonly string[] {
 		const tier = this.#policy.tier === "full" ? "full" : "subtle";
-		return [renderAuditMeterRow(this.#state.snapshot(), width, this.#clock.now(), this.#theme, tier, this.#colors)];
+		return [
+			renderAuditMeterRow(
+				this.#state.snapshot(),
+				width,
+				this.#clock.now(),
+				this.#theme,
+				tier,
+				this.#colors,
+				this.#glyphPreset,
+			),
+		];
 	}
 }

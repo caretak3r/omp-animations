@@ -5,14 +5,14 @@ import {
 	type AuditTrailBoxTheme,
 	AuditTrailBoxWidget,
 	alarmPulse,
-	BADGE_GLYPH,
-	BADGE_PULSE_GLYPH,
+	badgeGlyph,
+	badgePulseGlyph,
 	elidePath,
 	PULSE_PERIOD_MS,
 	renderAuditMeterRow,
 	renderAuditOffText,
 	renderAuditPanel,
-	STATUS_GLYPHS,
+	statusGlyphs,
 	topRiskStatus,
 } from "../src/audit-trail-box/widget";
 import { AnimationHost, type FrameScheduler, MotionPolicy } from "../src/kit";
@@ -21,6 +21,11 @@ import { AnimationHost, type FrameScheduler, MotionPolicy } from "../src/kit";
 const idTheme: AuditTrailBoxTheme = { fg: (_color, text) => text };
 // Color-tagging theme for tests that need to assert which color the renderer chose.
 const taggedTheme: AuditTrailBoxTheme = { fg: (color, text) => `${color}:${text}` };
+
+// Unicode-tier glyphs, resolved once — every renderer call below defaults to `"unicode"`.
+const BADGE_GLYPH = badgeGlyph("unicode");
+const BADGE_PULSE_GLYPH = badgePulseGlyph("unicode");
+const STATUS_GLYPHS = statusGlyphs("unicode");
 
 const WIDE = 200;
 
@@ -61,6 +66,32 @@ function poison(state: AuditLedgerState, path: string, nowMs = 100_000): void {
 function chill(state: AuditLedgerState): void {
 	for (let turn = 0; turn < COLD_AFTER_TURNS; turn++) state.noteTurn();
 }
+
+describe("audit trail box glyphs (preset-aware)", () => {
+	it("badgeGlyph/badgePulseGlyph/statusGlyphs default to unicode, byte-identical to the original hardcoded values", () => {
+		expect(badgeGlyph()).toBe("▣");
+		expect(badgePulseGlyph()).toBe("▢");
+		expect(statusGlyphs()).toEqual({ poisoned: "⊘", dirty: "✎", redundant: "⟳", cold: "❄", fresh: "✓" });
+	});
+
+	it("ascii substitutes are exact one-column values, all seven distinct from one another", () => {
+		expect(badgeGlyph("ascii")).toBe("@");
+		expect(badgePulseGlyph("ascii")).toBe("+");
+		expect(statusGlyphs("ascii")).toEqual({ poisoned: "x", dirty: "/", redundant: "~", cold: "o", fresh: "v" });
+		const glyphs = [badgeGlyph("ascii"), badgePulseGlyph("ascii"), ...Object.values(statusGlyphs("ascii"))];
+		expect(new Set(glyphs).size).toBe(glyphs.length);
+		for (const glyph of glyphs) {
+			expect(glyph).toHaveLength(1);
+			expect(glyph.charCodeAt(0)).toBeLessThan(128);
+		}
+	});
+
+	it("nerd aliases unicode exactly", () => {
+		expect(badgeGlyph("nerd")).toBe(badgeGlyph("unicode"));
+		expect(badgePulseGlyph("nerd")).toBe(badgePulseGlyph("unicode"));
+		expect(statusGlyphs("nerd")).toEqual(statusGlyphs("unicode"));
+	});
+});
 
 describe("audit trail box pulse math (pure)", () => {
 	it("alarmPulse is bright on the first half of the period and dark on the second", () => {
@@ -117,6 +148,17 @@ describe("audit trail box meter row (compact surface)", () => {
 		expect(row).toContain("r/w 2/1");
 		expect(row).toContain("×1.0");
 		expect(row).toContain("↻0%");
+	});
+
+	it("threads a live preset into the badge and status glyphs — not just the default", () => {
+		const state = new AuditLedgerState();
+		state.noteRead("a.ts", { hash: "h1" });
+		state.noteWrite("b.ts", 0, { hash: "h2" });
+
+		const row = renderAuditMeterRow(state.snapshot(), WIDE, 0, idTheme, "subtle", undefined, "ascii");
+		expect(row.startsWith(badgeGlyph("ascii"))).toBe(true);
+		expect(row).toContain(`1${statusGlyphs("ascii").dirty}`);
+		expect(row).not.toContain(badgeGlyph("unicode"));
 	});
 
 	it("orders the count cells highest-risk first", () => {

@@ -4,7 +4,7 @@ import type {
 	WidgetPlacement,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
 import type { TtsrTriggeredEvent } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
-import type { ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { SymbolPreset, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import type { BackpressureSignal, FrameScheduler, MotionSetting } from "../kit";
 import { AnimationHost, backpressureFromTui, DEFAULT_FRAME_SCHEDULER, MotionPolicy } from "../kit";
 import { ReflectionRippleState } from "./state";
@@ -28,6 +28,8 @@ export interface ReflectionRippleContext {
 	/** The resolved `animations` setting. */
 	motionSetting: MotionSetting;
 	theme: ReflectionRippleTheme;
+	/** The host's live symbol preset (see `../glyph-presets.ts`). */
+	glyphPreset: SymbolPreset;
 	setWidget(key: string, content: ExtensionWidgetContent, options?: ExtensionWidgetOptions): void;
 }
 
@@ -123,6 +125,7 @@ export class ReflectionRippleController {
 		const host = new AnimationHost({ policy, backpressure: backpressure.signal, scheduler: this.#scheduler });
 		const state = this.#state;
 		const clock = this.#scheduler;
+		const glyphPreset = ctx.glyphPreset;
 		const onSettled = () => this.#teardownToNothing(ctx, host);
 		ctx.setWidget(
 			WIDGET_KEY,
@@ -137,6 +140,7 @@ export class ReflectionRippleController {
 					clock,
 					onSettled,
 					accentColor: this.#accentColor,
+					glyphPreset,
 				});
 			},
 			this.#widgetOptions,

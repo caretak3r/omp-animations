@@ -27,6 +27,7 @@ function toCacheMeterContext(ctx: ExtensionContext, options: CacheMeterExtension
 		env: Bun.env,
 		motionSetting: readMotionSetting(options),
 		theme: ctx.ui.theme,
+		glyphPreset: ctx.ui.theme.getSymbolPreset(),
 		setWidget: (key, content, widgetOptions) => ctx.ui.setWidget(key, content, widgetOptions),
 	};
 }

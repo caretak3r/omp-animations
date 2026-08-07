@@ -347,6 +347,7 @@ function toAnimationsBoxContext(ctx: ExtensionContext): AnimationsBoxContext {
 		isTTY: process.stdout.isTTY === true,
 		env: Bun.env,
 		cwd: ctx.cwd,
+		glyphPreset: ctx.ui.theme.getSymbolPreset(),
 		setWidget: (key, content, widgetOptions) => ctx.ui.setWidget(key, content, widgetOptions),
 	};
 }
@@ -364,10 +365,10 @@ function mountAnimationsBox(api: ExtensionAPI, boxConfig: AnimationsBoxConfig, c
 		motionSetting: config.tier,
 		initialConfig: boxConfig,
 		accentColor: config.appearance.breathingBorder.accentColor,
-		// glyphPreset intentionally NOT threaded here yet: `AnimationsBoxControllerOptions`
-		// (controller.ts) has no such field, and controller.ts/widget.ts are out of the
-		// glyph-preset bead's Phase 1 file scope (oh-my-pi-qut). `config.appearance.<id>.glyphPreset`
-		// is fully resolved above and ready for Phase 2 to consume once those files pick it up.
+		// glyphPreset is NOT threaded through `AnimationsBoxControllerOptions` here (unlike
+		// accentColor) — it isn't resolvable at this synchronous wire-time call. Instead
+		// `toAnimationsBoxContext` reads the live `ctx.ui.theme.getSymbolPreset()` fresh on
+		// `session_start`, and `AnimationsBoxController.mount` captures it once from there.
 	});
 
 	api.on("session_start", (_event, ctx) => controller.mount(toAnimationsBoxContext(ctx)));

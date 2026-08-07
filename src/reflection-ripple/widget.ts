@@ -1,4 +1,4 @@
-import type { Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { SymbolPreset, Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import type { AnimatedWidgetOptions, FrameScheduler, MotionPolicy } from "../kit";
 import { AnimatedWidget } from "../kit";
 import {
@@ -58,12 +58,13 @@ export function renderReflectionRippleRow(
 	theme: ReflectionRippleTheme,
 	tier: "full" | "subtle",
 	colors: ReflectionRippleColors = REFLECTION_RIPPLE_COLORS,
+	preset: SymbolPreset = "unicode",
 ): string {
 	if (width <= 0) return "";
 	const progress = rippleProgress(elapsedMs, RIPPLE_DURATION_MS);
 	const dimAmount = reflectDimAmount(elapsedMs, DIM_DURATION_MS);
 	const brightness = rippleBrightness(progress) * dimMultiplier(dimAmount);
-	const glyph = ringGlyph(brightness);
+	const glyph = ringGlyph(brightness, preset);
 	const bg = calmGlyph(dimAmount);
 
 	if (tier === "subtle") {
@@ -126,6 +127,8 @@ export interface ReflectionRippleWidgetOptions extends AnimatedWidgetOptions {
 	onSettled: () => void;
 	/** Accent override for the primary accent slot (the ring); `undefined` keeps the built-in palette. */
 	accentColor?: ThemeColor;
+	/** The host's live symbol preset; `undefined` keeps the `"unicode"` default (see `../glyph-presets.ts`). */
+	glyphPreset?: SymbolPreset;
 }
 
 /**
@@ -148,6 +151,7 @@ export class ReflectionRippleWidget extends AnimatedWidget {
 	#clock: ReflectionRippleClock;
 	#onSettled: () => void;
 	#colors: ReflectionRippleColors;
+	#glyphPreset: SymbolPreset;
 
 	constructor(options: ReflectionRippleWidgetOptions) {
 		super(options);
@@ -157,6 +161,7 @@ export class ReflectionRippleWidget extends AnimatedWidget {
 		this.#clock = options.clock;
 		this.#onSettled = options.onSettled;
 		this.#colors = reflectionRippleColors(options.accentColor);
+		this.#glyphPreset = options.glyphPreset ?? "unicode";
 	}
 
 	onFrame(_elapsedMs: number): void {
@@ -175,6 +180,6 @@ export class ReflectionRippleWidget extends AnimatedWidget {
 		}
 		const tier = this.#policy.tier === "full" ? "full" : "subtle";
 		const elapsed = this.#state.rippleElapsedMs(this.#clock.now());
-		return [renderReflectionRippleRow(elapsed, width, this.#theme, tier, this.#colors)];
+		return [renderReflectionRippleRow(elapsed, width, this.#theme, tier, this.#colors, this.#glyphPreset)];
 	}
 }

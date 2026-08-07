@@ -4,6 +4,7 @@ import type {
 	WidgetPlacement,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
 import type { ToolCallEvent } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
+import type { SymbolPreset } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import type { BackpressureSignal, FrameScheduler, MotionSetting } from "../kit";
 import { AnimationHost, backpressureFromTui, DEFAULT_FRAME_SCHEDULER, MotionPolicy } from "../kit";
 import { ConstellationState } from "./state";
@@ -27,6 +28,8 @@ export interface ToolConstellationContext {
 	/** The resolved `animations` setting. */
 	motionSetting: MotionSetting;
 	theme: ConstellationTheme;
+	/** The host's live symbol preset (see `../glyph-presets.ts`). */
+	glyphPreset: SymbolPreset;
 	setWidget(key: string, content: ExtensionWidgetContent, options?: ExtensionWidgetOptions): void;
 }
 
@@ -93,7 +96,7 @@ export class ToolConstellationController {
 		if (this.#mount.mode === "static") {
 			ctx.setWidget(
 				WIDGET_KEY,
-				[renderConstellationTally(this.#state.categoryCounts(), ctx.theme)],
+				[renderConstellationTally(this.#state.categoryCounts(), ctx.theme, ctx.glyphPreset)],
 				this.#widgetOptions,
 			);
 		}
@@ -113,7 +116,7 @@ export class ToolConstellationController {
 		if (policy.tier === "off") {
 			ctx.setWidget(
 				WIDGET_KEY,
-				[renderConstellationTally(this.#state.categoryCounts(), ctx.theme)],
+				[renderConstellationTally(this.#state.categoryCounts(), ctx.theme, ctx.glyphPreset)],
 				this.#widgetOptions,
 			);
 			return { mode: "static" };
@@ -123,11 +126,12 @@ export class ToolConstellationController {
 		const host = new AnimationHost({ policy, backpressure: backpressure.signal, scheduler: this.#scheduler });
 		const state = this.#state;
 		const clock = this.#scheduler;
+		const glyphPreset = ctx.glyphPreset;
 		ctx.setWidget(
 			WIDGET_KEY,
 			(tui, theme) => {
 				backpressure.attach(tui);
-				return new ToolConstellationWidget({ tui, host, policy, state, theme, clock });
+				return new ToolConstellationWidget({ tui, host, policy, state, theme, clock, glyphPreset });
 			},
 			this.#widgetOptions,
 		);

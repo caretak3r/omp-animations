@@ -78,7 +78,7 @@ import type {
 	TurnEndEvent,
 	TurnStartEvent,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
-import type { ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { SymbolPreset, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import { getDiffStats } from "@oh-my-pi/pi-coding-agent/tools/render-utils";
 import { calculateTokensPerSecond } from "@oh-my-pi/pi-coding-agent/utils/token-rate";
 import { AuditLedgerState, auditTouchesFromToolResult } from "../audit-trail-box";
@@ -225,6 +225,8 @@ export interface AnimationsBoxContext {
 	env?: Record<string, string | undefined>;
 	/** Current working directory, for resolving the relative paths Audit Trail's `tool_result` adapter tracks. */
 	cwd: string;
+	/** The host's live symbol preset (see `../glyph-presets.ts`), captured once at {@link AnimationsBoxController.mount}. */
+	glyphPreset: SymbolPreset;
 	setWidget(key: string, content: ExtensionWidgetContent, options?: ExtensionWidgetOptions): void;
 }
 
@@ -247,6 +249,8 @@ export class AnimationsBoxController {
 
 	#config: AnimationsBoxConfig;
 	#mount: { host: AnimationHost } | undefined;
+	/** The host's live symbol preset, captured once at {@link mount} — mirrors `accentColor`'s restart-required posture, no live re-read. */
+	#glyphPreset: SymbolPreset = "unicode";
 
 	#cacheMeterState: CacheMeterState = new CacheMeterState();
 	#auditTrailState: AuditLedgerState = new AuditLedgerState();
@@ -282,6 +286,7 @@ export class AnimationsBoxController {
 	/** Mount the box widget once, unconditionally. Idempotent; stays dormant with no UI surface. */
 	mount(ctx: AnimationsBoxContext): void {
 		if (this.#mount || !ctx.hasUI) return;
+		this.#glyphPreset = ctx.glyphPreset;
 
 		const policy = new MotionPolicy({ hasUI: ctx.hasUI, isTTY: ctx.isTTY, env: ctx.env }, this.#motionSetting);
 		const backpressure = deferredBackpressure();
@@ -370,7 +375,7 @@ export class AnimationsBoxController {
 		// row-per-segment loop directly (see `widget.ts`), which does not sort by
 		// priority itself.
 		const all: readonly SegmentSample[] = [
-			buildCacheMeterSegment(this.#cacheMeterState, now, theme),
+			buildCacheMeterSegment(this.#cacheMeterState, now, theme, undefined, this.#glyphPreset),
 			buildCadenceEqualizerSegment(
 				this.#cadenceState,
 				this.#cadenceHasStreamed,
@@ -378,11 +383,11 @@ export class AnimationsBoxController {
 				now,
 				theme,
 			),
-			buildAuditTrailBoxSegment(this.#auditTrailState, now, theme),
-			buildRateLimitTidepoolSegment(this.#tidepoolState, now, theme),
-			buildToolConstellationSegment(this.#constellationState, now, theme),
-			buildPalimpsestSegment(this.#palimpsestState, now, theme),
-			buildReflectionRippleSegment(this.#reflectionRippleState, now, theme),
+			buildAuditTrailBoxSegment(this.#auditTrailState, now, theme, undefined, this.#glyphPreset),
+			buildRateLimitTidepoolSegment(this.#tidepoolState, now, theme, undefined, this.#glyphPreset),
+			buildToolConstellationSegment(this.#constellationState, now, theme, this.#glyphPreset),
+			buildPalimpsestSegment(this.#palimpsestState, now, theme, undefined, this.#glyphPreset),
+			buildReflectionRippleSegment(this.#reflectionRippleState, now, theme, undefined, this.#glyphPreset),
 		];
 		return all.filter(s => segmentActive(this.#config, s.id));
 	}

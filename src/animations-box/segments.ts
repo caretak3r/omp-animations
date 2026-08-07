@@ -24,20 +24,20 @@ import { basename } from "node:path";
 import type { SymbolPreset, Theme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import { formatNumber } from "@oh-my-pi/pi-utils";
 import {
-	BADGE_GLYPH as AUDIT_BADGE_GLYPH,
 	AUDIT_TRAIL_BOX_COLORS,
 	type AuditLedgerState,
 	type AuditTrailBoxColors,
+	badgeGlyph as auditBadgeGlyph,
 	type PathRecord,
 	renderAuditMeterRow,
-	STATUS_GLYPHS,
 	STATUS_RISK_ORDER,
+	statusGlyphs,
 } from "../audit-trail-box";
 import {
-	BADGE_GLYPH,
 	CACHE_METER_COLORS,
 	type CacheMeterColors,
 	type CacheMeterState,
+	badgeGlyph as cacheBadgeGlyph,
 	renderCacheMeterRow,
 } from "../cache-meter";
 import {
@@ -75,11 +75,11 @@ import {
 	renderReflectionRippleRow,
 } from "../reflection-ripple";
 import {
-	CATEGORY_ICON,
 	CATEGORY_ORDER,
 	CATEGORY_THEME_COLOR,
 	type ConstellationState,
-	EMPTY_GLYPH,
+	categoryIcon,
+	emptyGlyph,
 	renderConstellationTally,
 	type ToolCategory,
 } from "../tool-constellation";
@@ -144,21 +144,23 @@ export function buildCacheMeterSegment(
 	now: number,
 	theme: BoxTheme,
 	colors: CacheMeterColors = CACHE_METER_COLORS,
+	preset: SymbolPreset = "unicode",
 ): SegmentSample {
 	const priority = priorityOf("cacheMeter");
+	const glyph = cacheBadgeGlyph(preset);
 	const snapshot = state.snapshot();
 	if (snapshot.promptTokens === 0) {
 		return {
 			id: "cacheMeter",
 			priority,
 			...INACTIVE,
-			detail: { glyph: theme.fg("dim", BADGE_GLYPH), label: "cache", primary: "—", secondary: "", trailing: "" },
+			detail: { glyph: theme.fg("dim", glyph), label: "cache", primary: "—", secondary: "", trailing: "" },
 		};
 	}
 
 	const variants = dedupe(
 		[999, 40, 18, 3].map(width =>
-			renderCacheMeterRow(snapshot, width, now, theme, "subtle", snapshot.warmth, false, colors),
+			renderCacheMeterRow(snapshot, width, now, theme, "subtle", snapshot.warmth, false, colors, preset),
 		),
 	);
 	const pct = `${(snapshot.warmth * 100).toFixed(1)}%`;
@@ -168,7 +170,7 @@ export function buildCacheMeterSegment(
 		active: true,
 		variants,
 		detail: {
-			glyph: theme.fg(colors.badge, BADGE_GLYPH),
+			glyph: theme.fg(colors.badge, glyph),
 			label: "cache",
 			primary: pct,
 			secondary:
@@ -263,15 +265,17 @@ export function buildAuditTrailBoxSegment(
 	now: number,
 	theme: BoxTheme,
 	colors: AuditTrailBoxColors = AUDIT_TRAIL_BOX_COLORS,
+	preset: SymbolPreset = "unicode",
 ): SegmentSample {
 	const priority = priorityOf("auditTrailBox");
+	const glyph = auditBadgeGlyph(preset);
 	if (state.size === 0) {
 		return {
 			id: "auditTrailBox",
 			priority,
 			...INACTIVE,
 			detail: {
-				glyph: theme.fg("dim", AUDIT_BADGE_GLYPH),
+				glyph: theme.fg("dim", glyph),
 				label: "audit",
 				primary: "—",
 				secondary: "",
@@ -282,11 +286,12 @@ export function buildAuditTrailBoxSegment(
 
 	const snapshot = state.snapshot();
 	const variants = dedupe(
-		[999, 40, 18].map(width => renderAuditMeterRow(snapshot, width, now, theme, "subtle", colors)),
+		[999, 40, 18].map(width => renderAuditMeterRow(snapshot, width, now, theme, "subtle", colors, preset)),
 	);
 
+	const statusGlyphMap = statusGlyphs(preset);
 	const counts = STATUS_RISK_ORDER.filter(status => snapshot.counts[status] > 0)
-		.map(status => `${snapshot.counts[status]}${STATUS_GLYPHS[status]}`)
+		.map(status => `${snapshot.counts[status]}${statusGlyphMap[status]}`)
 		.join(" ");
 	// Most recently touched path, for the "last path" column — snapshot.paths is
 	// already risk-sorted, not recency-sorted, so this needs its own scan.
@@ -302,7 +307,7 @@ export function buildAuditTrailBoxSegment(
 		active: true,
 		variants,
 		detail: {
-			glyph: theme.fg(snapshot.counts.poisoned > 0 ? colors.poisoned : colors.badge, AUDIT_BADGE_GLYPH),
+			glyph: theme.fg(snapshot.counts.poisoned > 0 ? colors.poisoned : colors.badge, glyph),
 			label: "audit",
 			primary: counts,
 			secondary: lastTouched === undefined ? "" : basename(lastTouched.path),
@@ -338,7 +343,7 @@ function resetEtaLabel(resetAtMs: number | undefined, now: number): string {
  * exactly as the standalone widget's own accent contract promises.
  *
  * Rate-Limit Tidepool exports no badge glyph of its own — only bar-fill glyphs
- * (`WATER_GLYPH`/`WATER_SHIMMER_GLYPH`/`PEBBLE_GLYPH`/`SAND_GLYPH`) parametrized by tier
+ * (`waterGlyph`/`waterShimmerGlyph`/`pebbleGlyph`/`sandGlyph`) parametrized by tier
  * and animation phase. `box.limits` (`../glyph-presets.ts`) is this box's own literal
  * badge, matching Plan 017 Decision 1's table row (same precedent as `box.files`/
  * `box.reflect` below) — now preset-aware instead of a bare hardcoded `"◗"`.
@@ -415,7 +420,12 @@ function dominantCategory(counts: ReadonlyMap<ToolCategory, number>): ToolCatego
  * every other segment, there is no single accent slot to override here, so
  * this builder takes no `colors` parameter.
  */
-export function buildToolConstellationSegment(state: ConstellationState, _now: number, theme: BoxTheme): SegmentSample {
+export function buildToolConstellationSegment(
+	state: ConstellationState,
+	_now: number,
+	theme: BoxTheme,
+	preset: SymbolPreset = "unicode",
+): SegmentSample {
 	const priority = priorityOf("toolConstellation");
 	const snapshot = state.snapshot();
 	if (snapshot.stars.length === 0) {
@@ -423,20 +433,29 @@ export function buildToolConstellationSegment(state: ConstellationState, _now: n
 			id: "toolConstellation",
 			priority,
 			...INACTIVE,
-			detail: { glyph: theme.fg("dim", EMPTY_GLYPH), label: "tools", primary: "—", secondary: "", trailing: "" },
+			detail: {
+				glyph: theme.fg("dim", emptyGlyph(preset)),
+				label: "tools",
+				primary: "—",
+				secondary: "",
+				trailing: "",
+			},
 		};
 	}
 
 	const counts = state.categoryCounts();
 	const dominant = dominantCategory(counts);
-	const full = renderConstellationTally(counts, theme);
+	const full = renderConstellationTally(counts, theme, preset);
 	const narrow =
-		dominant === undefined ? full : renderConstellationTally(new Map([[dominant, counts.get(dominant) ?? 0]]), theme);
+		dominant === undefined
+			? full
+			: renderConstellationTally(new Map([[dominant, counts.get(dominant) ?? 0]]), theme, preset);
 	const variants = dedupe([full, narrow]);
 
+	const icons = categoryIcon(preset);
 	const total = [...counts.values()].reduce((sum, count) => sum + count, 0);
 	const tally = CATEGORY_ORDER.filter(category => (counts.get(category) ?? 0) > 0)
-		.map(category => `${CATEGORY_ICON[category]}${counts.get(category)}`)
+		.map(category => `${icons[category]}${counts.get(category)}`)
 		.join(" ");
 
 	return {
@@ -447,8 +466,8 @@ export function buildToolConstellationSegment(state: ConstellationState, _now: n
 		detail: {
 			glyph:
 				dominant === undefined
-					? theme.fg("dim", EMPTY_GLYPH)
-					: theme.fg(CATEGORY_THEME_COLOR[dominant], CATEGORY_ICON[dominant]),
+					? theme.fg("dim", emptyGlyph(preset))
+					: theme.fg(CATEGORY_THEME_COLOR[dominant], icons[dominant]),
 			label: "tools",
 			primary: `${total} calls`,
 			secondary: dominant ?? "",

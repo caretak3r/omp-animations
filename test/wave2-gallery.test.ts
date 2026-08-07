@@ -162,6 +162,7 @@ function mountGallery(): MountedGallery {
 		env: {} as Record<string, string | undefined>,
 		motionSetting: "off" as const,
 		theme: idTheme,
+		glyphPreset: "unicode" as const,
 	};
 	function widget(feature: string) {
 		return (key: string, content: ExtensionWidgetContent, options?: ExtensionWidgetOptions) => {

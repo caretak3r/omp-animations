@@ -25,6 +25,7 @@ import {
 	EXHALE_DURATION_MS,
 	MIN_BREATH_PERIOD_MS,
 } from "../src/breathing-border";
+import { resolveGlyph } from "../src/glyph-presets";
 import type { FrameScheduler } from "../src/kit";
 import { DIM_DURATION_MS, RIPPLE_DURATION_MS } from "../src/reflection-ripple";
 
@@ -63,6 +64,7 @@ function recordingContext(overrides: Partial<AnimationsBoxContext> = {}): {
 		isTTY: true,
 		env: {},
 		cwd: "/repo",
+		glyphPreset: "unicode",
 		setWidget: (key, content, options) => {
 			calls.push({ key, content, options });
 		},
@@ -283,6 +285,20 @@ describe("AnimationsBoxController — mount lifecycle", () => {
 		const config = resolveAnimationsBoxConfig({ animationsBoxDetail: "simple" });
 		const controller = new AnimationsBoxController({ scheduler: manualScheduler(), initialConfig: config });
 		expect(controller.config).toBe(config);
+	});
+
+	it("captures ctx.glyphPreset once at mount and threads it into a rendered segment's glyph — not just the config field", () => {
+		const scheduler = manualScheduler();
+		const { ctx, calls } = recordingContext({ glyphPreset: "ascii" });
+		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall);
+
+		controller.onMessageEnd(messageEnd({ input: 400, cacheRead: 600, cacheWrite: 200 }), ctx);
+		const rows = widget.renderFrame(69).join("\n");
+		expect(rows).toContain(resolveGlyph("cacheMeter.badge", "ascii"));
+		expect(rows).not.toContain(resolveGlyph("cacheMeter.badge", "unicode"));
+		widget.dispose();
 	});
 });
 

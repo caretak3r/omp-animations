@@ -251,7 +251,7 @@ describe("display modes (Animations Box integration, Plan 017)", () => {
 				hasUI: true,
 				cwd: "/tmp/oh-my-pi-animations-registrar-test",
 				ui: {
-					theme: {},
+					theme: { getSymbolPreset: () => "unicode" as const },
 					setWidget: (key: string, content: unknown) => mounted.set(key, content !== undefined),
 					setStatus: () => {},
 				},

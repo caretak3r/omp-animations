@@ -1,16 +1,18 @@
 import { describe, expect, it } from "bun:test";
 import type { ToolCallEvent } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 import { visibleWidth } from "@oh-my-pi/pi-tui";
+import { resolveStarGlyphRamp } from "../src/glyph-presets";
 import { AnimationHost, type FrameScheduler, MotionPolicy } from "../src/kit";
-import { CATEGORY_ICON, categorizeTool } from "../src/tool-constellation/categories";
+import { categorizeTool, categoryIcon } from "../src/tool-constellation/categories";
 import { type ToolConstellationContext, ToolConstellationController } from "../src/tool-constellation/controller";
 import {
 	assignCell,
+	cometGlyph,
+	emptyGlyph,
 	GRID_CELLS,
 	GRID_COLS,
 	hashCell,
 	isTwinkling,
-	STAR_GLYPHS,
 	starBrightness,
 	starGlyph,
 } from "../src/tool-constellation/sky";
@@ -24,6 +26,10 @@ import {
 
 // Identity theme so assertions see plain text instead of ANSI escapes.
 const idTheme: ConstellationTheme = { fg: (_color, text) => text };
+
+// Unicode-tier glyphs, resolved once — every renderer call below defaults to `"unicode"`.
+const STAR_GLYPHS = resolveStarGlyphRamp("unicode");
+const CATEGORY_ICON = categoryIcon("unicode");
 
 /** Manual frame scheduler: drives host ticks and the shared clock deterministically. */
 function manualScheduler(): FrameScheduler & { advance(ms: number): void; readonly running: boolean } {
@@ -59,6 +65,56 @@ const fullEnv = { hasUI: true, isTTY: true, env: {} as Record<string, string | u
 function toolCallEvent(toolName: string, toolCallId = "1"): ToolCallEvent {
 	return { type: "tool_call", toolCallId, toolName, input: {} } as ToolCallEvent;
 }
+
+describe("tool constellation glyphs (preset-aware)", () => {
+	it("categoryIcon/starGlyph/cometGlyph/emptyGlyph default to unicode, byte-identical to the original hardcoded values", () => {
+		expect(categoryIcon()).toEqual({
+			read: "⛏",
+			write: "✎",
+			bash: "↯",
+			search: "◈",
+			agent: "◆",
+			mcp: "⬡",
+			other: "∘",
+		});
+		expect(starGlyph(0)).toBe("·");
+		expect(starGlyph(1)).toBe("✹");
+		expect(cometGlyph()).toBe("☄");
+		expect(emptyGlyph()).toBe("·");
+	});
+
+	it("ascii substitutes are exact one-column values", () => {
+		expect(categoryIcon("ascii")).toEqual({
+			read: "^",
+			write: "/",
+			bash: "!",
+			search: "<",
+			agent: "#",
+			mcp: "o",
+			other: ".",
+		});
+		expect(starGlyph(0, "ascii")).toBe(".");
+		expect(starGlyph(1, "ascii")).toBe("#");
+		expect(cometGlyph("ascii")).toBe("@");
+		expect(emptyGlyph("ascii")).toBe(".");
+		for (const glyph of [...Object.values(categoryIcon("ascii")), cometGlyph("ascii"), emptyGlyph("ascii")]) {
+			expect(glyph).toHaveLength(1);
+			expect(glyph.charCodeAt(0)).toBeLessThan(128);
+		}
+	});
+
+	it("every category icon is distinct from every other in ascii too", () => {
+		const icons = Object.values(categoryIcon("ascii"));
+		expect(new Set(icons).size).toBe(icons.length);
+	});
+
+	it("nerd aliases unicode exactly", () => {
+		expect(categoryIcon("nerd")).toEqual(categoryIcon("unicode"));
+		expect(starGlyph(0.5, "nerd")).toBe(starGlyph(0.5, "unicode"));
+		expect(cometGlyph("nerd")).toBe(cometGlyph("unicode"));
+		expect(emptyGlyph("nerd")).toBe(emptyGlyph("unicode"));
+	});
+});
 
 describe("tool constellation category classification", () => {
 	it("maps builtin tool names, legacy aliases, and mcp bridge names to the bead's palette buckets", () => {
@@ -158,6 +214,18 @@ describe("tool constellation grid rendering (pure)", () => {
 		};
 		const rows = renderConstellationGrid(snapshot, 1200, idTheme, "full"); // 200ms since fire, inside the 500ms comet window
 		expect(rows[0]?.startsWith("☄")).toBe(true);
+	});
+
+	it("threads a live preset into the comet and empty-cell glyphs — not just the default", () => {
+		const snapshot = {
+			stars: [{ toolName: "bash", category: "bash" as const, cell: 0, lastFireAt: 1000, fireCount: 1 }],
+			lastFired: "bash",
+			previousFired: undefined,
+		};
+		const rows = renderConstellationGrid(snapshot, 1200, idTheme, "full", "ascii");
+		expect(rows[0]?.startsWith(cometGlyph("ascii"))).toBe(true);
+		expect(rows.join("")).toContain(emptyGlyph("ascii"));
+		expect(rows.join("")).not.toContain(cometGlyph("unicode"));
 	});
 
 	it("terminal-width safety: every grid row has equal visibleWidth, including a comet frame (regression guard for AESTHETIC-01)", () => {
@@ -263,6 +331,17 @@ describe("tool constellation static tally", () => {
 
 	it("falls back to a placeholder when nothing has fired yet", () => {
 		expect(renderConstellationTally(new Map(), idTheme)).toContain("no tool activity");
+	});
+
+	it("threads a live preset into every category icon — not just the default", () => {
+		const counts = new Map([
+			["bash" as const, 3],
+			["read" as const, 12],
+		]);
+		const line = renderConstellationTally(counts, idTheme, "ascii");
+		const icons = categoryIcon("ascii");
+		expect(line).toBe(`${icons.read} 12 · ${icons.bash} 3`);
+		expect(line).not.toContain(CATEGORY_ICON.read);
 	});
 });
 
@@ -433,6 +512,7 @@ describe("tool constellation edge cases", () => {
 			env: {},
 			motionSetting: "full",
 			theme: idTheme,
+			glyphPreset: "unicode",
 			setWidget: (key, content) => calls.push({ key, content }),
 		};
 		controller.onToolCall(toolCallEvent("bash"), ctx);
@@ -455,6 +535,7 @@ describe("tool constellation controller", () => {
 			env: {},
 			motionSetting: "full",
 			theme: idTheme,
+			glyphPreset: "unicode",
 			setWidget: (key, content) => calls.push({ key, content }),
 			...overrides,
 		};

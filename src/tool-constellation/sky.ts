@@ -1,3 +1,6 @@
+import type { SymbolPreset } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import { resolveGlyph, resolveStarGlyphRamp } from "../glyph-presets";
+
 /** Logical star-field grid. Fixed and independent of terminal width — layout stability comes from the hash, not the viewport. */
 export const GRID_COLS = 10;
 export const GRID_ROWS = 3;
@@ -71,20 +74,27 @@ export function isTwinkling(cell: number, elapsedMs: number): boolean {
 	return phase < TWINKLE_BLIP_MS;
 }
 
-/** Ordered glyph ramp from dimmest to brightest (excludes the comet-head glyph). */
-export const STAR_GLYPHS = ["·", "•", "✦", "✹"] as const;
-/** Newest-fired star, within {@link COMET_WINDOW_MS}, always renders as this glyph. */
-export const COMET_GLYPH = "☄";
-/** Unassigned grid cell. */
-export const EMPTY_GLYPH = "·";
+/** Fixed length of the star ramp — every preset's ramp has exactly this many entries (see `../glyph-presets.ts`). */
+const STAR_RAMP_LENGTH = 4;
 
-/** Map a brightness value (`0..1`) to its index on the {@link STAR_GLYPHS} ramp. Monotonic in brightness. */
+/** Map a brightness value (`0..1`) to its index on the star ramp. Monotonic in brightness. */
 export function starGlyphIndex(brightness: number): number {
 	const clamped = brightness <= 0 ? 0 : brightness >= 1 ? 1 : brightness;
-	return Math.min(STAR_GLYPHS.length - 1, Math.floor(clamped * STAR_GLYPHS.length));
+	return Math.min(STAR_RAMP_LENGTH - 1, Math.floor(clamped * STAR_RAMP_LENGTH));
 }
 
-/** Map a brightness value (`0..1`) to a glyph on the {@link STAR_GLYPHS} ramp. Monotonic in brightness. */
-export function starGlyph(brightness: number): string {
-	return STAR_GLYPHS[starGlyphIndex(brightness)] ?? STAR_GLYPHS[0];
+/** Map a brightness value (`0..1`) to a glyph on the dimmest-to-brightest star ramp, resolved for `preset` via `../glyph-presets.ts`. Monotonic in brightness. Defaults to `"unicode"` — the original hardcoded values. */
+export function starGlyph(brightness: number, preset: SymbolPreset = "unicode"): string {
+	const ramp = resolveStarGlyphRamp(preset);
+	return ramp[starGlyphIndex(brightness)] ?? ramp[0];
+}
+
+/** Newest-fired star, within {@link COMET_WINDOW_MS}, always renders as this glyph, resolved for `preset`. */
+export function cometGlyph(preset: SymbolPreset = "unicode"): string {
+	return resolveGlyph("toolConstellation.comet", preset);
+}
+
+/** Unassigned grid cell, resolved for `preset`. */
+export function emptyGlyph(preset: SymbolPreset = "unicode"): string {
+	return resolveGlyph("toolConstellation.empty", preset);
 }

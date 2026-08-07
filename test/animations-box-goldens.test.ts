@@ -78,6 +78,7 @@ function recordingContext(): { ctx: AnimationsBoxContext; calls: SetWidgetCall[]
 		isTTY: true,
 		env: {},
 		cwd: "/repo",
+		glyphPreset: "unicode",
 		setWidget: (key, content, options) => {
 			calls.push({ key, content, options });
 		},

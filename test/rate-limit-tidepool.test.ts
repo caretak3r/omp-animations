@@ -19,12 +19,16 @@ import {
 	refillLevel,
 } from "../src/rate-limit-tidepool/tidepool";
 import {
+	pebbleGlyph,
 	renderTidepoolOffText,
 	renderTidepoolRow,
 	SHIMMER_PERIOD_MS,
+	sandGlyph,
 	shimmerBeat,
 	type TidepoolTheme,
 	TidepoolWidget,
+	waterGlyph,
+	waterShimmerGlyph,
 } from "../src/rate-limit-tidepool/widget";
 
 // Identity theme so assertions see plain text instead of ANSI escapes.
@@ -68,6 +72,7 @@ function recordingContext(overrides: Partial<TidepoolContext> = {}): {
 		env: {},
 		motionSetting: "full",
 		theme: idTheme,
+		glyphPreset: "unicode",
 		setWidget: (key, content) => calls.push({ key, content }),
 		...overrides,
 	};
@@ -124,6 +129,39 @@ const openaiHeaders = {
 	"x-ratelimit-remaining-tokens": "5000",
 	"x-ratelimit-reset-tokens": "1s",
 };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Glyph presets
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("rate-limit tidepool glyphs (preset-aware)", () => {
+	it("waterGlyph/waterShimmerGlyph/pebbleGlyph/sandGlyph default to unicode, byte-identical to the original hardcoded values", () => {
+		expect(waterGlyph()).toBe("≈");
+		expect(waterShimmerGlyph()).toBe("~");
+		expect(pebbleGlyph()).toBe("∘");
+		expect(sandGlyph()).toBe("·");
+	});
+
+	it("ascii substitutes are exact one-column values, all four distinct from one another", () => {
+		expect(waterGlyph("ascii")).toBe("~");
+		expect(waterShimmerGlyph("ascii")).toBe("-");
+		expect(pebbleGlyph("ascii")).toBe(".");
+		expect(sandGlyph("ascii")).toBe(",");
+		const glyphs = [waterGlyph("ascii"), waterShimmerGlyph("ascii"), pebbleGlyph("ascii"), sandGlyph("ascii")];
+		expect(new Set(glyphs).size).toBe(glyphs.length);
+		for (const glyph of glyphs) {
+			expect(glyph).toHaveLength(1);
+			expect(glyph.charCodeAt(0)).toBeLessThan(128);
+		}
+	});
+
+	it("nerd aliases unicode exactly", () => {
+		expect(waterGlyph("nerd")).toBe(waterGlyph("unicode"));
+		expect(waterShimmerGlyph("nerd")).toBe(waterShimmerGlyph("unicode"));
+		expect(pebbleGlyph("nerd")).toBe(pebbleGlyph("unicode"));
+		expect(sandGlyph("nerd")).toBe(sandGlyph("unicode"));
+	});
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Pure math (tidepool.ts) — header parsing and the family whitelist
@@ -339,6 +377,13 @@ describe("rate-limit tidepool pure rendering — width tiers at 69 columns", () 
 				expect(row.length).toBeLessThanOrEqual(width);
 			}
 		}
+	});
+
+	it("threads a live preset into the bar's water/pebble glyphs — not just the default", () => {
+		const row = renderTidepoolRow(0.5, "openai", 0, 69, idTheme, "subtle", undefined, "ascii");
+		expect(row).toBe("~~~~~..... 50% openai");
+		expect(row).not.toContain(waterGlyph("unicode"));
+		expect(row).not.toContain(pebbleGlyph("unicode"));
 	});
 });
 

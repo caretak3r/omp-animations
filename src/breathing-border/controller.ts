@@ -9,7 +9,7 @@ import type {
 	TurnEndEvent,
 	TurnStartEvent,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
-import type { ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { SymbolPreset, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import type { BackpressureSignal, FrameScheduler, MotionSetting } from "../kit";
 import { AnimationHost, backpressureFromTui, DEFAULT_FRAME_SCHEDULER, MotionPolicy } from "../kit";
 import { BreathingBorderState } from "./state";
@@ -33,6 +33,8 @@ export interface BreathingBorderContext {
 	/** The resolved `animations` setting. */
 	motionSetting: MotionSetting;
 	theme: BreathingBorderTheme;
+	/** The host's live symbol preset (see `../glyph-presets.ts`). */
+	glyphPreset: SymbolPreset;
 	setWidget(key: string, content: ExtensionWidgetContent, options?: ExtensionWidgetOptions): void;
 }
 
@@ -150,6 +152,7 @@ export class BreathingBorderController {
 					clock,
 					onSettled,
 					accentColor: this.#accentColor,
+					glyphPreset: ctx.glyphPreset,
 				});
 			},
 			this.#widgetOptions,

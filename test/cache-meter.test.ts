@@ -15,15 +15,15 @@ import {
 	WARMTH_WINDOW,
 } from "../src/cache-meter/state";
 import {
-	BADGE_GLYPH,
-	BADGE_PULSE_GLYPH,
+	badgeGlyph,
+	badgePulseGlyph,
 	CACHE_METER_COLORS,
 	CacheMeterWidget,
 	easedHitRate,
 	HIT_RATE_EASE_DURATION_MS,
 	INVALIDATION_ALERT_DURATION_MS,
 	INVALIDATION_BLINK_PERIOD_MS,
-	INVALIDATION_GLYPH,
+	invalidationGlyph,
 	renderCacheMeterOffText,
 	renderCacheMeterPanel,
 	renderCacheMeterRow,
@@ -36,6 +36,11 @@ const idTheme = { fg: (_color: string, text: string) => text };
 // Color-tagging theme for tests that need to assert which color token the renderer chose.
 const taggedTheme = { fg: (color: string, text: string) => `${color}:${text}` };
 const WIDE = 200;
+
+// Unicode-tier glyphs, resolved once — every renderer call below defaults to `"unicode"`.
+const BADGE_GLYPH = badgeGlyph("unicode");
+const BADGE_PULSE_GLYPH = badgePulseGlyph("unicode");
+const INVALIDATION_GLYPH = invalidationGlyph("unicode");
 
 /** Manual frame scheduler: drives host ticks and the shared clock deterministically. */
 function manualScheduler(): FrameScheduler & { advance(ms: number): void; readonly running: boolean } {
@@ -70,6 +75,36 @@ function usageSample(provider: string, model: string, usage: Partial<CacheUsageS
 		usage: { input: 0, output: 10, cacheRead: 0, cacheWrite: 0, totalTokens: 10, ...usage },
 	};
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Glyph presets
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("cache meter glyphs (preset-aware)", () => {
+	it("badgeGlyph/badgePulseGlyph/invalidationGlyph default to unicode, byte-identical to the original hardcoded values", () => {
+		expect(badgeGlyph()).toBe("▤");
+		expect(badgePulseGlyph()).toBe("▥");
+		expect(invalidationGlyph()).toBe("⊘");
+	});
+
+	it("ascii substitutes are exact one-column values, distinct from one another", () => {
+		expect(badgeGlyph("ascii")).toBe("#");
+		expect(badgePulseGlyph("ascii")).toBe("*");
+		expect(invalidationGlyph("ascii")).toBe("x");
+		const glyphs = [badgeGlyph("ascii"), badgePulseGlyph("ascii"), invalidationGlyph("ascii")];
+		expect(new Set(glyphs).size).toBe(glyphs.length);
+		for (const glyph of glyphs) {
+			expect(glyph).toHaveLength(1);
+			expect(glyph.charCodeAt(0)).toBeLessThan(128);
+		}
+	});
+
+	it("nerd aliases unicode exactly", () => {
+		expect(badgeGlyph("nerd")).toBe(badgeGlyph("unicode"));
+		expect(badgePulseGlyph("nerd")).toBe(badgePulseGlyph("unicode"));
+		expect(invalidationGlyph("nerd")).toBe(invalidationGlyph("unicode"));
+	});
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // State aggregation
@@ -563,6 +598,22 @@ describe("cache meter row (compact surface) — width tiers", () => {
 	it("full tier (no derivable savings): hit-led fallback, sparkline, badge — no bar, at the exact width it needs", () => {
 		const row = renderCacheMeterRow(fixtureSnapshot(), 47, 0, idTheme, "subtle");
 		expect(row).toBe(`${BADGE_GLYPH} HIT 50.0% (1/1) ▅ READ 600 WRITE 200 MISS 400`);
+	});
+
+	it("threads a live preset into the row's badge glyph — not just the default", () => {
+		const row = renderCacheMeterRow(
+			fixtureSnapshot(),
+			47,
+			0,
+			idTheme,
+			"subtle",
+			undefined,
+			false,
+			undefined,
+			"ascii",
+		);
+		expect(row.startsWith(badgeGlyph("ascii"))).toBe(true);
+		expect(row).not.toContain(badgeGlyph("unicode"));
 	});
 
 	it("full tier (savings derivable): SAVED leads, sparkline, hit fraction demoted — at the exact width it needs", () => {
@@ -1199,6 +1250,7 @@ function controllerContext(overrides: Partial<CacheMeterContext> = {}): {
 		env: {},
 		motionSetting: "full",
 		theme: idTheme,
+		glyphPreset: "unicode",
 		setWidget: (key, content) => calls.push({ key, content }),
 		...overrides,
 	};
@@ -1426,7 +1478,7 @@ function extensionRecordingContext(overrides: Partial<ExtensionContext> = {}) {
 	const ctx = {
 		hasUI: true,
 		ui: {
-			theme: idTheme,
+			theme: { ...idTheme, getSymbolPreset: () => "unicode" as const },
 			setWidget: (key: string, content: unknown) => widgets.push({ key, content }),
 			notify: (message: string, type?: string) => notes.push({ message, type }),
 		},
@@ -1537,6 +1589,28 @@ describe("cache meter extension — wiring", () => {
 				headless.ctx,
 			),
 		).not.toThrow();
+	});
+
+	it("threads the host's live ctx.ui.theme.getSymbolPreset() into the mounted off-tier badge glyph — not just the config field", () => {
+		// `motionSetting: "off"` makes the mounted content a deterministic static
+		// line regardless of the test process's ambient TTY state.
+		const mounted = mountExtension({ motionSetting: "off" });
+		const widgets: Array<{ key: string; content: unknown }> = [];
+		const ctx = {
+			hasUI: true,
+			ui: {
+				theme: { ...idTheme, getSymbolPreset: () => "ascii" as const },
+				setWidget: (key: string, content: unknown) => widgets.push({ key, content }),
+				notify: () => {},
+			},
+		} as unknown as ExtensionContext;
+
+		mounted.emit("message_end", assistantMessageEnd("anthropic", "claude", { cacheRead: 100 }), ctx);
+
+		const content = widgets.at(-1)?.content as readonly string[] | undefined;
+		const line = content?.[0];
+		expect(line).toContain(badgeGlyph("ascii"));
+		expect(line).not.toContain(badgeGlyph("unicode"));
 	});
 });
 

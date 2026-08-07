@@ -11,18 +11,17 @@ import {
 } from "../src/audit-trail-box/controller";
 import { hashContent, type ProbeObservation, type ProbeSource } from "../src/audit-trail-box/probe";
 import { FORMATTER_WINDOW_MS, POISON_STREAK_TICKS } from "../src/audit-trail-box/state";
-import {
-	type AuditTrailBoxTheme,
-	AuditTrailBoxWidget,
-	BADGE_GLYPH,
-	STATUS_GLYPHS,
-} from "../src/audit-trail-box/widget";
+import { type AuditTrailBoxTheme, AuditTrailBoxWidget, badgeGlyph, statusGlyphs } from "../src/audit-trail-box/widget";
 import type { FrameScheduler } from "../src/kit";
 
 // Identity theme so assertions see plain text instead of ANSI escapes.
 const idTheme: AuditTrailBoxTheme = { fg: (_color, text) => text };
 // Color-tagging theme for tests that need to assert which color the renderer chose.
 const taggedTheme: AuditTrailBoxTheme = { fg: (color, text) => `${color}:${text}` };
+
+// Unicode-tier glyphs, resolved once — every controller call below defaults to `"unicode"`.
+const BADGE_GLYPH = badgeGlyph("unicode");
+const STATUS_GLYPHS = statusGlyphs("unicode");
 
 const noopTui = { requestComponentRender: () => {} };
 
@@ -90,6 +89,7 @@ function recordingContext(overrides: Partial<AuditTrailBoxContext> = {}): Record
 		env: {},
 		motionSetting: "full",
 		theme: idTheme,
+		glyphPreset: "unicode",
 		setWidget: (key, content) => widgets.push({ key, content }),
 		setStatus: (key, text) => statuses.push({ key, text }),
 		...overrides,

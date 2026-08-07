@@ -26,9 +26,41 @@ export type GlyphKey =
 	| "border.ramp.3"
 	| "box.limits"
 	| "box.files"
-	| "box.reflect";
+	| "box.reflect"
+	| "cacheMeter.badge"
+	| "cacheMeter.badgePulse"
+	| "cacheMeter.invalidation"
+	| "auditTrail.badge"
+	| "auditTrail.badgePulse"
+	| "auditTrail.status.poisoned"
+	| "auditTrail.status.dirty"
+	| "auditTrail.status.redundant"
+	| "auditTrail.status.cold"
+	| "auditTrail.status.fresh"
+	| "toolConstellation.star.0"
+	| "toolConstellation.star.1"
+	| "toolConstellation.star.2"
+	| "toolConstellation.star.3"
+	| "toolConstellation.comet"
+	| "toolConstellation.empty"
+	| "toolConstellation.category.read"
+	| "toolConstellation.category.write"
+	| "toolConstellation.category.bash"
+	| "toolConstellation.category.search"
+	| "toolConstellation.category.agent"
+	| "toolConstellation.category.mcp"
+	| "toolConstellation.category.other"
+	| "rateLimitTidepool.water"
+	| "rateLimitTidepool.waterShimmer"
+	| "rateLimitTidepool.pebble"
+	| "rateLimitTidepool.sand"
+	| "reflectionRipple.ring.0"
+	| "reflectionRipple.ring.1"
+	| "reflectionRipple.ring.2"
+	| "reflectionRipple.ring.3"
+	| "reflectionRipple.ring.4";
 
-/** Breathing border's `GLYPH_RAMP`, dimmest to heaviest, plus the Animations Box's badge literals — the original hardcoded values, unchanged. */
+/** Breathing border's `GLYPH_RAMP`, the Animations Box's badge literals, and every other keeper's own badge/status/ramp glyphs — the original hardcoded values, unchanged. */
 const UNICODE_GLYPHS: Record<GlyphKey, string> = {
 	"border.ramp.0": "·",
 	"border.ramp.1": "─",
@@ -37,9 +69,47 @@ const UNICODE_GLYPHS: Record<GlyphKey, string> = {
 	"box.limits": "◗",
 	"box.files": "▓",
 	"box.reflect": "○",
+	"cacheMeter.badge": "▤",
+	"cacheMeter.badgePulse": "▥",
+	"cacheMeter.invalidation": "⊘",
+	"auditTrail.badge": "▣",
+	"auditTrail.badgePulse": "▢",
+	"auditTrail.status.poisoned": "⊘",
+	"auditTrail.status.dirty": "✎",
+	"auditTrail.status.redundant": "⟳",
+	"auditTrail.status.cold": "❄",
+	"auditTrail.status.fresh": "✓",
+	"toolConstellation.star.0": "·",
+	"toolConstellation.star.1": "•",
+	"toolConstellation.star.2": "✦",
+	"toolConstellation.star.3": "✹",
+	"toolConstellation.comet": "☄",
+	"toolConstellation.empty": "·",
+	"toolConstellation.category.read": "⛏",
+	"toolConstellation.category.write": "✎",
+	"toolConstellation.category.bash": "↯",
+	"toolConstellation.category.search": "◈",
+	"toolConstellation.category.agent": "◆",
+	"toolConstellation.category.mcp": "⬡",
+	"toolConstellation.category.other": "∘",
+	"rateLimitTidepool.water": "≈",
+	"rateLimitTidepool.waterShimmer": "~",
+	"rateLimitTidepool.pebble": "∘",
+	"rateLimitTidepool.sand": "·",
+	"reflectionRipple.ring.0": " ",
+	"reflectionRipple.ring.1": "·",
+	"reflectionRipple.ring.2": "∘",
+	"reflectionRipple.ring.3": "○",
+	"reflectionRipple.ring.4": "◉",
 };
 
-/** One 7-bit-clean column per glyph — never a multi-char substitute (see module doc). */
+/**
+ * One 7-bit-clean column per glyph — never a multi-char substitute (see module doc).
+ * Two glyphs share an ascii column only when they either belong to different widgets
+ * that never render together, or are already the identical unicode glyph upstream
+ * (`toolConstellation.empty`/`star.0` are both literally `"·"` today) — never two
+ * DISTINCT unicode glyphs a single widget renders side by side.
+ */
 const ASCII_GLYPHS: Record<GlyphKey, string> = {
 	"border.ramp.0": ".",
 	"border.ramp.1": "-",
@@ -48,6 +118,38 @@ const ASCII_GLYPHS: Record<GlyphKey, string> = {
 	"box.limits": ")",
 	"box.files": "%",
 	"box.reflect": "o",
+	"cacheMeter.badge": "#",
+	"cacheMeter.badgePulse": "*",
+	"cacheMeter.invalidation": "x",
+	"auditTrail.badge": "@",
+	"auditTrail.badgePulse": "+",
+	"auditTrail.status.poisoned": "x",
+	"auditTrail.status.dirty": "/",
+	"auditTrail.status.redundant": "~",
+	"auditTrail.status.cold": "o",
+	"auditTrail.status.fresh": "v",
+	"toolConstellation.star.0": ".",
+	"toolConstellation.star.1": ",",
+	"toolConstellation.star.2": "*",
+	"toolConstellation.star.3": "#",
+	"toolConstellation.comet": "@",
+	"toolConstellation.empty": ".",
+	"toolConstellation.category.read": "^",
+	"toolConstellation.category.write": "/",
+	"toolConstellation.category.bash": "!",
+	"toolConstellation.category.search": "<",
+	"toolConstellation.category.agent": "#",
+	"toolConstellation.category.mcp": "o",
+	"toolConstellation.category.other": ".",
+	"rateLimitTidepool.water": "~",
+	"rateLimitTidepool.waterShimmer": "-",
+	"rateLimitTidepool.pebble": ".",
+	"rateLimitTidepool.sand": ",",
+	"reflectionRipple.ring.0": " ",
+	"reflectionRipple.ring.1": ".",
+	"reflectionRipple.ring.2": ",",
+	"reflectionRipple.ring.3": "o",
+	"reflectionRipple.ring.4": "@",
 };
 
 /** `nerd` is the SAME object as `unicode` (v1 alias, not a duplicated literal set — see module doc). */
@@ -72,4 +174,29 @@ const BORDER_RAMP_KEYS = [
 /** The breathing border's dimmest-to-heaviest ramp, resolved for one preset — feeds `breathing-border/breath.ts`'s `brightnessGlyph` bucket lookup. */
 export function resolveGlyphRamp(preset: SymbolPreset): readonly string[] {
 	return BORDER_RAMP_KEYS.map(key => resolveGlyph(key, preset));
+}
+
+const STAR_RAMP_KEYS = [
+	"toolConstellation.star.0",
+	"toolConstellation.star.1",
+	"toolConstellation.star.2",
+	"toolConstellation.star.3",
+] as const satisfies readonly GlyphKey[];
+
+/** Tool Constellation's dimmest-to-brightest star ramp (excludes the comet-head glyph), resolved for one preset — feeds `tool-constellation/sky.ts`'s `starGlyph` bucket lookup. */
+export function resolveStarGlyphRamp(preset: SymbolPreset): readonly string[] {
+	return STAR_RAMP_KEYS.map(key => resolveGlyph(key, preset));
+}
+
+const RING_RAMP_KEYS = [
+	"reflectionRipple.ring.0",
+	"reflectionRipple.ring.1",
+	"reflectionRipple.ring.2",
+	"reflectionRipple.ring.3",
+	"reflectionRipple.ring.4",
+] as const satisfies readonly GlyphKey[];
+
+/** Reflection Ripple's faintest-to-brightest ring ramp, resolved for one preset — feeds `reflection-ripple/ripple.ts`'s `ringGlyph` bucket lookup. */
+export function resolveRingGlyphRamp(preset: SymbolPreset): readonly string[] {
+	return RING_RAMP_KEYS.map(key => resolveGlyph(key, preset));
 }

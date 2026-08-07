@@ -1,4 +1,5 @@
-import type { Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { SymbolPreset, Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import { resolveGlyph } from "../glyph-presets";
 import type { AnimatedWidgetOptions, FrameScheduler, MotionPolicy } from "../kit";
 import { AnimatedWidget } from "../kit";
 import type { TidepoolSnapshot } from "./state";
@@ -33,14 +34,22 @@ export function tidepoolColors(accentColor?: ThemeColor): TidepoolColors {
 	return accentColor === undefined ? TIDEPOOL_COLORS : { ...TIDEPOOL_COLORS, water: accentColor };
 }
 
-/** Filled-water glyph. */
-export const WATER_GLYPH = "≈";
-/** The filled edge cell's alternate glyph on the `full` motion tier's shimmer beat. */
-export const WATER_SHIMMER_GLYPH = "~";
-/** Exposed-pool glyph while draining but not yet near-empty. */
-export const PEBBLE_GLYPH = "∘";
-/** Exposed-pool glyph once the pool reads as near-empty wet sand. */
-export const SAND_GLYPH = "·";
+/** Filled-water glyph, resolved for `preset` via `../glyph-presets.ts`. Defaults to `"unicode"` — the original hardcoded value. */
+export function waterGlyph(preset: SymbolPreset = "unicode"): string {
+	return resolveGlyph("rateLimitTidepool.water", preset);
+}
+/** The filled edge cell's alternate glyph on the `full` motion tier's shimmer beat, resolved for `preset`. */
+export function waterShimmerGlyph(preset: SymbolPreset = "unicode"): string {
+	return resolveGlyph("rateLimitTidepool.waterShimmer", preset);
+}
+/** Exposed-pool glyph while draining but not yet near-empty, resolved for `preset`. */
+export function pebbleGlyph(preset: SymbolPreset = "unicode"): string {
+	return resolveGlyph("rateLimitTidepool.pebble", preset);
+}
+/** Exposed-pool glyph once the pool reads as near-empty wet sand, resolved for `preset`. */
+export function sandGlyph(preset: SymbolPreset = "unicode"): string {
+	return resolveGlyph("rateLimitTidepool.sand", preset);
+}
 
 /** Widest the pool bar ever draws, in cells, regardless of available row width — the row-width budget caps it further. */
 export const MAX_POOL_CELLS = 10;
@@ -55,8 +64,8 @@ export function shimmerBeat(elapsedMs: number): boolean {
 }
 
 /** A single tier's resting glyph — used for the very narrow width degradation. */
-function bareGlyph(tier: ReturnType<typeof poolTier>): string {
-	return tier === "sand" ? SAND_GLYPH : tier === "pebbles" ? PEBBLE_GLYPH : WATER_GLYPH;
+function bareGlyph(tier: ReturnType<typeof poolTier>, preset: SymbolPreset): string {
+	return tier === "sand" ? sandGlyph(preset) : tier === "pebbles" ? pebbleGlyph(preset) : waterGlyph(preset);
 }
 
 /**
@@ -73,16 +82,17 @@ export function renderTidepoolBar(
 	shimmerOn: boolean,
 	theme: TidepoolTheme,
 	colors: TidepoolColors = TIDEPOOL_COLORS,
+	preset: SymbolPreset = "unicode",
 ): string {
 	if (cells <= 0) return "";
 	const filled = poolFilledCells(level, cells);
-	const exposedGlyph = tier === "sand" ? SAND_GLYPH : PEBBLE_GLYPH;
+	const exposedGlyph = tier === "sand" ? sandGlyph(preset) : pebbleGlyph(preset);
 	const exposedColor = tier === "sand" ? colors.sand : colors.pebble;
 	const parts: string[] = [];
 	for (let i = 0; i < cells; i++) {
 		if (i < filled) {
 			const atEdge = i === filled - 1;
-			const glyph = atEdge && shimmerOn && tier !== "sand" ? WATER_SHIMMER_GLYPH : WATER_GLYPH;
+			const glyph = atEdge && shimmerOn && tier !== "sand" ? waterShimmerGlyph(preset) : waterGlyph(preset);
 			parts.push(theme.fg(colors.water, glyph));
 		} else {
 			parts.push(theme.fg(exposedColor, exposedGlyph));
@@ -107,6 +117,7 @@ export function renderTidepoolRow(
 	theme: TidepoolTheme,
 	motionTier: "full" | "subtle",
 	colors: TidepoolColors = TIDEPOOL_COLORS,
+	preset: SymbolPreset = "unicode",
 ): string {
 	if (width <= 0) return "";
 	const tier = poolTier(level);
@@ -115,7 +126,7 @@ export function renderTidepoolRow(
 	const labelFull = `${pctLabel} ${provider}`;
 
 	const shimmerOn = motionTier === "full" && shimmerBeat(elapsedMs);
-	const bar = renderTidepoolBar(level, MAX_POOL_CELLS, tier, shimmerOn, theme, colors);
+	const bar = renderTidepoolBar(level, MAX_POOL_CELLS, tier, shimmerOn, theme, colors, preset);
 	const fullWidth = MAX_POOL_CELLS + 1 + labelFull.length;
 	if (fullWidth <= width) return `${bar} ${theme.fg(colors.label, labelFull)}`;
 
@@ -123,13 +134,16 @@ export function renderTidepoolRow(
 	if (pctLabel.length <= width) return theme.fg(colors.label, pctLabel);
 
 	const glyphColor = tier === "sand" ? colors.sand : tier === "pebbles" ? colors.pebble : colors.water;
-	return theme.fg(glyphColor, bareGlyph(tier));
+	return theme.fg(glyphColor, bareGlyph(tier, preset));
 }
 
 /** Static one-line fallback for the motion-`off` tier: the same honest `NN% provider` label, no bar (no frame clock to animate one). */
-export function renderTidepoolOffText(snapshot: Pick<TidepoolSnapshot, "level" | "provider">): string {
+export function renderTidepoolOffText(
+	snapshot: Pick<TidepoolSnapshot, "level" | "provider">,
+	preset: SymbolPreset = "unicode",
+): string {
 	const level = snapshot.level <= 0 ? 0 : snapshot.level >= 1 ? 1 : snapshot.level;
-	return `${WATER_GLYPH} ${Math.round(level * 100)}% ${snapshot.provider}`;
+	return `${waterGlyph(preset)} ${Math.round(level * 100)}% ${snapshot.provider}`;
 }
 
 /** Minimal clock seam the widget needs — shared with the controller so `observedAtMs`/`resetAtMs` and render reads agree. */
@@ -147,6 +161,8 @@ export interface TidepoolWidgetOptions extends AnimatedWidgetOptions {
 	clock: TidepoolClock;
 	/** Accent override for the primary accent slot (the water); `undefined` keeps the built-in palette. */
 	accentColor?: ThemeColor;
+	/** The host's live symbol preset; `undefined` keeps the `"unicode"` default (see `../glyph-presets.ts`). */
+	glyphPreset?: SymbolPreset;
 }
 
 /**
@@ -166,6 +182,7 @@ export class TidepoolWidget extends AnimatedWidget {
 	#policy: MotionPolicy;
 	#clock: TidepoolClock;
 	#colors: TidepoolColors;
+	#glyphPreset: SymbolPreset;
 
 	constructor(options: TidepoolWidgetOptions) {
 		super(options);
@@ -174,6 +191,7 @@ export class TidepoolWidget extends AnimatedWidget {
 		this.#policy = options.policy;
 		this.#clock = options.clock;
 		this.#colors = tidepoolColors(options.accentColor);
+		this.#glyphPreset = options.glyphPreset ?? "unicode";
 	}
 
 	renderFrame(width: number): readonly string[] {
@@ -188,9 +206,20 @@ export class TidepoolWidget extends AnimatedWidget {
 		const level = refillLevel(snapshot.level, now, snapshot.observedAtMs, snapshot.resetAtMs);
 
 		if (this.#policy.tier === "off") {
-			return [renderTidepoolOffText({ level, provider: snapshot.provider })];
+			return [renderTidepoolOffText({ level, provider: snapshot.provider }, this.#glyphPreset)];
 		}
 		const motionTier = this.#policy.tier === "full" ? "full" : "subtle";
-		return [renderTidepoolRow(level, snapshot.provider, now, width, this.#theme, motionTier, this.#colors)];
+		return [
+			renderTidepoolRow(
+				level,
+				snapshot.provider,
+				now,
+				width,
+				this.#theme,
+				motionTier,
+				this.#colors,
+				this.#glyphPreset,
+			),
+		];
 	}
 }

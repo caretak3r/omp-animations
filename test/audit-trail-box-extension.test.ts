@@ -362,7 +362,7 @@ function recordingContext(overrides: Partial<ExtensionContext> = {}) {
 		hasUI: true,
 		cwd: CWD,
 		ui: {
-			theme: { fg: (_color: string, text: string) => text },
+			theme: { fg: (_color: string, text: string) => text, getSymbolPreset: () => "unicode" as const },
 			setWidget: (key: string, content: unknown) => widgets.push({ key, content }),
 			setStatus: (key: string, text: string | undefined) => statuses.push({ key, text }),
 			notify: (message: string, type?: string) => notes.push({ message, type }),

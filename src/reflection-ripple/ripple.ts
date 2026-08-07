@@ -5,6 +5,8 @@
  * window. Every function is a deterministic function of its numeric inputs —
  * no wall-clock reads — so frames are byte-stable given an injected clock.
  */
+import type { SymbolPreset } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import { resolveRingGlyphRamp } from "../glyph-presets";
 
 /** Total lifetime of one ripple: born bright at the center, fully faded by the time it reaches the edge. */
 export const RIPPLE_DURATION_MS = 1600;
@@ -43,14 +45,12 @@ export function rippleBrightness(progress: number): number {
 	return 1 - clamped;
 }
 
-/** Ordered ring glyph ramp, faintest/most-dissipated to brightest/newest. */
-const RING_GLYPHS = [" ", "·", "∘", "○", "◉"] as const;
-
-/** Map a `[0, 1]` brightness to a glyph on the {@link RING_GLYPHS} ramp. Monotonic. Pure. */
-export function ringGlyph(brightness: number): string {
+/** Map a `[0, 1]` brightness to a glyph on the faintest/most-dissipated-to-brightest/newest ring ramp, resolved for `preset` via `../glyph-presets.ts`. Monotonic. Pure. Defaults to `"unicode"` — the original hardcoded values. */
+export function ringGlyph(brightness: number, preset: SymbolPreset = "unicode"): string {
+	const ramp = resolveRingGlyphRamp(preset);
 	const clamped = brightness <= 0 ? 0 : brightness >= 1 ? 1 : brightness;
-	const index = Math.min(RING_GLYPHS.length - 1, Math.floor(clamped * RING_GLYPHS.length));
-	return RING_GLYPHS[index] ?? RING_GLYPHS[0];
+	const index = Math.min(ramp.length - 1, Math.floor(clamped * ramp.length));
+	return ramp[index] ?? ramp[0];
 }
 
 /**

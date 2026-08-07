@@ -27,6 +27,7 @@ function toConstellationContext(
 		env: Bun.env,
 		motionSetting: readMotionSetting(options),
 		theme: ctx.ui.theme,
+		glyphPreset: ctx.ui.theme.getSymbolPreset(),
 		setWidget: (key, content, options) => ctx.ui.setWidget(key, content, options),
 	};
 }

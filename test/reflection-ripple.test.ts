@@ -104,6 +104,24 @@ describe("reflection ripple pure math", () => {
 		expect(ringGlyph(0.1)).not.toBe(ringGlyph(0.9));
 	});
 
+	it("ringGlyph defaults to unicode; ascii substitutes are exact one-column values distinct across the ramp", () => {
+		expect(ringGlyph(0, "unicode")).toBe(ringGlyph(0));
+		expect(ringGlyph(0, "ascii")).toBe(" ");
+		expect(ringGlyph(1, "ascii")).toBe("@");
+		const ramp = [0, 0.25, 0.5, 0.75, 1].map(b => ringGlyph(b, "ascii"));
+		expect(new Set(ramp).size).toBe(ramp.length);
+		for (const glyph of ramp) {
+			expect(glyph).toHaveLength(1);
+			expect(glyph.charCodeAt(0)).toBeLessThan(128);
+		}
+	});
+
+	it("ringGlyph's nerd preset aliases unicode exactly", () => {
+		for (const b of [0, 0.25, 0.5, 0.75, 1]) {
+			expect(ringGlyph(b, "nerd")).toBe(ringGlyph(b, "unicode"));
+		}
+	});
+
 	it("reflectDimAmount peaks immediately at the trigger and eases back to 0 by the duration, monotonically", () => {
 		expect(reflectDimAmount(0, DIM_DURATION_MS)).toBeCloseTo(1, 5);
 		expect(reflectDimAmount(DIM_DURATION_MS, DIM_DURATION_MS)).toBe(0);
@@ -197,6 +215,13 @@ describe("reflection ripple pure rendering", () => {
 	it("subtle tier at width 1 renders a single glyph with no background", () => {
 		const row = renderReflectionRippleRow(0, 1, taggedTheme, "subtle");
 		expect(row.startsWith("accent:")).toBe(true);
+	});
+
+	it("threads a live preset into the ring glyph — not just the default", () => {
+		const brightness = rippleBrightness(0) * dimMultiplier(1);
+		const row = renderReflectionRippleRow(0, 1, idTheme, "subtle", undefined, "ascii");
+		expect(row).toBe(ringGlyph(brightness, "ascii"));
+		expect(row).not.toBe(ringGlyph(brightness, "unicode"));
 	});
 
 	it("width <= 0 renders an empty row", () => {
@@ -570,6 +595,7 @@ describe("reflection ripple controller", () => {
 			env: {},
 			motionSetting: "full",
 			theme: idTheme,
+			glyphPreset: "unicode",
 			setWidget: (key, content) => calls.push({ key, content }),
 			...overrides,
 		};

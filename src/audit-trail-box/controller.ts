@@ -3,7 +3,7 @@ import type {
 	ExtensionWidgetOptions,
 	WidgetPlacement,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
-import type { ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { SymbolPreset, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import type { BackpressureSignal, FrameScheduler, MotionSetting } from "../kit";
 import { AnimationHost, backpressureFromTui, DEFAULT_FRAME_SCHEDULER, MotionPolicy } from "../kit";
 import { createFileProbeSource, DiskProbe, type ProbeSource } from "./probe";
@@ -58,6 +58,8 @@ export interface AuditTrailBoxContext {
 	/** The resolved `animations` setting. */
 	motionSetting: MotionSetting;
 	theme: AuditTrailBoxTheme;
+	/** The host's live symbol preset (see `../glyph-presets.ts`). */
+	glyphPreset: SymbolPreset;
 	/** Terminal width, for the footer status line's width tiers. */
 	columns?: number;
 	setWidget(key: string, content: ExtensionWidgetContent, options?: ExtensionWidgetOptions): void;
@@ -261,7 +263,11 @@ export class AuditTrailBoxController {
 
 	/** The slash command's panel: the whole working set as a risk-sorted table. */
 	panel(ctx: AuditTrailBoxContext, options: AuditPanelOptions = {}): readonly string[] {
-		return renderAuditPanel(this.#state.snapshot(), ctx.theme, { colors: this.#colors, ...options });
+		return renderAuditPanel(this.#state.snapshot(), ctx.theme, {
+			colors: this.#colors,
+			preset: ctx.glyphPreset,
+			...options,
+		});
 	}
 
 	/**
@@ -299,7 +305,7 @@ export class AuditTrailBoxController {
 		if (!this.#mount) {
 			this.#mount = this.#mountWidget(ctx);
 		} else if (this.#mount.mode === "static") {
-			ctx.setWidget(WIDGET_KEY, [renderAuditOffText(this.#state.snapshot())], this.#widgetOptions);
+			ctx.setWidget(WIDGET_KEY, [renderAuditOffText(this.#state.snapshot(), ctx.glyphPreset)], this.#widgetOptions);
 		}
 		// Animated mode: the widget's own frame subscription re-renders from the shared state.
 		// Headless mode: no row to maintain at all.
@@ -330,6 +336,7 @@ export class AuditTrailBoxController {
 			ctx.theme,
 			tier,
 			this.#colors,
+			ctx.glyphPreset,
 		);
 		ctx.setStatus(STATUS_KEY, row);
 		this.#statusShown = true;
@@ -339,7 +346,7 @@ export class AuditTrailBoxController {
 		const policy = new MotionPolicy({ hasUI: ctx.hasUI, isTTY: ctx.isTTY, env: ctx.env }, ctx.motionSetting);
 		if (this.#suppressRow) return { mode: "headless", policy };
 		if (policy.tier === "off") {
-			ctx.setWidget(WIDGET_KEY, [renderAuditOffText(this.#state.snapshot())], this.#widgetOptions);
+			ctx.setWidget(WIDGET_KEY, [renderAuditOffText(this.#state.snapshot(), ctx.glyphPreset)], this.#widgetOptions);
 			return { mode: "static" };
 		}
 
@@ -347,6 +354,7 @@ export class AuditTrailBoxController {
 		const host = new AnimationHost({ policy, backpressure: backpressure.signal, scheduler: this.#scheduler });
 		const state = this.#state;
 		const clock = this.#scheduler;
+		const glyphPreset = ctx.glyphPreset;
 		ctx.setWidget(
 			WIDGET_KEY,
 			(tui, theme) => {
@@ -359,6 +367,7 @@ export class AuditTrailBoxController {
 					theme,
 					clock,
 					accentColor: this.#accentColor,
+					glyphPreset,
 				});
 			},
 			this.#widgetOptions,

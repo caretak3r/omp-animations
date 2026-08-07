@@ -1,11 +1,11 @@
-import type { Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { SymbolPreset, Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import type { AnimatedWidgetOptions, FrameScheduler, MotionPolicy } from "../kit";
 import { AnimatedWidget } from "../kit";
-import { CATEGORY_ICON, CATEGORY_ORDER, CATEGORY_THEME_COLOR, type ToolCategory } from "./categories";
+import { CATEGORY_ORDER, CATEGORY_THEME_COLOR, categoryIcon, type ToolCategory } from "./categories";
 import {
-	COMET_GLYPH,
 	COMET_WINDOW_MS,
-	EMPTY_GLYPH,
+	cometGlyph,
+	emptyGlyph,
 	GRID_COLS,
 	GRID_ROWS,
 	isTwinkling,
@@ -23,8 +23,8 @@ function cellRowCol(cell: number): { row: number; col: number } {
 }
 
 /** Binary bright/dim dot for the `subtle` tier — no glyph ramp, no twinkle. */
-function subtleGlyph(brightness: number): string {
-	return brightness > 0.5 ? "•" : EMPTY_GLYPH;
+function subtleGlyph(brightness: number, preset: SymbolPreset): string {
+	return brightness > 0.5 ? "•" : emptyGlyph(preset);
 }
 
 /**
@@ -40,6 +40,7 @@ export function renderConstellationGrid(
 	elapsedMs: number,
 	theme: ConstellationTheme,
 	tier: "full" | "subtle",
+	preset: SymbolPreset = "unicode",
 ): readonly string[] {
 	const starAt = new Map<number, { glyph: string; color: ThemeColor }>();
 	// Track the previous/last-fired stars while we're already walking every star for `starAt`,
@@ -54,7 +55,11 @@ export function renderConstellationGrid(
 		if (tier === "full" && !isComet && isTwinkling(star.cell, elapsedMs)) {
 			brightness = Math.max(brightness, starBrightness(0));
 		}
-		const glyph = isComet ? COMET_GLYPH : tier === "full" ? starGlyph(brightness) : subtleGlyph(brightness);
+		const glyph = isComet
+			? cometGlyph(preset)
+			: tier === "full"
+				? starGlyph(brightness, preset)
+				: subtleGlyph(brightness, preset);
 		starAt.set(star.cell, { glyph, color: CATEGORY_THEME_COLOR[star.category] });
 		if (star.toolName === snapshot.previousFired) prevStar = star;
 		if (star.toolName === snapshot.lastFired) lastStar = star;
@@ -92,7 +97,7 @@ export function renderConstellationGrid(
 			} else if (lineCells.has(idx)) {
 				parts.push(theme.fg("dim", "─"));
 			} else {
-				parts.push(theme.fg("dim", EMPTY_GLYPH));
+				parts.push(theme.fg("dim", emptyGlyph(preset)));
 			}
 		}
 		rows.push(parts.join(" "));
@@ -101,9 +106,14 @@ export function renderConstellationGrid(
 }
 
 /** Static one-line fallback for the motion-`off` tier: a per-category fire tally. */
-export function renderConstellationTally(counts: ReadonlyMap<ToolCategory, number>, theme: ConstellationTheme): string {
+export function renderConstellationTally(
+	counts: ReadonlyMap<ToolCategory, number>,
+	theme: ConstellationTheme,
+	preset: SymbolPreset = "unicode",
+): string {
+	const icons = categoryIcon(preset);
 	const segments = CATEGORY_ORDER.filter(category => (counts.get(category) ?? 0) > 0).map(category =>
-		theme.fg(CATEGORY_THEME_COLOR[category], `${CATEGORY_ICON[category]} ${counts.get(category)}`),
+		theme.fg(CATEGORY_THEME_COLOR[category], `${icons[category]} ${counts.get(category)}`),
 	);
 	if (segments.length === 0) return theme.fg("dim", "no tool activity yet");
 	return segments.join(" · ");
@@ -158,6 +168,8 @@ export interface ToolConstellationWidgetOptions extends AnimatedWidgetOptions {
 	theme: ConstellationTheme;
 	/** Same clock the controller stamps fires with — NOT the host's internal relative elapsed-ms. */
 	clock: ConstellationClock;
+	/** The host's live symbol preset; `undefined` keeps the `"unicode"` default (see `../glyph-presets.ts`). */
+	glyphPreset?: SymbolPreset;
 }
 
 /**
@@ -175,6 +187,7 @@ export class ToolConstellationWidget extends AnimatedWidget {
 	#theme: ConstellationTheme;
 	#policy: MotionPolicy;
 	#clock: ConstellationClock;
+	#glyphPreset: SymbolPreset;
 	#memoCodes: number[] | undefined;
 	#memoLastFired: string | undefined;
 	#memoPreviousFired: string | undefined;
@@ -186,6 +199,7 @@ export class ToolConstellationWidget extends AnimatedWidget {
 		this.#theme = options.theme;
 		this.#policy = options.policy;
 		this.#clock = options.clock;
+		this.#glyphPreset = options.glyphPreset ?? "unicode";
 	}
 
 	renderFrame(_width: number): readonly string[] {
@@ -201,7 +215,7 @@ export class ToolConstellationWidget extends AnimatedWidget {
 		) {
 			return this.#memoRows;
 		}
-		const rows = renderConstellationGrid(snapshot, elapsedMs, this.#theme, tier);
+		const rows = renderConstellationGrid(snapshot, elapsedMs, this.#theme, tier, this.#glyphPreset);
 		this.#memoCodes = codes;
 		this.#memoLastFired = snapshot.lastFired;
 		this.#memoPreviousFired = snapshot.previousFired;

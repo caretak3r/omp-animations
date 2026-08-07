@@ -226,6 +226,7 @@ function toAuditContext(ctx: ExtensionContext, options: AuditTrailBoxExtensionOp
 		env: Bun.env,
 		motionSetting: readMotionSetting(options),
 		theme: ctx.ui.theme,
+		glyphPreset: ctx.ui.theme.getSymbolPreset(),
 		columns: process.stdout.columns,
 		setWidget: (key, content, widgetOptions) => ctx.ui.setWidget(key, content, widgetOptions),
 		setStatus: (key, text) => ctx.ui.setStatus(key, text),

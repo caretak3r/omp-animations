@@ -79,7 +79,7 @@ function makeCtx(): { ctx: ExtensionContext; widgetCalls: Array<{ key: string; c
 		hasUI: true,
 		cwd: process.cwd(),
 		ui: {
-			theme: idTheme,
+			theme: { ...idTheme, getSymbolPreset: () => "unicode" as const },
 			setWidget: (key: string, content: unknown) => {
 				widgetCalls.push({ key, content });
 			},

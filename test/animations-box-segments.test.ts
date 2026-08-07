@@ -10,13 +10,18 @@ import {
 } from "../src/animations-box/segments";
 import { BOX_SEGMENT_IDS } from "../src/animations-box/settings";
 import {
-	BADGE_GLYPH as AUDIT_BADGE_GLYPH,
 	AUDIT_TRAIL_BOX_COLORS,
 	AuditLedgerState,
+	badgeGlyph as auditBadgeGlyphFor,
 	renderAuditMeterRow,
-	STATUS_GLYPHS,
+	statusGlyphs,
 } from "../src/audit-trail-box";
-import { BADGE_GLYPH, CACHE_METER_COLORS, CacheMeterState, renderCacheMeterRow } from "../src/cache-meter";
+import {
+	CACHE_METER_COLORS,
+	CacheMeterState,
+	badgeGlyph as cacheBadgeGlyphFor,
+	renderCacheMeterRow,
+} from "../src/cache-meter";
 import {
 	CadenceEqualizerState,
 	cadenceEqualizerColors,
@@ -28,12 +33,19 @@ import { MAX_REFERENCE_RATE } from "../src/cadence-equalizer/scale";
 import { GLOW_THRESHOLD, PALIMPSEST_COLORS, PalimpsestState } from "../src/palimpsest";
 import { RateLimitTidepoolState, refillLevel, renderTidepoolRow, TIDEPOOL_COLORS } from "../src/rate-limit-tidepool";
 import { REFLECTION_RIPPLE_COLORS, ReflectionRippleState, renderReflectionRippleRow } from "../src/reflection-ripple";
-import { CATEGORY_ICON, ConstellationState, EMPTY_GLYPH, renderConstellationTally } from "../src/tool-constellation";
+import { ConstellationState, categoryIcon, emptyGlyph, renderConstellationTally } from "../src/tool-constellation";
 
 // Identity theme so assertions see plain text instead of ANSI escapes.
 const idTheme = { fg: (_color: string, text: string) => text };
 // Color-tagging theme for tests that need to assert which color token the builder chose.
 const taggedTheme = { fg: (color: string, text: string) => `${color}:${text}` };
+
+// Unicode-tier glyphs, resolved once — every builder call below defaults to `"unicode"`.
+const BADGE_GLYPH = cacheBadgeGlyphFor("unicode");
+const AUDIT_BADGE_GLYPH = auditBadgeGlyphFor("unicode");
+const STATUS_GLYPHS = statusGlyphs("unicode");
+const CATEGORY_ICON = categoryIcon("unicode");
+const EMPTY_GLYPH = emptyGlyph("unicode");
 
 function usageSample(
 	provider: string,
@@ -150,6 +162,28 @@ describe("buildCacheMeterSegment — active row", () => {
 		const colors = { ...CACHE_METER_COLORS, badge: "syntaxString" as const };
 		const sample = buildCacheMeterSegment(state, 0, taggedTheme, colors);
 		expect(sample.detail.glyph).toBe(`syntaxString:${BADGE_GLYPH}`);
+	});
+});
+
+describe("buildCacheMeterSegment — glyph preset", () => {
+	function warmedState(): CacheMeterState {
+		const state = new CacheMeterState();
+		state.recordUsage(usageSample("anthropic", "claude", { input: 400, cacheRead: 600, cacheWrite: 200 }));
+		return state;
+	}
+
+	it("defaults to the unicode badge when no preset is passed", () => {
+		const sample = buildCacheMeterSegment(new CacheMeterState(), 0, idTheme);
+		expect(sample.detail.glyph).toBe(BADGE_GLYPH);
+	});
+
+	it("swaps the badge for the ascii substitute when preset is 'ascii', resting and active", () => {
+		const resting = buildCacheMeterSegment(new CacheMeterState(), 0, idTheme, CACHE_METER_COLORS, "ascii");
+		expect(resting.detail.glyph).toBe("#");
+
+		const active = buildCacheMeterSegment(warmedState(), 0, idTheme, CACHE_METER_COLORS, "ascii");
+		expect(active.detail.glyph).toBe("#");
+		expect(active.variants[0]?.startsWith("#")).toBe(true);
 	});
 });
 
@@ -368,6 +402,29 @@ describe("buildAuditTrailBoxSegment — active row", () => {
 
 		const sample = buildAuditTrailBoxSegment(state, 999, taggedTheme, AUDIT_TRAIL_BOX_COLORS);
 		expect(sample.detail.glyph).toBe(`${AUDIT_TRAIL_BOX_COLORS.poisoned}:${AUDIT_BADGE_GLYPH}`);
+	});
+});
+
+describe("buildAuditTrailBoxSegment — glyph preset", () => {
+	it("defaults to the unicode badge and status glyphs when no preset is passed", () => {
+		const resting = buildAuditTrailBoxSegment(new AuditLedgerState(), 0, idTheme);
+		expect(resting.detail.glyph).toBe(AUDIT_BADGE_GLYPH);
+
+		const state = new AuditLedgerState();
+		state.noteRead("/repo/src/foo.ts");
+		const active = buildAuditTrailBoxSegment(state, 0, idTheme);
+		expect(active.detail.primary).toBe(`1${STATUS_GLYPHS.fresh}`);
+	});
+
+	it("swaps the badge and status glyphs for their ascii substitutes when preset is 'ascii'", () => {
+		const resting = buildAuditTrailBoxSegment(new AuditLedgerState(), 0, idTheme, AUDIT_TRAIL_BOX_COLORS, "ascii");
+		expect(resting.detail.glyph).toBe("@");
+
+		const state = new AuditLedgerState();
+		state.noteRead("/repo/src/foo.ts");
+		const active = buildAuditTrailBoxSegment(state, 0, idTheme, AUDIT_TRAIL_BOX_COLORS, "ascii");
+		expect(active.detail.glyph).toBe("@");
+		expect(active.detail.primary).toBe("1v"); // fresh -> "v" in ascii
 	});
 });
 
@@ -595,6 +652,29 @@ describe("buildToolConstellationSegment — active row", () => {
 		state.recordFire("read", 0);
 		const sample = buildToolConstellationSegment(state, 0, taggedTheme);
 		expect(sample.detail.glyph).toBe("syntaxVariable:⛏");
+	});
+});
+
+describe("buildToolConstellationSegment — glyph preset", () => {
+	it("defaults to the unicode empty glyph and category icons when no preset is passed", () => {
+		const resting = buildToolConstellationSegment(new ConstellationState(), 0, idTheme);
+		expect(resting.detail.glyph).toBe(EMPTY_GLYPH);
+
+		const state = new ConstellationState();
+		state.recordFire("read", 0);
+		const active = buildToolConstellationSegment(state, 0, idTheme);
+		expect(active.detail.trailing).toBe(`${CATEGORY_ICON.read}1`);
+	});
+
+	it("swaps the empty glyph and category icons for their ascii substitutes when preset is 'ascii'", () => {
+		const resting = buildToolConstellationSegment(new ConstellationState(), 0, idTheme, "ascii");
+		expect(resting.detail.glyph).toBe(".");
+
+		const state = new ConstellationState();
+		state.recordFire("read", 0);
+		const active = buildToolConstellationSegment(state, 0, idTheme, "ascii");
+		expect(active.detail.trailing).toBe("^1"); // read -> "^" in ascii
+		expect(active.detail.glyph).toBe("^");
 	});
 });
 

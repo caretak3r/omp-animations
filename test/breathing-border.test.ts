@@ -139,6 +139,12 @@ describe("breathing border pure rendering", () => {
 		expect(row).toBe("borderAccent:█");
 	});
 
+	it("threads a live preset into the subtle-tier corner glyph — not just the default", () => {
+		const row = renderBreathingBorderRow(0.9, 1, idTheme, "subtle", undefined, undefined, "ascii");
+		expect(row).toBe(brightnessGlyph(0.9, "ascii"));
+		expect(row).not.toBe(brightnessGlyph(0.9, "unicode"));
+	});
+
 	it("width <= 0 renders an empty row", () => {
 		expect(renderBreathingBorderRow(0.5, 0, taggedTheme, "full")).toBe("");
 	});
@@ -448,6 +454,7 @@ describe("breathing border controller", () => {
 			env: {},
 			motionSetting: "full",
 			theme: idTheme,
+			glyphPreset: "unicode",
 			setWidget: (key, content) => calls.push({ key, content }),
 			...overrides,
 		};

@@ -7,7 +7,7 @@ import type {
 	AfterProviderResponseEvent,
 	MessageStartEvent,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
-import type { ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { SymbolPreset, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import type { BackpressureSignal, FrameScheduler, MotionSetting } from "../kit";
 import { AnimationHost, backpressureFromTui, DEFAULT_FRAME_SCHEDULER, MotionPolicy } from "../kit";
 import { RateLimitTidepoolState } from "./state";
@@ -32,6 +32,8 @@ export interface TidepoolContext {
 	/** The resolved `animations` setting. */
 	motionSetting: MotionSetting;
 	theme: TidepoolTheme;
+	/** The host's live symbol preset (see `../glyph-presets.ts`). */
+	glyphPreset: SymbolPreset;
 	setWidget(key: string, content: ExtensionWidgetContent, options?: ExtensionWidgetOptions): void;
 }
 
@@ -164,7 +166,9 @@ export class RateLimitTidepoolController {
 		}
 		if (this.#mount.mode === "off") {
 			const snapshot = this.#state.snapshot();
-			if (snapshot) ctx.setWidget(WIDGET_KEY, [renderTidepoolOffText(snapshot)], this.#widgetOptions);
+			if (snapshot) {
+				ctx.setWidget(WIDGET_KEY, [renderTidepoolOffText(snapshot, ctx.glyphPreset)], this.#widgetOptions);
+			}
 		}
 		// Animated mode: the shared AnimationHost's next tick re-renders from the mutated state.
 	}
@@ -173,7 +177,9 @@ export class RateLimitTidepoolController {
 		const policy = new MotionPolicy({ hasUI: ctx.hasUI, isTTY: ctx.isTTY, env: ctx.env }, ctx.motionSetting);
 		if (policy.tier === "off") {
 			const snapshot = this.#state.snapshot();
-			if (snapshot) ctx.setWidget(WIDGET_KEY, [renderTidepoolOffText(snapshot)], this.#widgetOptions);
+			if (snapshot) {
+				ctx.setWidget(WIDGET_KEY, [renderTidepoolOffText(snapshot, ctx.glyphPreset)], this.#widgetOptions);
+			}
 			return { mode: "off" };
 		}
 
@@ -181,11 +187,21 @@ export class RateLimitTidepoolController {
 		const host = new AnimationHost({ policy, backpressure: backpressure.signal, scheduler: this.#scheduler });
 		const state = this.#state;
 		const clock = this.#scheduler;
+		const glyphPreset = ctx.glyphPreset;
 		ctx.setWidget(
 			WIDGET_KEY,
 			(tui, theme) => {
 				backpressure.attach(tui);
-				return new TidepoolWidget({ tui, host, policy, state, theme, clock, accentColor: this.#accentColor });
+				return new TidepoolWidget({
+					tui,
+					host,
+					policy,
+					state,
+					theme,
+					clock,
+					accentColor: this.#accentColor,
+					glyphPreset,
+				});
 			},
 			this.#widgetOptions,
 		);

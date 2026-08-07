@@ -8,7 +8,7 @@ import type {
 	MessageEndEvent,
 	SessionSwitchEvent,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
-import type { ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { SymbolPreset, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import type { BackpressureSignal, FrameScheduler, MotionSetting } from "../kit";
 import { AnimationHost, backpressureFromTui, DEFAULT_FRAME_SCHEDULER, MotionPolicy } from "../kit";
 import { CacheMeterState, type CacheRequestSample } from "./state";
@@ -39,6 +39,8 @@ export interface CacheMeterContext {
 	/** The resolved `animations` setting. */
 	motionSetting: MotionSetting;
 	theme: CacheMeterTheme;
+	/** The host's live symbol preset (see `../glyph-presets.ts`). */
+	glyphPreset: SymbolPreset;
 	setWidget(key: string, content: ExtensionWidgetContent, options?: ExtensionWidgetOptions): void;
 }
 
@@ -157,10 +159,11 @@ export class CacheMeterController {
 	}
 
 	/** The slash command's panel: the whole session ledger, grouped by provider+model. */
-	panel(ctx: Pick<CacheMeterContext, "theme">): readonly string[] {
+	panel(ctx: Pick<CacheMeterContext, "theme" | "glyphPreset">): readonly string[] {
 		return renderCacheMeterPanel(this.#state.snapshot(), ctx.theme, {
 			colors: this.#colors,
 			now: this.#scheduler.now(),
+			preset: ctx.glyphPreset,
 		});
 	}
 
@@ -183,7 +186,11 @@ export class CacheMeterController {
 			return;
 		}
 		if (this.#mount.mode === "static") {
-			ctx.setWidget(WIDGET_KEY, [renderCacheMeterOffText(this.#state.snapshot())], this.#widgetOptions);
+			ctx.setWidget(
+				WIDGET_KEY,
+				[renderCacheMeterOffText(this.#state.snapshot(), ctx.glyphPreset)],
+				this.#widgetOptions,
+			);
 		}
 		// Animated mode: the widget's own frame subscription re-renders from the shared state.
 	}
@@ -191,7 +198,11 @@ export class CacheMeterController {
 	#mountWidget(ctx: CacheMeterContext): Mount {
 		const policy = new MotionPolicy({ hasUI: ctx.hasUI, isTTY: ctx.isTTY, env: ctx.env }, ctx.motionSetting);
 		if (policy.tier === "off") {
-			ctx.setWidget(WIDGET_KEY, [renderCacheMeterOffText(this.#state.snapshot())], this.#widgetOptions);
+			ctx.setWidget(
+				WIDGET_KEY,
+				[renderCacheMeterOffText(this.#state.snapshot(), ctx.glyphPreset)],
+				this.#widgetOptions,
+			);
 			return { mode: "static" };
 		}
 
@@ -199,11 +210,21 @@ export class CacheMeterController {
 		const host = new AnimationHost({ policy, backpressure: backpressure.signal, scheduler: this.#scheduler });
 		const state = this.#state;
 		const clock = this.#scheduler;
+		const glyphPreset = ctx.glyphPreset;
 		ctx.setWidget(
 			WIDGET_KEY,
 			(tui, theme) => {
 				backpressure.attach(tui);
-				return new CacheMeterWidget({ tui, host, policy, state, theme, clock, accentColor: this.#accentColor });
+				return new CacheMeterWidget({
+					tui,
+					host,
+					policy,
+					state,
+					theme,
+					clock,
+					accentColor: this.#accentColor,
+					glyphPreset,
+				});
 			},
 			this.#widgetOptions,
 		);

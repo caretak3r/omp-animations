@@ -1,4 +1,4 @@
-import type { Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { SymbolPreset, Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import type { AnimatedWidgetOptions, FrameScheduler, MotionPolicy } from "../kit";
 import { AnimatedWidget } from "../kit";
 import {
@@ -68,12 +68,13 @@ export function renderBreathingBorderRow(
 	tier: "full" | "subtle",
 	travelPos?: number,
 	colors: BreathingBorderColors = BREATHING_BORDER_COLORS,
+	preset: SymbolPreset = "unicode",
 ): string {
 	if (width <= 0) return "";
 	const token = resolveBorderColor(brightnessToken(envelope), colors);
 
 	if (tier === "subtle") {
-		const glyph = brightnessGlyph(envelope);
+		const glyph = brightnessGlyph(envelope, preset);
 		if (width === 1) return theme.fg(token, glyph);
 		const middle = BORDER_CHAR.repeat(width - 2);
 		return theme.fg(token, glyph) + theme.fg(colors.muted, middle) + theme.fg(token, glyph);
@@ -83,7 +84,7 @@ export function renderBreathingBorderRow(
 		return theme.fg(token, BORDER_CHAR.repeat(width));
 	}
 	const pos = Math.min(Math.max(travelPos, 0), width - 1);
-	const glyph = brightnessGlyph(envelope);
+	const glyph = brightnessGlyph(envelope, preset);
 	const before = BORDER_CHAR.repeat(pos);
 	const after = BORDER_CHAR.repeat(width - pos - 1);
 	return theme.fg(colors.muted, before) + theme.fg(token, glyph) + theme.fg(colors.muted, after);
@@ -125,6 +126,8 @@ export interface BreathingBorderWidgetOptions extends AnimatedWidgetOptions {
 	onSettled: () => void;
 	/** Accent override for the primary accent slot (the peak brightness); `undefined` keeps the built-in palette. */
 	accentColor?: ThemeColor;
+	/** The host's live symbol preset; `undefined` keeps the `"unicode"` default (see `../glyph-presets.ts`). */
+	glyphPreset?: SymbolPreset;
 }
 
 /**
@@ -147,6 +150,7 @@ export class BreathingBorderWidget extends AnimatedWidget {
 	#clock: BreathingBorderClock;
 	#onSettled: () => void;
 	#colors: BreathingBorderColors;
+	#glyphPreset: SymbolPreset;
 
 	constructor(options: BreathingBorderWidgetOptions) {
 		super(options);
@@ -156,6 +160,7 @@ export class BreathingBorderWidget extends AnimatedWidget {
 		this.#clock = options.clock;
 		this.#onSettled = options.onSettled;
 		this.#colors = breathingBorderColors(options.accentColor);
+		this.#glyphPreset = options.glyphPreset ?? "unicode";
 	}
 
 	onFrame(_elapsedMs: number): void {
@@ -179,12 +184,16 @@ export class BreathingBorderWidget extends AnimatedWidget {
 				const elapsed = this.#state.breathElapsedMs(now);
 				const envelope = breathEnvelope(elapsed, period);
 				const travelPos = tier === "full" ? pulsePosition(elapsed, period, width) : undefined;
-				return [renderBreathingBorderRow(envelope, width, this.#theme, tier, travelPos, this.#colors)];
+				return [
+					renderBreathingBorderRow(envelope, width, this.#theme, tier, travelPos, this.#colors, this.#glyphPreset),
+				];
 			}
 			case "exhaling": {
 				const elapsed = this.#state.exhaleElapsedMs(now);
 				const envelope = exhaleEnvelope(elapsed, EXHALE_DURATION_MS);
-				return [renderBreathingBorderRow(envelope, width, this.#theme, tier, undefined, this.#colors)];
+				return [
+					renderBreathingBorderRow(envelope, width, this.#theme, tier, undefined, this.#colors, this.#glyphPreset),
+				];
 			}
 		}
 	}

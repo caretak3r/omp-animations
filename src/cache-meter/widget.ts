@@ -36,8 +36,9 @@
  *   isn't just "the numbers went up," and so the one thing worth a distinct
  *   visual cue.
  */
-import type { Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { SymbolPreset, Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import { formatAge, formatNumber } from "@oh-my-pi/pi-utils";
+import { resolveGlyph } from "../glyph-presets";
 import type { AnimatedWidgetOptions, FrameScheduler, MotionPolicy } from "../kit";
 import { AnimatedWidget } from "../kit";
 import type { CacheEventCause, CacheInvalidationRecord, CacheMeterSnapshot } from "./state";
@@ -77,17 +78,23 @@ export function cacheMeterColors(accentColor?: ThemeColor): CacheMeterColors {
 	return accentColor === undefined ? CACHE_METER_COLORS : { ...CACHE_METER_COLORS, badge: accentColor };
 }
 
-/** Resting badge glyph. */
-export const BADGE_GLYPH = "▤";
-/** Hollow badge shown on the off-beat of the invalidation blink (`full` motion tier only). */
-export const BADGE_PULSE_GLYPH = "▥";
+/** Resting badge glyph, resolved for `preset` via `../glyph-presets.ts`. Defaults to `"unicode"` — the original hardcoded value. */
+export function badgeGlyph(preset: SymbolPreset = "unicode"): string {
+	return resolveGlyph("cacheMeter.badge", preset);
+}
+/** Hollow badge shown on the off-beat of the invalidation blink (`full` motion tier only), resolved for `preset`. */
+export function badgePulseGlyph(preset: SymbolPreset = "unicode"): string {
+	return resolveGlyph("cacheMeter.badgePulse", preset);
+}
 /**
- * Invalidation-count glyph. Matches the host's own default icon for this exact
- * concept (`icon.cacheMiss`, `modes/theme/theme.ts`) — this package only ever
- * consumes `theme.fg`, never `theme.icon`, so the glyph is reproduced directly
+ * Invalidation-count glyph, resolved for `preset`. Matches the host's own default icon
+ * for this exact concept (`icon.cacheMiss`, `modes/theme/theme.ts`) — this package only
+ * ever consumes `theme.fg`, never `theme.icon`, so the glyph is reproduced directly
  * rather than threaded through a wider theme slice for one symbol.
  */
-export const INVALIDATION_GLYPH = "⊘";
+export function invalidationGlyph(preset: SymbolPreset = "unicode"): string {
+	return resolveGlyph("cacheMeter.invalidation", preset);
+}
 
 /** Full period of the invalidation blink, in ms. */
 export const INVALIDATION_BLINK_PERIOD_MS = 600;
@@ -126,16 +133,22 @@ function paint(cells: readonly Cell[], theme: CacheMeterTheme): string {
  * and the `full` motion tier additionally blinks the glyph between filled and
  * hollow, mirroring Audit Trail Box's alarm-pulse badge.
  */
-function badgeCell(alerted: boolean, elapsedMs: number, tier: "full" | "subtle", colors: CacheMeterColors): Cell {
+function badgeCell(
+	alerted: boolean,
+	elapsedMs: number,
+	tier: "full" | "subtle",
+	colors: CacheMeterColors,
+	preset: SymbolPreset,
+): Cell {
 	const blinking = tier === "full" && alerted && !invalidationBlink(elapsedMs);
 	return {
-		text: blinking ? BADGE_PULSE_GLYPH : BADGE_GLYPH,
+		text: blinking ? badgePulseGlyph(preset) : badgeGlyph(preset),
 		color: alerted ? colors.invalidation : colors.badge,
 	};
 }
 
-function invalidationCells(count: number, colors: CacheMeterColors): readonly Cell[] {
-	return count > 0 ? [{ text: `${INVALIDATION_GLYPH}${count}`, color: colors.invalidation }] : [];
+function invalidationCells(count: number, colors: CacheMeterColors, preset: SymbolPreset): readonly Cell[] {
+	return count > 0 ? [{ text: `${invalidationGlyph(preset)}${count}`, color: colors.invalidation }] : [];
 }
 
 /**
@@ -207,10 +220,11 @@ export function renderCacheMeterRow(
 	displayWarmth: number = snapshot.warmth,
 	alerted = false,
 	colors: CacheMeterColors = CACHE_METER_COLORS,
+	preset: SymbolPreset = "unicode",
 ): string {
 	if (width <= 0) return "";
 
-	const badge = badgeCell(alerted, elapsedMs, tier, colors);
+	const badge = badgeCell(alerted, elapsedMs, tier, colors, preset);
 	if (snapshot.promptTokens === 0) {
 		const idle: readonly Cell[] = [badge, { text: IDLE_TEXT, color: colors.label }];
 		return cellsWidth(idle) <= width ? paint(idle, theme) : paint([badge], theme);
@@ -220,7 +234,7 @@ export function renderCacheMeterRow(
 	const read = formatNumber(snapshot.cacheReadTokens);
 	const write = formatNumber(snapshot.cacheWriteTokens);
 	const miss = formatNumber(snapshot.missTokens);
-	const invalidations = invalidationCells(snapshot.invalidationCount, colors);
+	const invalidations = invalidationCells(snapshot.invalidationCount, colors, preset);
 	const sparkline: Cell = { text: warmthSparkline(snapshot.warmthWindow), color: colors.hit };
 	// The savings figure leads when it's known — it's the number a human acts
 	// on. When it isn't (no group has ever derived a full-price rate), both
@@ -266,18 +280,19 @@ export function renderCacheMeterRow(
  * figure to show — a session with no cost telemetry (or a $0 one) stays as
  * quiet as it always has.
  */
-export function renderCacheMeterOffText(snapshot: CacheMeterSnapshot): string {
-	if (snapshot.promptTokens === 0) return `${BADGE_GLYPH} ${IDLE_TEXT}`;
+export function renderCacheMeterOffText(snapshot: CacheMeterSnapshot, preset: SymbolPreset = "unicode"): string {
+	const badge = badgeGlyph(preset);
+	if (snapshot.promptTokens === 0) return `${badge} ${IDLE_TEXT}`;
 	const pct = `${(snapshot.hitRate * 100).toFixed(1)}%`;
 	const parts = [
-		`${BADGE_GLYPH} HIT ${pct} (${snapshot.hitCount}/${snapshot.requestCount})`,
+		`${badge} HIT ${pct} (${snapshot.hitCount}/${snapshot.requestCount})`,
 		`R ${formatNumber(snapshot.cacheReadTokens)}`,
 		`W ${formatNumber(snapshot.cacheWriteTokens)}`,
 		`M ${formatNumber(snapshot.missTokens)}`,
 	];
 	if (snapshot.costTotal > 0) parts.push(formatCost(snapshot.costTotal));
 	if (snapshot.savedCost !== undefined) parts.push(`saved ${formatCost(snapshot.savedCost)}`);
-	if (snapshot.invalidationCount > 0) parts.push(`${INVALIDATION_GLYPH}${snapshot.invalidationCount}`);
+	if (snapshot.invalidationCount > 0) parts.push(`${invalidationGlyph(preset)}${snapshot.invalidationCount}`);
 	return parts.join(" ");
 }
 
@@ -285,6 +300,8 @@ export interface CacheMeterPanelOptions {
 	readonly colors?: CacheMeterColors;
 	/** Reference instant for the invalidation timeline's relative ages; defaults to `Date.now()`. The controller passes its scheduler clock so tests stay deterministic. */
 	readonly now?: number;
+	/** The host's live symbol preset (see `../glyph-presets.ts`). Defaults to `"unicode"`. */
+	readonly preset?: SymbolPreset;
 }
 
 /** Most invalidations the panel's timeline section renders, most recent first-ish (oldest of the shown set first) — older ones are noted, not silently dropped. */
@@ -309,13 +326,14 @@ function invalidationTimelineLines(
 	now: number,
 	theme: CacheMeterTheme,
 	colors: CacheMeterColors,
+	preset: SymbolPreset,
 ): readonly string[] {
 	if (invalidations.length === 0) return [];
 	const shown = invalidations.length > TIMELINE_LIMIT ? invalidations.slice(-TIMELINE_LIMIT) : invalidations;
 	const lines = shown.map(({ cause, atMs }) => {
 		const age = formatAge(Math.max(0, Math.round((now - atMs) / 1_000)));
 		const label = age === "" ? cause : `${cause} · ${age}`;
-		return `  ${theme.fg(colors.invalidation, INVALIDATION_GLYPH)} ${theme.fg(colors.label, label)}`;
+		return `  ${theme.fg(colors.invalidation, invalidationGlyph(preset))} ${theme.fg(colors.label, label)}`;
 	});
 	const omitted = totalCount - shown.length;
 	if (omitted > 0) {
@@ -338,7 +356,8 @@ export function renderCacheMeterPanel(
 	options: CacheMeterPanelOptions = {},
 ): readonly string[] {
 	const colors = options.colors ?? CACHE_METER_COLORS;
-	const heading = `${theme.fg(colors.badge, BADGE_GLYPH)} ${theme.fg(
+	const preset = options.preset ?? "unicode";
+	const heading = `${theme.fg(colors.badge, badgeGlyph(preset))} ${theme.fg(
 		colors.label,
 		`cache meter · ${snapshot.requestCount} request${snapshot.requestCount === 1 ? "" : "s"}`,
 	)}`;
@@ -351,7 +370,7 @@ export function renderCacheMeterPanel(
 		const pct = `${(group.hitRate * 100).toFixed(1)}%`;
 		const invalid =
 			group.invalidationCount > 0
-				? ` ${theme.fg(colors.invalidation, `${INVALIDATION_GLYPH}${group.invalidationCount}`)}`
+				? ` ${theme.fg(colors.invalidation, `${invalidationGlyph(preset)}${group.invalidationCount}`)}`
 				: "";
 		lines.push(
 			[
@@ -371,6 +390,7 @@ export function renderCacheMeterPanel(
 			options.now ?? Date.now(),
 			theme,
 			colors,
+			preset,
 		),
 	);
 
@@ -440,6 +460,8 @@ export interface CacheMeterWidgetOptions extends AnimatedWidgetOptions {
 	clock: CacheMeterClock;
 	/** Accent override for the primary accent slot (the badge); `undefined` keeps the built-in palette. */
 	accentColor?: ThemeColor;
+	/** The host's live symbol preset; `undefined` keeps the `"unicode"` default (see `../glyph-presets.ts`). */
+	glyphPreset?: SymbolPreset;
 }
 
 /**
@@ -459,6 +481,7 @@ export class CacheMeterWidget extends AnimatedWidget {
 	#policy: MotionPolicy;
 	#clock: CacheMeterClock;
 	#colors: CacheMeterColors;
+	#glyphPreset: SymbolPreset;
 
 	#easeFrom: number;
 	#easeTarget: number;
@@ -473,6 +496,7 @@ export class CacheMeterWidget extends AnimatedWidget {
 		this.#policy = options.policy;
 		this.#clock = options.clock;
 		this.#colors = cacheMeterColors(options.accentColor);
+		this.#glyphPreset = options.glyphPreset ?? "unicode";
 
 		const snapshot = this.#state.snapshot();
 		this.#easeFrom = snapshot.warmth;
@@ -503,7 +527,7 @@ export class CacheMeterWidget extends AnimatedWidget {
 			// Defensive: a live tier change can leave this widget mounted with no frame
 			// subscription (see AnimatedWidget#syncToTier) — render() may still be
 			// invoked (e.g. on resize), so this must degrade to the static line too.
-			return [renderCacheMeterOffText(this.#state.snapshot())];
+			return [renderCacheMeterOffText(this.#state.snapshot(), this.#glyphPreset)];
 		}
 		const now = this.#clock.now();
 		const tier = this.#policy.tier === "full" ? "full" : "subtle";
@@ -518,6 +542,7 @@ export class CacheMeterWidget extends AnimatedWidget {
 				this.#displayWarmth(now),
 				alerted,
 				this.#colors,
+				this.#glyphPreset,
 			),
 		];
 	}
