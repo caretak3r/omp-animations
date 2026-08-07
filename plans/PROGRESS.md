@@ -475,3 +475,123 @@ model-weather-vane}.test.ts` were NOT touched (kept in place, unregistered only,
 maintainer's directive); the 8 non-borderline retained animations' + `goalHorizon`'s +
 `agentFleet`'s own render/controller code was not touched (only registrar/manifest/barrel wiring
 changed); `src/kit/**` untouched.
+
+## Plan 017 — Animations Box: dxi.2 port scaffolding + cache-meter segment
+
+**Status: DONE** (scoped to `oh-my-pi-dxi.2` — cache-meter segment only; the remaining six
+keepers, breathing-border chrome, composition/width goldens, and registrar/manifest wiring are
+`dxi.3`–`dxi.7`, out of scope here)
+
+- **`src/kit/segment.ts` (new):** ported 1:1 from `/tmp/anim-livebox/src/kit/segment.ts` —
+  `Segment`, `segment()` (derives `minWidth` from the narrowest/last variant), `SEGMENT_SEPARATOR`
+  (`" · "`), `composeSegments(segments, budget): ComposedRow` (drop lowest-priority from the tail
+  until the narrowest variants fit, then upgrade widest-affordable in ascending priority order).
+  Byte-identical to the source; re-exported from `src/kit/index.ts`.
+- **`src/animations-box/settings.ts` (new, reworked per spec Decision 3, not a straight port):**
+  `BOX_SEGMENT_IDS` (the 7 keepers, priority order: cacheMeter, cadenceEqualizer, auditTrailBox,
+  rateLimitTidepool, toolConstellation, palimpsest, reflectionRipple); `BOX_MIGRATED_ANIMATION_IDS`
+  derived as `[...BOX_SEGMENT_IDS, "breathingBorder"]` (not a second hand-written 8-id list, to
+  keep the two arrays impossible to drift apart). Config shape: `display` (`rows|box|both`,
+  default `box`, env `OMP_ANIMATIONS_DISPLAY`), `animationsBoxDetail` (`simple|detailed`, default
+  `detailed`, no `off` value), `animationsBoxPlacement` (`aboveEditor|belowEditor`, default
+  `belowEditor`). `animationsBoxOnly` and the old `off` detail value are gone entirely — no dead
+  states. `PLUGIN_NAME` duplicated locally (matches `registrar.ts`'s own constant) rather than
+  imported, so `registrar.ts` never has to import this module back once `dxi.7` wires it in.
+  `resolveAnimationsBoxConfigFromSources(pluginSettings, env)` keeps stored > env > default
+  precedence for all three enum keys.
+- **Deviation, evidence-backed — `AnimationsBoxConfig` gained a 4th field, `enabled`, not in
+  Phase-1's shape.** The task brief says `segmentActive(config, id)` should read "the existing
+  per-animation boolean keys" (e.g. `cacheMeter: true`, the same key that gates the standalone
+  row) rather than Phase-1's dropped `only` subset list. That requires the resolved config to
+  carry a per-segment enabled map somewhere, since `segmentActive`'s signature stays
+  `(config, id) => boolean`. Added `enabled: Readonly<Record<BoxSegmentId, boolean>>`, resolved in
+  `resolveAnimationsBoxConfigFromSources` using the exact same key/env pair (`raw[id]` /
+  `animationsEnvKey(id)`, imported from `../appearance.ts`, not re-derived) the registrar's own
+  `resolveAnimationsConfig` already uses for that animation's standalone-row boolean — one enable
+  decision, two consumers. `segmentActive(config, id)` is then a one-line `config.enabled[id]`
+  read. Verified: `test/animations-box-settings.test.ts` — "resolves each segment's enable boolean
+  through the SAME key/env pair its standalone row already uses" and "a stored false beats an env
+  true for the same segment."
+- **`src/animations-box/segments.ts` (new, cache-meter only):** kept `INACTIVE`, `dedupe()`,
+  `buildCacheMeterSegment` + a local `formatCost` copy (cache-meter's own `formatCost` is not
+  exported from its barrel — verified via `grep -n "formatCost" src/cache-meter/*.ts`). Deleted
+  the other five Phase-1 builders (context/driftBuoy/fourHands/promptCharge/sessionStrata) along
+  with their imports entirely — `grep -rn "drift-buoy\|four-hands\|prompt-charge\|session-strata\|
+  context-weather" src/animations-box/` returns zero matches. Active gate:
+  `snapshot().promptTokens > 0`; variants via `renderCacheMeterRow` at budgets 999/40/18/3,
+  deduped; `priority` derived as `BOX_SEGMENT_IDS.indexOf("cacheMeter") + 1` rather than a literal
+  `1`, so it can't drift from the settings module's own ordering.
+- **Deviation, evidence-backed — `SegmentSample.detail` is now always a `SegmentDetail` (dropped
+  the `| undefined` Phase-1 had for the inactive case), and `INACTIVE` no longer includes a
+  `detail: undefined` field.** Required by Decision 5's own text, not invented: "enabled-but-idle
+  segments get a dim resting row (`glyph · label · —`), not absence." A widget that must draw a
+  resting row for an inactive segment needs real column text to draw, so `buildCacheMeterSegment`'s
+  idle branch now returns `detail: { glyph: theme.fg("dim", BADGE_GLYPH), label: "cache",
+  primary: "—", secondary: "", trailing: "" }` instead of `detail: undefined`. This keeps all
+  segment-specific knowledge (glyph, label, resting text) inside `segments.ts`, leaving
+  `widget.ts` a pure renderer with zero segment-specific logic of its own — the same separation
+  Phase-1's widget already had, just extended to cover the resting case too.
+- **`src/animations-box/widget.ts` (new, chrome ported + ADAPTED per Decision 5):** `BORDER_COLS`
+  = 4, `BORDER_ROWS` = 2, `cell()` (pad/truncate via `truncateToWidth`/`visibleWidth`),
+  `borderTop`/`borderBottom` (`╭─╮`/`╰─╯`), `detailRowText` (glyph 6 · label 8 · primary 8 ·
+  secondary 12 · 4 gutters · trailing = `inner − 38`) all ported unchanged. The adaptation:
+  `renderFrame` no longer filters samples to `active` before the detailed-mode branch (Phase-1
+  did: `buildSamples(now).filter(s => s.active)`) — every ENABLED sample gets one row in detailed
+  mode regardless of activity, and simple mode still composes only the `active` ones into its one
+  strip. Height is therefore `samples.length` (detailed) or a fixed 3 (simple), never a function
+  of runtime activity. Golden frame at width 69 (inner 65, trailing 27) for a single resting
+  cache-meter segment is pinned exactly in `test/animations-box-widget.test.ts`.
+- **`src/animations-box/controller.ts` (new, skeleton, cache-meter only):** widget key
+  `oh-my-pi-animations-box` (not Phase-1's `animations-live-box`, not cache-meter's own
+  `cache-meter` — namespaced per the key-collision memory the task brief named). Constructs a
+  FRESH `CacheMeterState` (never `CacheMeterController`'s instance or the controller itself — see
+  the module's own doc comment for why, ported from Phase-1's rationale). One `FrameScheduler`
+  (`this.#scheduler`) stamps both `recordUsage`/`recordEvent` timestamps and is the same clock
+  object handed to the widget as `clock`, satisfying Decision 4 (one epoch wall clock for both
+  state stamps and renders — never the host's mount-relative `elapsedMs`). Wired: `onMessageEnd`,
+  `onSessionCompact`, `onAutoCompactionStart`, `onSessionSwitch` (resets `#cacheMeterState` to a
+  fresh instance without tearing down the mount — mirrors `CacheMeterController`'s
+  `session_switch → dispose()` per the brief), `mount()`/`dispose()`.
+- **Scope call, not a deviation from anything explicitly requested — omitted Phase-1's
+  `onTurnEnd`/`#refreshConfig` live-settings-reread loop.** The task's itemized controller.ts scope
+  (construct fresh state, subscribe to its events, one clock) never mentions live config refresh;
+  it's orthogonal to "cache-meter segment wired" (Phase-1 combined it with Four Hands/Session
+  Strata's own turn_end-triggered state changes, both cut here). `initialConfig` is a required
+  constructor option and stays fixed for the controller's lifetime in this bead — reasonable since
+  nothing calls `mount()` from the registrar yet (`dxi.7`). Flagged here rather than silently
+  dropped in case `dxi.7`'s registrar wiring expects to find it.
+- **Also omitted (same reasoning):** `getEditorText`/`getContextUsage`/`cwd` on
+  `AnimationsBoxContext` (only needed by the five cut segments' controllers) and the
+  `readPluginSettings` constructor option (only needed by the omitted refresh loop).
+- **Tests (all new):** `test/kit/segment.test.ts` (10 — `segment()`'s minWidth derivation,
+  `composeSegments`'s drop/upgrade logic at literal widths including a golden 3-segment
+  composition at budget 65, i.e. width 69 minus the box's 4 border columns);
+  `test/animations-box-settings.test.ts` (17 — id-list correctness derived from
+  `ANIMATIONS`/never a hardcoded 7 or 8, resolver defaults/precedence, the dropped
+  `animationsBoxOnly`/`off` states, `segmentActive`); `test/animations-box-segments.test.ts` (12 —
+  resting vs. active row content, dedupe, saved-cost vs. hit/req fallback, priority derivation);
+  `test/animations-box-widget.test.ts` (13 — border/zero-width guards, detailed-mode height =
+  enabled count not active count, the width-69 golden resting-row frame, simple-mode fixed 3 rows,
+  truncation safety net, lifecycle/onTick); `test/animations-box-controller.test.ts` (12 — mount
+  idempotency/placement, dispose teardown, end-to-end state wiring verified by building the real
+  widget from the captured `setWidget` factory and reading `renderFrame()`, the enabled-gate
+  hiding a disabled segment entirely). Total 64 new tests, all pinned against exact hand-computed
+  values (no snapshot tests).
+- **Verified zero imports of any cut animation:** `grep -rln "drift-buoy\|four-hands\|
+  prompt-charge\|session-strata\|context-weather" src/animations-box/` returns nothing; the box
+  does not mount from anywhere yet — `grep -rn "AnimationsBoxController\|animations-box"
+  src/registrar.ts src/index.ts package.json` returns nothing (confirms `dxi.7` is untouched).
+
+**Gate:** `bun test && bun run check:types && biome check .` — **758 pass / 0 fail / 2497
+assertions / 23 files** (baseline immediately before this bead's tests, on the same tree with the
+5 new source files already present but unimported by any test, was 694 pass / 18 files; +64 new
+tests across the 5 new test files matches exactly). tsgo and biome both clean.
+
+**Files touched:** `src/kit/segment.ts` (new), `src/kit/index.ts` (+1 export line),
+`src/animations-box/settings.ts` (new), `src/animations-box/segments.ts` (new),
+`src/animations-box/widget.ts` (new), `src/animations-box/controller.ts` (new),
+`test/kit/segment.test.ts` (new), `test/animations-box-settings.test.ts` (new),
+`test/animations-box-segments.test.ts` (new), `test/animations-box-widget.test.ts` (new),
+`test/animations-box-controller.test.ts` (new), `plans/PROGRESS.md` (this entry). No existing
+file besides `src/kit/index.ts` was modified; nothing in `src/registrar.ts`, `package.json`, or
+any of the 8 keeper animations' own directories was touched.
