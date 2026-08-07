@@ -6,6 +6,8 @@
  * inputs — no wall-clock reads — so frames are byte-stable given an injected
  * clock.
  */
+import type { SymbolPreset } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import { resolveGlyphRamp } from "../glyph-presets";
 
 /** Default full inhale+exhale cycle while the agent is actively working. */
 export const BASE_BREATH_PERIOD_MS = 8000;
@@ -68,12 +70,17 @@ export function pulsePosition(elapsedMs: number, periodMs: number, width: number
 	return Math.min(width - 1, Math.floor(phase * width));
 }
 
-const GLYPH_RAMP = ["·", "─", "━", "█"] as const;
-
-/** Bucket a 0..1 brightness into a border-weight glyph, dimmest to heaviest. Non-finite input (e.g. `NaN`) falls back to the dimmest glyph rather than an out-of-bounds lookup. */
-export function brightnessGlyph(brightness: number): string {
-	const idx = Math.min(GLYPH_RAMP.length - 1, Math.max(0, Math.floor(brightness * GLYPH_RAMP.length)));
-	return GLYPH_RAMP[idx] ?? GLYPH_RAMP[0];
+/**
+ * Bucket a 0..1 brightness into a border-weight glyph, dimmest to heaviest, resolved
+ * for `preset` via `../glyph-presets.ts` (`GLYPH_RAMP`'s original hardcoded values live
+ * there now as the `unicode` tier). Non-finite input (e.g. `NaN`) falls back to the
+ * dimmest glyph rather than an out-of-bounds lookup. Defaults to `"unicode"` — today's
+ * hardcoded ramp — for every caller that doesn't yet thread a live preset through.
+ */
+export function brightnessGlyph(brightness: number, preset: SymbolPreset = "unicode"): string {
+	const ramp = resolveGlyphRamp(preset);
+	const idx = Math.min(ramp.length - 1, Math.max(0, Math.floor(brightness * ramp.length)));
+	return ramp[idx] ?? ramp[0];
 }
 
 export type BorderBrightnessToken = "borderMuted" | "border" | "borderAccent";

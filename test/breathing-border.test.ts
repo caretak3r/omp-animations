@@ -622,6 +622,33 @@ describe("breathing border hardening: adversarial/non-finite inputs", () => {
 		// so it degrades to a valid (if surprising) token rather than corrupting text.
 		expect(brightnessToken(Number.NaN)).toBe("borderAccent");
 	});
+});
+
+describe("brightnessGlyph — glyph preset", () => {
+	it("defaults to the unicode ramp when no preset is passed, matching the original hardcoded GLYPH_RAMP values", () => {
+		expect(brightnessGlyph(0)).toBe("·");
+		expect(brightnessGlyph(0.3)).toBe("─");
+		expect(brightnessGlyph(0.6)).toBe("━");
+		expect(brightnessGlyph(1)).toBe("█");
+	});
+
+	it("resolves the same ramp for an explicit 'unicode' preset", () => {
+		expect(brightnessGlyph(0, "unicode")).toBe("·");
+		expect(brightnessGlyph(1, "unicode")).toBe("█");
+	});
+
+	it("swaps to the ascii ramp for 'ascii', dimmest to heaviest", () => {
+		expect(brightnessGlyph(0, "ascii")).toBe(".");
+		expect(brightnessGlyph(0.3, "ascii")).toBe("-");
+		expect(brightnessGlyph(0.6, "ascii")).toBe("=");
+		expect(brightnessGlyph(1, "ascii")).toBe("#");
+	});
+
+	it("'nerd' aliases 'unicode' exactly", () => {
+		for (const brightness of [0, 0.3, 0.6, 1]) {
+			expect(brightnessGlyph(brightness, "nerd")).toBe(brightnessGlyph(brightness, "unicode"));
+		}
+	});
 
 	it("breathEnvelope/exhaleEnvelope propagate NaN for a NaN clock or period rather than silently clamping", () => {
 		expect(breathEnvelope(Number.NaN, BASE_BREATH_PERIOD_MS)).toBeNaN();

@@ -10,7 +10,7 @@
  * restart-required posture as the enable/tier settings); there is no live re-read.
  */
 import type { WidgetPlacement } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
-import type { ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { SymbolPreset, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 
 /**
  * Curated accent palette: a deliberate subset of the host's `ThemeColor` union —
@@ -50,6 +50,16 @@ export interface AnimationAppearance {
 	placement: WidgetPlacement;
 	/** Accent override for the animation's primary accent slot; `undefined` keeps the built-in palette. */
 	accentColor: AccentColor | undefined;
+	/**
+	 * Glyph preset for this animation's Unicode literals (see `../glyph-presets.ts`).
+	 * Unlike `placement`/`accentColor`, this is not resolved from `pluginSettings`/`env`
+	 * — it's not a user-facing setting, it mirrors the host's own global symbol preset
+	 * (`ExtensionContext.ui.theme.getSymbolPreset()`), which only exists inside event
+	 * handlers. `resolveAnimationAppearance` takes it as a plain pass-through parameter
+	 * instead of deriving it itself, defaulting to `"unicode"` — the host's own default
+	 * and today's hardcoded glyphs — for every caller that doesn't thread a live value.
+	 */
+	glyphPreset: SymbolPreset;
 }
 
 /** `diffBloom` -> `diffBloomPlacement` (flat manifest key — `PluginManifest.settings` does not nest). */
@@ -81,21 +91,24 @@ function resolveAccentColor(raw: unknown): AccentColor | undefined {
 
 /**
  * Resolve one animation's appearance from a flat plugin-settings record and env
- * fallbacks. Precedence per key: stored setting > env fallback > default
- * (nullish coalescing — a stored `null`/`undefined` falls through to the env
- * var, matching the registrar's enable/tier machinery). Unknown or malformed
- * values fall back to the defaults rather than throwing.
+ * fallbacks, plus the host's live glyph preset. Precedence per key: stored setting >
+ * env fallback > default (nullish coalescing — a stored `null`/`undefined` falls
+ * through to the env var, matching the registrar's enable/tier machinery). Unknown or
+ * malformed values fall back to the defaults rather than throwing. `glyphPreset` sits
+ * outside that settings/env precedence chain entirely — see `AnimationAppearance`'s doc.
  */
 export function resolveAnimationAppearance(
 	id: string,
 	defaultPlacement: WidgetPlacement,
 	pluginSettings: Record<string, unknown> = {},
 	env: Record<string, string | undefined> = Bun.env,
+	glyphPreset: SymbolPreset = "unicode",
 ): AnimationAppearance {
 	const placementRaw = pluginSettings[placementKey(id)] ?? env[animationsEnvKey(id, "PLACEMENT")];
 	const accentRaw = pluginSettings[accentColorKey(id)] ?? env[animationsEnvKey(id, "ACCENT_COLOR")];
 	return {
 		placement: resolveEnum(placementRaw, PLACEMENT_VALUES, defaultPlacement),
 		accentColor: resolveAccentColor(accentRaw),
+		glyphPreset,
 	};
 }

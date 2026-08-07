@@ -21,7 +21,7 @@
  * never the host `AnimatedWidget`'s mount-relative `elapsedMs` (Decision 4).
  */
 import { basename } from "node:path";
-import type { Theme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { SymbolPreset, Theme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import { formatNumber } from "@oh-my-pi/pi-utils";
 import {
 	BADGE_GLYPH as AUDIT_BADGE_GLYPH,
@@ -53,6 +53,7 @@ import {
 // a deep import, not a reinvented constant, since editing that barrel is a
 // keeper-directory change out of this bead's scope (see `dxi.4`'s report).
 import { MAX_REFERENCE_RATE } from "../cadence-equalizer/scale";
+import { resolveGlyph } from "../glyph-presets";
 import {
 	GLOW_THRESHOLD,
 	PALIMPSEST_COLORS,
@@ -310,9 +311,6 @@ export function buildAuditTrailBoxSegment(
 	};
 }
 
-/** Rate-Limit Tidepool exports no badge glyph of its own — only bar-fill glyphs (`WATER_GLYPH`/`WATER_SHIMMER_GLYPH`/`PEBBLE_GLYPH`/`SAND_GLYPH`) parametrized by tier and animation phase. This is the box's own literal badge, matching Plan 017 Decision 1's table row (same precedent as `PALIMPSEST_GLYPH` below). */
-const TIDEPOOL_BADGE_GLYPH = "◗";
-
 /** `resets <N>m`/`resets <N>s`-style ETA to the binding bucket's reset, or `""` when the response reported none. */
 function resetEtaLabel(resetAtMs: number | undefined, now: number): string {
 	if (resetAtMs === undefined) return "";
@@ -338,14 +336,22 @@ function resetEtaLabel(resetAtMs: number | undefined, now: number): string {
  * regardless of `colors` — `TidepoolColors`/`tidepoolColors` only ever
  * override the `water` slot, so an accent override recolors the water alone,
  * exactly as the standalone widget's own accent contract promises.
+ *
+ * Rate-Limit Tidepool exports no badge glyph of its own — only bar-fill glyphs
+ * (`WATER_GLYPH`/`WATER_SHIMMER_GLYPH`/`PEBBLE_GLYPH`/`SAND_GLYPH`) parametrized by tier
+ * and animation phase. `box.limits` (`../glyph-presets.ts`) is this box's own literal
+ * badge, matching Plan 017 Decision 1's table row (same precedent as `box.files`/
+ * `box.reflect` below) — now preset-aware instead of a bare hardcoded `"◗"`.
  */
 export function buildRateLimitTidepoolSegment(
 	state: RateLimitTidepoolState,
 	now: number,
 	theme: BoxTheme,
 	colors: TidepoolColors = TIDEPOOL_COLORS,
+	preset: SymbolPreset = "unicode",
 ): SegmentSample {
 	const priority = priorityOf("rateLimitTidepool");
+	const glyph = resolveGlyph("box.limits", preset);
 	const snapshot = state.snapshot();
 	if (snapshot === undefined) {
 		return {
@@ -353,7 +359,7 @@ export function buildRateLimitTidepoolSegment(
 			priority,
 			...INACTIVE,
 			detail: {
-				glyph: theme.fg("dim", TIDEPOOL_BADGE_GLYPH),
+				glyph: theme.fg("dim", glyph),
 				label: "limits",
 				primary: "—",
 				secondary: "",
@@ -374,7 +380,7 @@ export function buildRateLimitTidepoolSegment(
 		active: true,
 		variants,
 		detail: {
-			glyph: theme.fg(colors.water, TIDEPOOL_BADGE_GLYPH),
+			glyph: theme.fg(colors.water, glyph),
 			label: "limits",
 			primary: `${Math.round(clampedLevel * 100)}%`,
 			secondary: snapshot.provider,
@@ -451,9 +457,6 @@ export function buildToolConstellationSegment(state: ConstellationState, _now: n
 	};
 }
 
-/** Palimpsest exports no badge glyph of its own (unlike Cache Meter's badge or Audit Trail's badge) — this is the box's own literal, matching Plan 017 Decision 5's detailed-mode mock. */
-const PALIMPSEST_GLYPH = "▓";
-
 /**
  * Same recency/overlap/path ordering `renderPalimpsestRows` sorts its visible
  * rows by — reproduced here since that comparator lives inline in that
@@ -475,14 +478,21 @@ function compareVisibleRows(a: PalimpsestRow, b: PalimpsestRow): number {
  * reproduces the ember tier's per-frame hot-pulse bolding — an
  * `AnimatedWidget`-only cosmetic, the same accepted gap as Cache Meter's
  * hit-rate ease (see `controller.ts`'s module doc).
+ *
+ * Palimpsest exports no badge glyph of its own (unlike Cache Meter's badge or Audit
+ * Trail's badge) — `box.files` (`../glyph-presets.ts`) is this box's own literal,
+ * matching Plan 017 Decision 5's detailed-mode mock, now preset-aware instead of a bare
+ * hardcoded `"▓"`.
  */
 export function buildPalimpsestSegment(
 	state: PalimpsestState,
 	_now: number,
 	theme: BoxTheme,
 	colors: PalimpsestColors = PALIMPSEST_COLORS,
+	preset: SymbolPreset = "unicode",
 ): SegmentSample {
 	const priority = priorityOf("palimpsest");
+	const glyph = resolveGlyph("box.files", preset);
 	const visible = state
 		.snapshot()
 		.rows.filter(row => row.overlapCount >= GLOW_THRESHOLD)
@@ -493,7 +503,7 @@ export function buildPalimpsestSegment(
 			priority,
 			...INACTIVE,
 			detail: {
-				glyph: theme.fg("dim", PALIMPSEST_GLYPH),
+				glyph: theme.fg("dim", glyph),
 				label: "files",
 				primary: "—",
 				secondary: "",
@@ -515,7 +525,7 @@ export function buildPalimpsestSegment(
 		active: true,
 		variants,
 		detail: {
-			glyph: theme.fg(colors.ember, PALIMPSEST_GLYPH),
+			glyph: theme.fg(colors.ember, glyph),
 			label: "files",
 			primary: basename(hottest.path),
 			secondary: `×${hottest.overlapCount}`,
@@ -523,9 +533,6 @@ export function buildPalimpsestSegment(
 		},
 	};
 }
-
-/** Reflection Ripple exports no badge glyph of its own (only the phase-parametrized `ringGlyph(brightness)`) — this is the box's own literal, matching Plan 017 Decision 1's table row (same precedent as `PALIMPSEST_GLYPH`/`TIDEPOOL_BADGE_GLYPH` above). */
-const REFLECTION_RIPPLE_GLYPH = "○";
 
 /**
  * Reflection Ripple segment. Unlike every other segment in this file, its
@@ -537,14 +544,21 @@ const REFLECTION_RIPPLE_GLYPH = "○";
  * clock — the SAME clock `controller.ts` stamps `applyTrigger`'s trigger
  * timestamp with — so `state.rippleElapsedMs(now)` renders the correct phase
  * even when the trigger landed before the box's first repaint (Decision 4).
+ *
+ * Reflection Ripple exports no badge glyph of its own (only the phase-parametrized
+ * `ringGlyph(brightness)`) — `box.reflect` (`../glyph-presets.ts`) is this box's own
+ * literal, matching Plan 017 Decision 1's table row (same precedent as `box.files`/
+ * `box.limits` above), now preset-aware instead of a bare hardcoded `"○"`.
  */
 export function buildReflectionRippleSegment(
 	state: ReflectionRippleState,
 	now: number,
 	theme: BoxTheme,
 	colors: ReflectionRippleColors = REFLECTION_RIPPLE_COLORS,
+	preset: SymbolPreset = "unicode",
 ): SegmentSample {
 	const priority = priorityOf("reflectionRipple");
+	const glyph = resolveGlyph("box.reflect", preset);
 	const snapshot = state.snapshot();
 	if (snapshot.phase !== "rippling") {
 		return {
@@ -552,7 +566,7 @@ export function buildReflectionRippleSegment(
 			priority,
 			...INACTIVE,
 			detail: {
-				glyph: theme.fg("dim", REFLECTION_RIPPLE_GLYPH),
+				glyph: theme.fg("dim", glyph),
 				label: "reflect",
 				primary: "—",
 				secondary: "",
@@ -572,7 +586,7 @@ export function buildReflectionRippleSegment(
 		active: true,
 		variants,
 		detail: {
-			glyph: theme.fg(colors.ring, REFLECTION_RIPPLE_GLYPH),
+			glyph: theme.fg(colors.ring, glyph),
 			label: "reflect",
 			primary: snapshot.ruleNames.join(", "),
 			secondary: String(snapshot.triggerCount),

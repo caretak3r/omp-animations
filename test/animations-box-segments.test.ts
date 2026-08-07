@@ -486,6 +486,33 @@ describe("buildRateLimitTidepoolSegment — active row", () => {
 	});
 });
 
+describe("buildRateLimitTidepoolSegment — glyph preset", () => {
+	function pooledState(): RateLimitTidepoolState {
+		const state = new RateLimitTidepoolState();
+		state.applySample({
+			provider: "anthropic",
+			family: "anthropic",
+			level: 0.78,
+			resetAtMs: undefined,
+			observedAtMs: 0,
+		});
+		return state;
+	}
+
+	it("defaults to the unicode badge '◗' when no preset is passed", () => {
+		const sample = buildRateLimitTidepoolSegment(new RateLimitTidepoolState(), 0, idTheme);
+		expect(sample.detail.glyph).toBe("◗");
+	});
+
+	it("swaps the badge for the ascii substitute ')' when preset is 'ascii', resting and active", () => {
+		const resting = buildRateLimitTidepoolSegment(new RateLimitTidepoolState(), 0, idTheme, TIDEPOOL_COLORS, "ascii");
+		expect(resting.detail.glyph).toBe(")");
+
+		const active = buildRateLimitTidepoolSegment(pooledState(), 0, idTheme, TIDEPOOL_COLORS, "ascii");
+		expect(active.detail.glyph).toBe(")");
+	});
+});
+
 describe("buildToolConstellationSegment — priority", () => {
 	it("derives its priority from toolConstellation's position in BOX_SEGMENT_IDS, never a hardcoded literal", () => {
 		const sample = buildToolConstellationSegment(new ConstellationState(), 0, idTheme);
@@ -664,6 +691,28 @@ describe("buildPalimpsestSegment — active row", () => {
 	});
 });
 
+describe("buildPalimpsestSegment — glyph preset", () => {
+	function thrashedState(): PalimpsestState {
+		const state = new PalimpsestState();
+		state.applySpans("/repo/src/foo.ts", [{ start: 1, end: 5 }]);
+		state.applySpans("/repo/src/foo.ts", [{ start: 1, end: 5 }]);
+		return state;
+	}
+
+	it("defaults to the unicode badge '▓' when no preset is passed", () => {
+		const sample = buildPalimpsestSegment(new PalimpsestState(), 0, idTheme);
+		expect(sample.detail.glyph).toBe("▓");
+	});
+
+	it("swaps the badge for the ascii substitute '%' when preset is 'ascii', resting and active", () => {
+		const resting = buildPalimpsestSegment(new PalimpsestState(), 0, idTheme, PALIMPSEST_COLORS, "ascii");
+		expect(resting.detail.glyph).toBe("%");
+
+		const active = buildPalimpsestSegment(thrashedState(), 0, idTheme, PALIMPSEST_COLORS, "ascii");
+		expect(active.detail.glyph).toBe("%");
+	});
+});
+
 describe("buildReflectionRippleSegment — priority", () => {
 	it("derives its priority from reflectionRipple's position in BOX_SEGMENT_IDS, never a hardcoded literal", () => {
 		const sample = buildReflectionRippleSegment(new ReflectionRippleState(), 0, idTheme);
@@ -768,5 +817,32 @@ describe("buildReflectionRippleSegment — active row", () => {
 				.map(width => renderReflectionRippleRow(500, width, idTheme, "subtle", REFLECTION_RIPPLE_COLORS))
 				.filter((v, i, arr) => i === 0 || arr[i - 1] !== v),
 		);
+	});
+});
+
+describe("buildReflectionRippleSegment — glyph preset", () => {
+	function ripplingState(): ReflectionRippleState {
+		const state = new ReflectionRippleState();
+		state.applyTrigger(["myRule"], 0);
+		return state;
+	}
+
+	it("defaults to the unicode badge '○' when no preset is passed", () => {
+		const sample = buildReflectionRippleSegment(new ReflectionRippleState(), 0, idTheme);
+		expect(sample.detail.glyph).toBe("○");
+	});
+
+	it("swaps the badge for the ascii substitute 'o' when preset is 'ascii', resting and active", () => {
+		const resting = buildReflectionRippleSegment(
+			new ReflectionRippleState(),
+			0,
+			idTheme,
+			REFLECTION_RIPPLE_COLORS,
+			"ascii",
+		);
+		expect(resting.detail.glyph).toBe("o");
+
+		const active = buildReflectionRippleSegment(ripplingState(), 0, idTheme, REFLECTION_RIPPLE_COLORS, "ascii");
+		expect(active.detail.glyph).toBe("o");
 	});
 });

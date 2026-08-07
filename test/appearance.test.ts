@@ -204,6 +204,7 @@ describe("resolveAnimationAppearance", () => {
 		expect(resolveAnimationAppearance("cacheMeter", "aboveEditor", {}, {})).toEqual({
 			placement: "aboveEditor",
 			accentColor: undefined,
+			glyphPreset: "unicode",
 		});
 	});
 
@@ -275,6 +276,12 @@ describe("resolveAnimationAppearance", () => {
 		expect(placementKey("cadenceEqualizer")).toBe("cadenceEqualizerPlacement");
 		expect(accentColorKey("cadenceEqualizer")).toBe("cadenceEqualizerAccentColor");
 	});
+
+	it("defaults glyphPreset to 'unicode' and passes an explicit value straight through, outside the settings/env precedence chain", () => {
+		expect(resolveAnimationAppearance("cacheMeter", "aboveEditor", {}, {}).glyphPreset).toBe("unicode");
+		expect(resolveAnimationAppearance("cacheMeter", "aboveEditor", {}, {}, "ascii").glyphPreset).toBe("ascii");
+		expect(resolveAnimationAppearance("cacheMeter", "aboveEditor", {}, {}, "nerd").glyphPreset).toBe("nerd");
+	});
 });
 
 describe("resolveAnimationsConfig appearance", () => {
@@ -284,6 +291,7 @@ describe("resolveAnimationsConfig appearance", () => {
 			expect(config.appearance[entry.id]).toEqual({
 				placement: entry.defaultPlacement,
 				accentColor: undefined,
+				glyphPreset: "unicode",
 			});
 		}
 		expect(ANIMATIONS.filter(entry => entry.defaultPlacement === "belowEditor").map(entry => entry.id)).toEqual([
@@ -309,6 +317,7 @@ describe("resolveAnimationsConfig appearance", () => {
 			expect(config.appearance[entry.id]).toEqual({
 				placement: entry.id === "auditTrailBox" ? "aboveEditor" : entry.defaultPlacement,
 				accentColor: entry.id === "cacheMeter" ? "warning" : undefined,
+				glyphPreset: "unicode",
 			});
 		}
 	});
@@ -316,6 +325,14 @@ describe("resolveAnimationsConfig appearance", () => {
 	it("threads an env-only override into the registrar config", () => {
 		const config = resolveAnimationsConfig({}, { OMP_ANIMATIONS_RATE_LIMIT_TIDEPOOL_ACCENT_COLOR: "accent" });
 		expect(config.appearance.rateLimitTidepool.accentColor).toBe("accent");
+	});
+
+	it("defaults glyphPreset to 'unicode' and threads an explicit value uniformly into every animation's appearance", () => {
+		const defaulted = resolveAnimationsConfig({}, {});
+		for (const entry of ANIMATIONS) expect(defaulted.appearance[entry.id].glyphPreset).toBe("unicode");
+
+		const ascii = resolveAnimationsConfig({}, {}, "ascii");
+		for (const entry of ANIMATIONS) expect(ascii.appearance[entry.id].glyphPreset).toBe("ascii");
 	});
 });
 

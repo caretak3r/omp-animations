@@ -36,6 +36,7 @@ import type {
 	WidgetPlacement,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
 import { getPluginSettings } from "@oh-my-pi/pi-coding-agent/extensibility/plugins/loader";
+import type { SymbolPreset } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import { CONFIG_DIR_NAME, getPluginsLockfile } from "@oh-my-pi/pi-utils";
 import { type AnimationsBoxContext, AnimationsBoxController } from "./animations-box/controller";
 import {
@@ -188,11 +189,15 @@ function resolveBoolean(raw: unknown, fallback: boolean): boolean {
  * Resolve the enable map + tier from a flat plugin-settings record and env fallbacks.
  * Precedence per key: stored setting > env fallback > default (enabled / tier `full`).
  * A stored `false` disables (nullish coalescing only falls through on null/undefined).
- * Also resolves each animation's `<id>Placement`/`<id>AccentColor` appearance settings with the same precedence.
+ * Also resolves each animation's `<id>Placement`/`<id>AccentColor` appearance settings
+ * with the same precedence, plus `glyphPreset` — one shared value (the host exposes a
+ * single current `SymbolPreset` per session, not a per-animation setting) threaded
+ * uniformly into every entry's `AnimationAppearance`. Defaults to `"unicode"`.
  */
 export function resolveAnimationsConfig(
 	pluginSettings: Record<string, unknown> = {},
 	env: Record<string, string | undefined> = Bun.env,
+	glyphPreset: SymbolPreset = "unicode",
 ): AnimationsConfig {
 	const tier = resolveTier(pluginSettings.animations ?? env.OMP_ANIMATIONS, DEFAULT_TIER);
 	const enabled: Record<string, boolean> = {};
@@ -206,6 +211,7 @@ export function resolveAnimationsConfig(
 			animation.defaultPlacement,
 			pluginSettings,
 			env,
+			glyphPreset,
 		);
 	}
 	return { tier, enabled, appearance };
@@ -271,6 +277,17 @@ export interface AnimationsPluginOptions {
 	cwd?: string;
 	/** Test-isolation override for the global-lockfile home dir; see `readPluginSettingsSync`. */
 	home?: string;
+	/**
+	 * The host's current symbol preset, threaded into every animation's
+	 * `AnimationAppearance.glyphPreset` (see `resolveAnimationsConfig`). Defaults to
+	 * `"unicode"` — the host's own default and today's hardcoded glyphs — because
+	 * `ExtensionContext.ui.theme.getSymbolPreset()` is only reachable inside event
+	 * handlers, never at this synchronous wire-time call (`ExtensionFactory` receives
+	 * only `ExtensionAPI`, no `ExtensionContext`). An injectable seam for tests and for
+	 * whichever future call site re-resolves this from a live `ctx`, mirroring `env`'s
+	 * existing convention on this same options type.
+	 */
+	glyphPreset?: SymbolPreset;
 }
 
 /**
@@ -281,7 +298,8 @@ export interface AnimationsPluginOptions {
 export function createAnimationsPlugin(options: AnimationsPluginOptions = {}): ExtensionFactory {
 	const env = options.env ?? Bun.env;
 	const settings = options.settings ?? readPluginSettingsSync(options.cwd, options.home);
-	const config = resolveAnimationsConfig(settings, env);
+	const glyphPreset = options.glyphPreset ?? "unicode";
+	const config = resolveAnimationsConfig(settings, env, glyphPreset);
 	const boxConfig = resolveAnimationsBoxConfigFromSources(settings, env);
 	const readPluginSettings = options.readPluginSettings ?? ((cwd: string) => getPluginSettings(PLUGIN_NAME, cwd));
 
@@ -346,6 +364,10 @@ function mountAnimationsBox(api: ExtensionAPI, boxConfig: AnimationsBoxConfig, c
 		motionSetting: config.tier,
 		initialConfig: boxConfig,
 		accentColor: config.appearance.breathingBorder.accentColor,
+		// glyphPreset intentionally NOT threaded here yet: `AnimationsBoxControllerOptions`
+		// (controller.ts) has no such field, and controller.ts/widget.ts are out of the
+		// glyph-preset bead's Phase 1 file scope (oh-my-pi-qut). `config.appearance.<id>.glyphPreset`
+		// is fully resolved above and ready for Phase 2 to consume once those files pick it up.
 	});
 
 	api.on("session_start", (_event, ctx) => controller.mount(toAnimationsBoxContext(ctx)));
