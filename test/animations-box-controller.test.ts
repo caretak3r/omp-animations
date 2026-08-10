@@ -853,9 +853,10 @@ describe("AnimationsBoxController — reflection ripple state wiring", () => {
 	// column of data — see segments.ts), so the generic "not.toContain('—     ')"
 	// idiom the other wiring blocks use would false-positive on that trailing column.
 	// This substring instead pins the RESTING row specifically: "reflect" padded to
-	// its 8-col label cell, one join space, then primary="—" — a pattern only the
-	// resting row produces.
-	const RESTING_REFLECT_ROW = "reflect  —";
+	// its 8-col label cell, one join space, the empty 12-col bar cell (reflect has no
+	// bounded metric — see segments.ts), one join space, then primary="—" — a pattern
+	// only the resting row produces.
+	const RESTING_REFLECT_ROW = `reflect${" ".repeat(15)}—`;
 
 	it("the mounted widget starts on the resting row before any ttsr_triggered event — the COMMON state, not a startup gap", () => {
 		const { ctx, calls } = recordingContext();

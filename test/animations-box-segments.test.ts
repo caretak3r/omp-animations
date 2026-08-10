@@ -77,9 +77,16 @@ describe("buildCacheMeterSegment — resting row (Decision 5: enabled-but-idle, 
 		expect(sample.variants).toEqual([]);
 	});
 
-	it("still renders a full dim resting row: glyph, label 'cache', primary '—', empty secondary/trailing", () => {
+	it("still renders a full dim resting row: glyph, label 'cache', hollow bar, primary '—', empty secondary/trailing", () => {
 		const sample = buildCacheMeterSegment(new CacheMeterState(), 0, idTheme);
-		expect(sample.detail).toEqual({ glyph: BADGE_GLYPH, label: "cache", primary: "—", secondary: "", trailing: "" });
+		expect(sample.detail).toEqual({
+			glyph: BADGE_GLYPH,
+			label: "cache",
+			bar: "[░░░░░░░░░░]",
+			primary: "—",
+			secondary: "",
+			trailing: "",
+		});
 	});
 
 	it("colors the resting glyph dim, not the active badge accent", () => {
@@ -150,11 +157,13 @@ describe("buildCacheMeterSegment — active row", () => {
 		expect(sample.detail.secondary).toBe(`saved $${(snapshot.savedCost as number).toFixed(2)}`);
 	});
 
-	it("detail.trailing is 'r <read> · w <write>' using the same number formatting as the standalone widget", () => {
+	it("detail.trailing is 'r <read> · w <write> · miss <miss>' using the same number formatting as the standalone widget", () => {
 		const state = warmedState();
 		const snapshot = state.snapshot();
 		const sample = buildCacheMeterSegment(state, 0, idTheme);
-		expect(sample.detail.trailing).toBe(`r ${snapshot.cacheReadTokens} · w ${snapshot.cacheWriteTokens}`);
+		expect(sample.detail.trailing).toBe(
+			`r ${snapshot.cacheReadTokens} · w ${snapshot.cacheWriteTokens} · miss ${snapshot.missTokens}`,
+		);
 	});
 
 	it("colors the active glyph with the badge accent, honoring an accent override", () => {
@@ -319,6 +328,7 @@ describe("buildAuditTrailBoxSegment — resting row (Decision 5: enabled-but-idl
 		expect(sample.detail).toEqual({
 			glyph: AUDIT_BADGE_GLYPH,
 			label: "audit",
+			bar: "",
 			primary: "—",
 			secondary: "",
 			trailing: "",
@@ -372,14 +382,14 @@ describe("buildAuditTrailBoxSegment — active row", () => {
 		expect(sample.detail.secondary).toBe("bar.ts");
 	});
 
-	it("detail.trailing is 'r/w <reads>/<writes> · ×<write amplification>'", () => {
+	it("detail.trailing is 'reads <reads> · writes <writes> · amp <write amplification>×'", () => {
 		const state = new AuditLedgerState();
 		state.noteRead("/repo/src/foo.ts");
 		state.noteWrite("/repo/src/foo.ts", 0);
 		const snapshot = state.snapshot();
 		const sample = buildAuditTrailBoxSegment(state, 0, idTheme);
 		expect(sample.detail.trailing).toBe(
-			`r/w ${snapshot.metrics.reads}/${snapshot.metrics.writes} · ×${snapshot.metrics.writeAmplification.toFixed(1)}`,
+			`reads ${snapshot.metrics.reads} · writes ${snapshot.metrics.writes} · amp ${snapshot.metrics.writeAmplification.toFixed(1)}×`,
 		);
 	});
 
@@ -446,9 +456,16 @@ describe("buildRateLimitTidepoolSegment — resting row (Decision 5: enabled-but
 		expect(sample.variants).toEqual([]);
 	});
 
-	it("still renders a full dim resting row: glyph '◗', label 'limits', primary '—', empty secondary/trailing", () => {
+	it("still renders a full dim resting row: glyph '◗', label 'limits', hollow bar, primary '—', empty secondary/trailing", () => {
 		const sample = buildRateLimitTidepoolSegment(new RateLimitTidepoolState(), 0, idTheme);
-		expect(sample.detail).toEqual({ glyph: "◗", label: "limits", primary: "—", secondary: "", trailing: "" });
+		expect(sample.detail).toEqual({
+			glyph: "◗",
+			label: "limits",
+			bar: "[░░░░░░░░░░]",
+			primary: "—",
+			secondary: "",
+			trailing: "",
+		});
 	});
 
 	it("colors the resting glyph dim, not the active water accent", () => {
@@ -590,7 +607,14 @@ describe("buildToolConstellationSegment — resting row (Decision 5: enabled-but
 
 	it("still renders a full dim resting row: glyph, label 'tools', primary '—', empty secondary/trailing", () => {
 		const sample = buildToolConstellationSegment(new ConstellationState(), 0, idTheme);
-		expect(sample.detail).toEqual({ glyph: EMPTY_GLYPH, label: "tools", primary: "—", secondary: "", trailing: "" });
+		expect(sample.detail).toEqual({
+			glyph: EMPTY_GLYPH,
+			label: "tools",
+			bar: "",
+			primary: "—",
+			secondary: "",
+			trailing: "",
+		});
 	});
 
 	it("colors the resting glyph dim", () => {
@@ -638,13 +662,13 @@ describe("buildToolConstellationSegment — active row", () => {
 		expect(sample.detail.primary).toBe("3 calls");
 	});
 
-	it("detail.trailing is the plain icon+count tally, in CATEGORY_ORDER, uncolored", () => {
+	it("detail.trailing is the icon+count+name tally, in CATEGORY_ORDER, uncolored", () => {
 		const state = new ConstellationState();
 		state.recordFire("read", 0);
 		state.recordFire("read", 0);
 		state.recordFire("bash", 0);
 		const sample = buildToolConstellationSegment(state, 0, idTheme);
-		expect(sample.detail.trailing).toBe(`${CATEGORY_ICON.read}2 ${CATEGORY_ICON.bash}1`);
+		expect(sample.detail.trailing).toBe(`${CATEGORY_ICON.read}2 read · ${CATEGORY_ICON.bash}1 bash`);
 	});
 
 	it("colors the dominant-category glyph with CATEGORY_THEME_COLOR — no accent override slot exists for this segment", () => {
@@ -663,7 +687,7 @@ describe("buildToolConstellationSegment — glyph preset", () => {
 		const state = new ConstellationState();
 		state.recordFire("read", 0);
 		const active = buildToolConstellationSegment(state, 0, idTheme);
-		expect(active.detail.trailing).toBe(`${CATEGORY_ICON.read}1`);
+		expect(active.detail.trailing).toBe(`${CATEGORY_ICON.read}1 read`);
 	});
 
 	it("swaps the empty glyph and category icons for their ascii substitutes when preset is 'ascii'", () => {
@@ -673,7 +697,7 @@ describe("buildToolConstellationSegment — glyph preset", () => {
 		const state = new ConstellationState();
 		state.recordFire("read", 0);
 		const active = buildToolConstellationSegment(state, 0, idTheme, "ascii");
-		expect(active.detail.trailing).toBe("^1"); // read -> "^" in ascii
+		expect(active.detail.trailing).toBe("^1 read"); // read -> "^" in ascii
 		expect(active.detail.glyph).toBe("^");
 	});
 });
@@ -706,7 +730,14 @@ describe("buildPalimpsestSegment — resting row (Decision 5: enabled-but-idle, 
 
 	it("still renders a full dim resting row: glyph '▓', label 'files', primary '—', empty secondary/trailing", () => {
 		const sample = buildPalimpsestSegment(new PalimpsestState(), 0, idTheme);
-		expect(sample.detail).toEqual({ glyph: "▓", label: "files", primary: "—", secondary: "", trailing: "" });
+		expect(sample.detail).toEqual({
+			glyph: "▓",
+			label: "files",
+			bar: "",
+			primary: "—",
+			secondary: "",
+			trailing: "",
+		});
 	});
 
 	it("colors the resting glyph dim", () => {
@@ -757,6 +788,7 @@ describe("buildPalimpsestSegment — active row", () => {
 		expect(sample.detail).toEqual({
 			glyph: "▓",
 			label: "files",
+			bar: "",
 			primary: "foo.ts",
 			secondary: "×2",
 			trailing: "1 row",
@@ -821,7 +853,14 @@ describe("buildReflectionRippleSegment — resting row (Decision 1: idle is the 
 
 	it("still renders a full dim resting row: glyph '○', label 'reflect', primary '—', empty secondary/trailing", () => {
 		const sample = buildReflectionRippleSegment(new ReflectionRippleState(), 0, idTheme);
-		expect(sample.detail).toEqual({ glyph: "○", label: "reflect", primary: "—", secondary: "", trailing: "" });
+		expect(sample.detail).toEqual({
+			glyph: "○",
+			label: "reflect",
+			bar: "",
+			primary: "—",
+			secondary: "",
+			trailing: "",
+		});
 	});
 
 	it("colors the resting glyph dim, not the active ring accent", () => {

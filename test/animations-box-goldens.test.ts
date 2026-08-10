@@ -310,37 +310,37 @@ describe("AnimationsBoxController + AnimationsBoxWidget — full-box golden fram
 
 		expect(widget.renderFrame(69)).toEqual([
 			"╭───────────────────────────────────────────────────────────────────╮",
-			"│ ▤      cache    50.0%    1/1          r 600 · w 200               │",
-			"│ ▃▁▁    cadence  100 t/s  peak 55       ▃  ▁  ▁                    │",
-			"│ ▣      audit    1✎       widget.ts    r/w 1/1 · ×1.0              │",
-			"│ ◗      limits   78%      anthropic    resets 12m                  │",
-			"│ ⛏      tools    2 calls  read         ⛏1 ✎1                       │",
-			"│ ▓      files    —                                                 │",
-			"│ ○      reflect  —                                                 │",
+			"│ ▤      cache    [█████░░░░░] 50.0%    1/1          r 600 · w 200… │",
+			"│ ▃▁▁    cadence               100 t/s  peak 55       ▃  ▁  ▁       │",
+			"│ ▣      audit                 1✎       widget.ts    reads 1 · wri… │",
+			"│ ◗      limits   [████████░░] 78%      anthropic    resets 12m     │",
+			"│ ⛏      tools                 2 calls  read         ⛏1 read · ✎1 … │",
+			"│ ▓      files                 —                                    │",
+			"│ ○      reflect               —                                    │",
 			"╰───────────────────────────────────────────────────────────────────╯",
 		]);
 
 		expect(widget.renderFrame(45)).toEqual([
 			"╭───────────────────────────────────────────╮",
-			"│ ▤      cache    50.0%    1/1          r … │",
-			"│ ▃▁▁    cadence  100 t/s  peak 55       ▃… │",
-			"│ ▣      audit    1✎       widget.ts    r/… │",
-			"│ ◗      limits   78%      anthropic    re… │",
-			"│ ⛏      tools    2 calls  read         ⛏1… │",
-			"│ ▓      files    —                         │",
-			"│ ○      reflect  —                         │",
+			"│ ▤      cache    [█████░░░░░] 50.0%    1/… │",
+			"│ ▃▁▁    cadence               100 t/s  pe… │",
+			"│ ▣      audit                 1✎       wi… │",
+			"│ ◗      limits   [████████░░] 78%      an… │",
+			"│ ⛏      tools                 2 calls  re… │",
+			"│ ▓      files                 —          … │",
+			"│ ○      reflect               —          … │",
 			"╰───────────────────────────────────────────╯",
 		]);
 
 		expect(widget.renderFrame(120)).toEqual([
 			"╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
-			"│ ▤      cache    50.0%    1/1          r 600 · w 200                                                                  │",
-			"│ ▃▁▁    cadence  100 t/s  peak 55       ▃  ▁  ▁                                                                       │",
-			"│ ▣      audit    1✎       widget.ts    r/w 1/1 · ×1.0                                                                 │",
-			"│ ◗      limits   78%      anthropic    resets 12m                                                                     │",
-			"│ ⛏      tools    2 calls  read         ⛏1 ✎1                                                                          │",
-			"│ ▓      files    —                                                                                                    │",
-			"│ ○      reflect  —                                                                                                    │",
+			"│ ▤      cache    [█████░░░░░] 50.0%    1/1          r 600 · w 200 · miss 400                                          │",
+			"│ ▃▁▁    cadence               100 t/s  peak 55       ▃  ▁  ▁                                                          │",
+			"│ ▣      audit                 1✎       widget.ts    reads 1 · writes 1 · amp 1.0×                                     │",
+			"│ ◗      limits   [████████░░] 78%      anthropic    resets 12m                                                        │",
+			"│ ⛏      tools                 2 calls  read         ⛏1 read · ✎1 write                                                │",
+			"│ ▓      files                 —                                                                                       │",
+			"│ ○      reflect               —                                                                                       │",
 			"╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
 		]);
 

@@ -39,7 +39,7 @@ const RESTING: SegmentSample = {
 	priority: 1,
 	active: false,
 	variants: [],
-	detail: { glyph: "▤", label: "cache", primary: "—", secondary: "", trailing: "" },
+	detail: { glyph: "▤", label: "cache", bar: "", primary: "—", secondary: "", trailing: "" },
 };
 
 const ACTIVE: SegmentSample = {
@@ -47,7 +47,14 @@ const ACTIVE: SegmentSample = {
 	priority: 1,
 	active: true,
 	variants: ["ACTIVE WIDE", "AW"],
-	detail: { glyph: "▤", label: "cache", primary: "62.4%", secondary: "saved $0.41", trailing: "r 12K · w 2K" },
+	detail: {
+		glyph: "▤",
+		label: "cache",
+		bar: "[██████░░░░]",
+		primary: "62.4%",
+		secondary: "saved $0.41",
+		trailing: "r 12K · w 2K",
+	},
 };
 
 function makeWidget(opts: {
@@ -117,10 +124,11 @@ describe("AnimationsBoxWidget — detailed mode: one row per ENABLED segment, ac
 	it("holds an exact golden resting-row frame at width 69 — the maintainer's real pane", () => {
 		const width = 69;
 		const inner = width - BOX_BORDER_COLS; // 65
-		const cTrail = inner - (6 + 8 + 8 + 12 + 4); // 27
+		const cTrail = inner - (6 + 8 + 12 + 8 + 12 + 5); // 14
 		const body = [
 			`▤${" ".repeat(5)}`, // glyph, 6 cols
 			`cache${" ".repeat(3)}`, // label, 8 cols
+			" ".repeat(12), // bar, 12 cols
 			`—${" ".repeat(7)}`, // primary, 8 cols
 			" ".repeat(12), // secondary, 12 cols
 			" ".repeat(cTrail), // trailing
@@ -134,7 +142,14 @@ describe("AnimationsBoxWidget — detailed mode: one row per ENABLED segment, ac
 	it("truncates the trailing column first, then hard-truncates the whole row, never overflowing the border", () => {
 		const overflowing: SegmentSample = {
 			...ACTIVE,
-			detail: { glyph: "▤", label: "cache", primary: "62.4%", secondary: "saved $0.41", trailing: "x".repeat(200) },
+			detail: {
+				glyph: "▤",
+				label: "cache",
+				bar: "[██████░░░░]",
+				primary: "62.4%",
+				secondary: "saved $0.41",
+				trailing: "x".repeat(200),
+			},
 		};
 		for (const width of [69, 45, 20, 6]) {
 			const rows = makeWidget({ samples: [overflowing], detail: "detailed" }).render(width);

@@ -15,6 +15,8 @@ const ALL_KEYS: readonly GlyphKey[] = [
 	"box.limits",
 	"box.files",
 	"box.reflect",
+	"box.bar.filled",
+	"box.bar.empty",
 	"cacheMeter.badge",
 	"cacheMeter.badgePulse",
 	"cacheMeter.invalidation",
@@ -58,6 +60,8 @@ describe("resolveGlyph — unicode preset (default, byte-identical to today's ha
 		expect(resolveGlyph("box.limits", "unicode")).toBe("◗");
 		expect(resolveGlyph("box.files", "unicode")).toBe("▓");
 		expect(resolveGlyph("box.reflect", "unicode")).toBe("○");
+		expect(resolveGlyph("box.bar.filled", "unicode")).toBe("█");
+		expect(resolveGlyph("box.bar.empty", "unicode")).toBe("░");
 		expect(resolveGlyph("cacheMeter.badge", "unicode")).toBe("▤");
 		expect(resolveGlyph("cacheMeter.badgePulse", "unicode")).toBe("▥");
 		expect(resolveGlyph("cacheMeter.invalidation", "unicode")).toBe("⊘");
@@ -102,6 +106,8 @@ describe("resolveGlyph — ascii preset (exact 1-column substitutes, non-negotia
 		expect(resolveGlyph("box.limits", "ascii")).toBe(")");
 		expect(resolveGlyph("box.files", "ascii")).toBe("%");
 		expect(resolveGlyph("box.reflect", "ascii")).toBe("o");
+		expect(resolveGlyph("box.bar.filled", "ascii")).toBe("#");
+		expect(resolveGlyph("box.bar.empty", "ascii")).toBe("-");
 		expect(resolveGlyph("cacheMeter.badge", "ascii")).toBe("#");
 		expect(resolveGlyph("cacheMeter.badgePulse", "ascii")).toBe("*");
 		expect(resolveGlyph("cacheMeter.invalidation", "ascii")).toBe("x");

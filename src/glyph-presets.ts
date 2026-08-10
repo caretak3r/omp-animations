@@ -27,6 +27,8 @@ export type GlyphKey =
 	| "box.limits"
 	| "box.files"
 	| "box.reflect"
+	| "box.bar.filled"
+	| "box.bar.empty"
 	| "cacheMeter.badge"
 	| "cacheMeter.badgePulse"
 	| "cacheMeter.invalidation"
@@ -69,6 +71,8 @@ const UNICODE_GLYPHS: Record<GlyphKey, string> = {
 	"box.limits": "◗",
 	"box.files": "▓",
 	"box.reflect": "○",
+	"box.bar.filled": "█",
+	"box.bar.empty": "░",
 	"cacheMeter.badge": "▤",
 	"cacheMeter.badgePulse": "▥",
 	"cacheMeter.invalidation": "⊘",
@@ -109,6 +113,17 @@ const UNICODE_GLYPHS: Record<GlyphKey, string> = {
  * that never render together, or are already the identical unicode glyph upstream
  * (`toolConstellation.empty`/`star.0` are both literally `"·"` today) — never two
  * DISTINCT unicode glyphs a single widget renders side by side.
+ *
+ * `box.bar.filled`/`box.bar.empty` are the one deliberate exception to "never render
+ * together": the Animations Box's cache/rate-limit rows draw their own badge glyph
+ * (`cacheMeter.badge`/`box.limits`) immediately followed by a 10-cell bar built from
+ * these two — same row, same frame, always. `box.bar.filled` reuses `"#"`
+ * (`cacheMeter.badge`'s own ascii, and `border.ramp.3`'s "heaviest" ascii) on purpose:
+ * a repeated, bracketed `[##########]` run reads unambiguously as a bar regardless of
+ * which single character fills it, so it can't be mistaken for the single badge glyph
+ * a few columns to its left — the distinctness concern this comment otherwise guards
+ * against is about single-glyph slots that could be swapped for each other, not a
+ * multi-cell bar shape against an icon.
  */
 const ASCII_GLYPHS: Record<GlyphKey, string> = {
 	"border.ramp.0": ".",
@@ -118,6 +133,8 @@ const ASCII_GLYPHS: Record<GlyphKey, string> = {
 	"box.limits": ")",
 	"box.files": "%",
 	"box.reflect": "o",
+	"box.bar.filled": "#",
+	"box.bar.empty": "-",
 	"cacheMeter.badge": "#",
 	"cacheMeter.badgePulse": "*",
 	"cacheMeter.invalidation": "x",

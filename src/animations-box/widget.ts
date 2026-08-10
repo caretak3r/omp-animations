@@ -92,21 +92,26 @@ function contentLine(
 }
 
 /**
- * Fixed-column detail row: glyph · label · primary · secondary · trailing,
- * sized to `inner`. Degrades by truncating the trailing (history) column
- * first, then hard-truncates the whole row as a final safety net so it never
- * overflows `inner` even when the fixed columns alone would.
+ * Fixed-column detail row: glyph · label · bar · primary · secondary ·
+ * trailing, sized to `inner`. `bar` is a pre-rendered `[##########]` shape
+ * (`""` when the segment has no bounded metric — see `SegmentDetail`'s doc)
+ * and needs no further coloring here, same as every other column. Degrades
+ * by truncating the trailing (history) column first, then hard-truncates the
+ * whole row as a final safety net so it never overflows `inner` even when
+ * the fixed columns alone would.
  */
 function detailRowText(detail: SegmentDetail, inner: number): string {
 	const cGlyph = 6;
 	const cLabel = 8;
+	const cBar = 12;
 	const cPri = 8;
 	const cSec = 12;
-	const gutters = 4;
-	const cTrail = Math.max(0, inner - (cGlyph + cLabel + cPri + cSec + gutters));
+	const gutters = 5;
+	const cTrail = Math.max(0, inner - (cGlyph + cLabel + cBar + cPri + cSec + gutters));
 	const body = [
 		cell(detail.glyph, cGlyph),
 		cell(detail.label, cLabel),
+		cell(detail.bar, cBar),
 		cell(detail.primary, cPri),
 		cell(detail.secondary, cSec),
 		cell(detail.trailing, cTrail),

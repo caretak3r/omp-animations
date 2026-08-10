@@ -61,6 +61,7 @@ import {
 	type PalimpsestRow,
 	type PalimpsestState,
 } from "../palimpsest";
+import { renderProgressBar } from "../progress-bar";
 import {
 	type RateLimitTidepoolState,
 	refillLevel,
@@ -92,6 +93,8 @@ export type BoxTheme = Pick<Theme, "fg">;
 export interface SegmentDetail {
 	readonly glyph: string;
 	readonly label: string;
+	/** Pre-rendered/colored `[##########]`-shape progress bar, `""` when the segment has no bounded `[0, 1]` metric (Plan 017 viz-improvement, "real metrics only"). */
+	readonly bar: string;
 	readonly primary: string;
 	readonly secondary: string;
 	readonly trailing: string;
@@ -154,7 +157,14 @@ export function buildCacheMeterSegment(
 			id: "cacheMeter",
 			priority,
 			...INACTIVE,
-			detail: { glyph: theme.fg("dim", glyph), label: "cache", primary: "—", secondary: "", trailing: "" },
+			detail: {
+				glyph: theme.fg("dim", glyph),
+				label: "cache",
+				bar: renderProgressBar(0, theme, colors.hit, "dim", preset),
+				primary: "—",
+				secondary: "",
+				trailing: "",
+			},
 		};
 	}
 
@@ -172,12 +182,13 @@ export function buildCacheMeterSegment(
 		detail: {
 			glyph: theme.fg(colors.badge, glyph),
 			label: "cache",
+			bar: renderProgressBar(snapshot.warmth, theme, colors.hit, "dim", preset),
 			primary: pct,
 			secondary:
 				snapshot.savedCost !== undefined
 					? `saved ${formatCost(snapshot.savedCost)}`
 					: `${snapshot.hitCount}/${snapshot.requestCount}`,
-			trailing: `r ${formatNumber(snapshot.cacheReadTokens)} · w ${formatNumber(snapshot.cacheWriteTokens)}`,
+			trailing: `r ${formatNumber(snapshot.cacheReadTokens)} · w ${formatNumber(snapshot.cacheWriteTokens)} · miss ${formatNumber(snapshot.missTokens)}`,
 		},
 	};
 }
@@ -218,7 +229,7 @@ export function buildCadenceEqualizerSegment(
 			id: "cadenceEqualizer",
 			priority,
 			...INACTIVE,
-			detail: { glyph, label: "cadence", primary: "—", secondary: "", trailing: "" },
+			detail: { glyph, label: "cadence", bar: "", primary: "—", secondary: "", trailing: "" },
 		};
 	}
 
@@ -243,6 +254,7 @@ export function buildCadenceEqualizerSegment(
 		detail: {
 			glyph,
 			label: "cadence",
+			bar: "",
 			primary: cadenceRateLabel(tokensPerSecond),
 			secondary: `peak ${Math.round(peakAmplitude * MAX_REFERENCE_RATE)}`,
 			trailing: renderEqualizerRow(bands, peaks, theme, colors),
@@ -277,6 +289,7 @@ export function buildAuditTrailBoxSegment(
 			detail: {
 				glyph: theme.fg("dim", glyph),
 				label: "audit",
+				bar: "",
 				primary: "—",
 				secondary: "",
 				trailing: "",
@@ -309,9 +322,10 @@ export function buildAuditTrailBoxSegment(
 		detail: {
 			glyph: theme.fg(snapshot.counts.poisoned > 0 ? colors.poisoned : colors.badge, glyph),
 			label: "audit",
+			bar: "",
 			primary: counts,
 			secondary: lastTouched === undefined ? "" : basename(lastTouched.path),
-			trailing: `r/w ${metrics.reads}/${metrics.writes} · ×${metrics.writeAmplification.toFixed(1)}`,
+			trailing: `reads ${metrics.reads} · writes ${metrics.writes} · amp ${metrics.writeAmplification.toFixed(1)}×`,
 		},
 	};
 }
@@ -366,6 +380,7 @@ export function buildRateLimitTidepoolSegment(
 			detail: {
 				glyph: theme.fg("dim", glyph),
 				label: "limits",
+				bar: renderProgressBar(0, theme, colors.water, "dim", preset),
 				primary: "—",
 				secondary: "",
 				trailing: "",
@@ -387,6 +402,7 @@ export function buildRateLimitTidepoolSegment(
 		detail: {
 			glyph: theme.fg(colors.water, glyph),
 			label: "limits",
+			bar: renderProgressBar(clampedLevel, theme, colors.water, "dim", preset),
 			primary: `${Math.round(clampedLevel * 100)}%`,
 			secondary: snapshot.provider,
 			trailing: resetEtaLabel(snapshot.resetAtMs, now),
@@ -436,6 +452,7 @@ export function buildToolConstellationSegment(
 			detail: {
 				glyph: theme.fg("dim", emptyGlyph(preset)),
 				label: "tools",
+				bar: "",
 				primary: "—",
 				secondary: "",
 				trailing: "",
@@ -455,8 +472,8 @@ export function buildToolConstellationSegment(
 	const icons = categoryIcon(preset);
 	const total = [...counts.values()].reduce((sum, count) => sum + count, 0);
 	const tally = CATEGORY_ORDER.filter(category => (counts.get(category) ?? 0) > 0)
-		.map(category => `${icons[category]}${counts.get(category)}`)
-		.join(" ");
+		.map(category => `${icons[category]}${counts.get(category)} ${category}`)
+		.join(" · ");
 
 	return {
 		id: "toolConstellation",
@@ -469,6 +486,7 @@ export function buildToolConstellationSegment(
 					? theme.fg("dim", emptyGlyph(preset))
 					: theme.fg(CATEGORY_THEME_COLOR[dominant], icons[dominant]),
 			label: "tools",
+			bar: "",
 			primary: `${total} calls`,
 			secondary: dominant ?? "",
 			trailing: tally,
@@ -524,6 +542,7 @@ export function buildPalimpsestSegment(
 			detail: {
 				glyph: theme.fg("dim", glyph),
 				label: "files",
+				bar: "",
 				primary: "—",
 				secondary: "",
 				trailing: "",
@@ -546,6 +565,7 @@ export function buildPalimpsestSegment(
 		detail: {
 			glyph: theme.fg(colors.ember, glyph),
 			label: "files",
+			bar: "",
 			primary: basename(hottest.path),
 			secondary: `×${hottest.overlapCount}`,
 			trailing: `${visible.length} row${visible.length === 1 ? "" : "s"}`,
@@ -587,6 +607,7 @@ export function buildReflectionRippleSegment(
 			detail: {
 				glyph: theme.fg("dim", glyph),
 				label: "reflect",
+				bar: "",
 				primary: "—",
 				secondary: "",
 				trailing: "",
@@ -607,6 +628,7 @@ export function buildReflectionRippleSegment(
 		detail: {
 			glyph: theme.fg(colors.ring, glyph),
 			label: "reflect",
+			bar: "",
 			primary: snapshot.ruleNames.join(", "),
 			secondary: String(snapshot.triggerCount),
 			trailing: "—",
