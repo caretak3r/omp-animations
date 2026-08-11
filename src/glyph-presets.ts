@@ -27,6 +27,10 @@ export type GlyphKey =
 	| "box.limits"
 	| "box.files"
 	| "box.reflect"
+	| "box.dot.idle"
+	| "box.dot.live"
+	| "box.dot.notable"
+	| "box.dot.alert"
 	| "box.bar.filled"
 	| "box.bar.empty"
 	| "box.bar.eighths.1"
@@ -78,6 +82,10 @@ const UNICODE_GLYPHS: Record<GlyphKey, string> = {
 	"box.limits": "◗",
 	"box.files": "▓",
 	"box.reflect": "○",
+	"box.dot.idle": "○",
+	"box.dot.live": "●",
+	"box.dot.notable": "◐",
+	"box.dot.alert": "●",
 	"box.bar.filled": "█",
 	"box.bar.empty": "░",
 	"box.bar.eighths.1": "▏",
@@ -147,6 +155,10 @@ const ASCII_GLYPHS: Record<GlyphKey, string> = {
 	"box.limits": ")",
 	"box.files": "%",
 	"box.reflect": "o",
+	"box.dot.idle": ".",
+	"box.dot.live": "*",
+	"box.dot.notable": "!",
+	"box.dot.alert": "!",
 	"box.bar.filled": "#",
 	"box.bar.empty": "-",
 	"box.bar.eighths.1": "-",

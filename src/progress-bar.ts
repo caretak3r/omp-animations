@@ -36,7 +36,7 @@ export type GradientDirection = "up-good" | "down-good";
  * @param hex - Color string like "#00ff00"
  * @returns RGB tuple [r, g, b] in 0-255 range
  */
-function parseHex(hex: string): [number, number, number] {
+export function parseHex(hex: string): [number, number, number] {
 	const cleaned = hex.replace("#", "");
 	const r = Number.parseInt(cleaned.slice(0, 2), 16);
 	const g = Number.parseInt(cleaned.slice(2, 4), 16);
@@ -84,7 +84,11 @@ function interpolateRgb(
  * @param theme - Theme for color resolution
  * @returns Hex color string
  */
-function gradientColorAt(ratio: number, direction: GradientDirection, theme: Required<ProgressBarTheme>): string {
+export function gradientColorAt(
+	ratio: number,
+	direction: GradientDirection,
+	theme: Required<ProgressBarTheme>,
+): string {
 	// Resolve theme colors to hex
 	const errorHex = theme.getColorHex("error");
 	const warningHex = theme.getColorHex("warning");

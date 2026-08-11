@@ -147,6 +147,19 @@ export function supportsStyledUnderlines(program: RenderTier["program"]): boolea
 }
 
 /**
+ * Program identity to feed the styled-underline helpers, honoring the
+ * test escape hatch: `OMP_ANIMATIONS_DISABLE_STYLED_UNDERLINES=1` forces
+ * `"other"` (no underline escapes) regardless of the real terminal.
+ * Shared by `animations-box/segments.ts` and `animations-box/widget.ts`.
+ */
+export function styledUnderlineProgram(
+	tier: RenderTier,
+	env: Record<string, string | undefined> = Bun.env,
+): RenderTier["program"] {
+	return env.OMP_ANIMATIONS_DISABLE_STYLED_UNDERLINES === "1" ? "other" : tier.program;
+}
+
+/**
  * RGB color value from OSC 11 background query response.
  * Values are normalized to 0-255 range regardless of terminal's hex precision.
  */

@@ -3,7 +3,8 @@
  *
  * One pure builder per box-owned animation, each producing a {@link
  * SegmentSample}: the simple-mode `variants` ladder (fed straight into the
- * kit's `composeSegments`) plus the detailed-mode column fields, both derived
+ * kit's `composeSegments`) plus the detailed-mode status-line spans (Plan
+ * 018), both derived
  * from that animation's own exported pure renderers/state — never reinvented
  * text. Cache Meter (`oh-my-pi-dxi.2`), Audit Trail, Tool Constellation,
  * Palimpsest, Cadence Equalizer, Rate-Limit Tidepool and Reflection Ripple
@@ -13,9 +14,11 @@
  * `active` mirrors the animation's own real mount policy (quiet until the
  * first usable event, mirroring `CacheMeterController`'s lazy mount), but
  * unlike the standalone widget's absence, an inactive segment here still
- * produces a `detail` — a dim resting row (`glyph · label · "—"`) — so
+ * produces a `line` — a dim resting status line (`○ label   —`) — so
  * detailed-mode height is a pure function of the ENABLED set, never of
- * runtime activity (Plan 017 Decision 5).
+ * runtime activity (Plan 017 Decision 5). Spans are PLAIN text: the widget
+ * colors dots, tones, gradients, and change-flash at render time (Plan 018's
+ * one deliberate inversion of 017's "segments pre-color" contract).
  *
  * `now` is always a wall-clock reading from the box's own `FrameScheduler`,
  * never the host `AnimatedWidget`'s mount-relative `elapsedMs` (Decision 4).
@@ -27,19 +30,12 @@ import {
 	AUDIT_TRAIL_BOX_COLORS,
 	type AuditLedgerState,
 	type AuditTrailBoxColors,
-	badgeGlyph as auditBadgeGlyph,
 	type PathRecord,
 	renderAuditMeterRow,
 	STATUS_RISK_ORDER,
 	statusGlyphs,
 } from "../audit-trail-box";
-import {
-	CACHE_METER_COLORS,
-	type CacheMeterColors,
-	type CacheMeterState,
-	badgeGlyph as cacheBadgeGlyph,
-	renderCacheMeterRow,
-} from "../cache-meter";
+import { CACHE_METER_COLORS, type CacheMeterColors, type CacheMeterState, renderCacheMeterRow } from "../cache-meter";
 import {
 	type CadenceEqualizerColors,
 	type CadenceEqualizerState,
@@ -53,7 +49,7 @@ import {
 // a deep import, not a reinvented constant, since editing that barrel is a
 // keeper-directory change out of this bead's scope (see `dxi.4`'s report).
 import { MAX_REFERENCE_RATE } from "../cadence-equalizer/scale";
-import { type GlyphKey, resolveGlyph } from "../glyph-presets";
+import type { GlyphKey } from "../glyph-presets";
 import {
 	GLOW_THRESHOLD,
 	PALIMPSEST_COLORS,
@@ -61,7 +57,6 @@ import {
 	type PalimpsestRow,
 	type PalimpsestState,
 } from "../palimpsest";
-import { renderProgressBar } from "../progress-bar";
 import {
 	type RateLimitTidepoolState,
 	refillLevel,
@@ -75,39 +70,19 @@ import {
 	type ReflectionRippleState,
 	renderReflectionRippleRow,
 } from "../reflection-ripple";
-import { dashedUnderline } from "../styled-underline";
-import { resolveRenderTier } from "../terminal-capabilities";
 import {
 	CATEGORY_ORDER,
 	CATEGORY_THEME_COLOR,
 	type ConstellationState,
 	categoryIcon,
-	emptyGlyph,
 	renderConstellationTally,
 	type ToolCategory,
 } from "../tool-constellation";
 import { BOX_SEGMENT_IDS, type BoxSegmentId } from "./settings";
+import type { PhraseSpan, SegmentLine } from "./status-line";
 
-// Resolve render tier once at module load for gradient gating and styled-underline.
-// Tests can disable styled underlines via OMP_ANIMATIONS_DISABLE_STYLED_UNDERLINES=1.
-const RENDER_TIER = resolveRenderTier();
-const TERMINAL_PROGRAM =
-	typeof Bun !== "undefined" && Bun.env.OMP_ANIMATIONS_DISABLE_STYLED_UNDERLINES === "1"
-		? ("other" as const)
-		: RENDER_TIER.program;
-/** The slice of {@link Theme} every segment builder needs — foreground coloring plus color hex for gradient bars. */
-export type BoxTheme = Pick<Theme, "fg"> & Partial<Pick<Theme, "getColorHex">>;
-
-/** One column's worth of detailed-mode text — always plain, colored last by the segment builder itself (the widget does no coloring of its own). */
-export interface SegmentDetail {
-	readonly glyph: string;
-	readonly label: string;
-	/** Pre-rendered/colored `[##########]`-shape progress bar, `""` when the segment has no bounded `[0, 1]` metric (Plan 017 viz-improvement, "real metrics only"). */
-	readonly bar: string;
-	readonly primary: string;
-	readonly secondary: string;
-	readonly trailing: string;
-}
+/** The slice of {@link Theme} every segment builder needs — foreground coloring, plus color hex for gradients and bold for flash emphasis where available. */
+export type BoxTheme = Pick<Theme, "fg"> & Partial<Pick<Theme, "getColorHex" | "bold">>;
 
 /** What one segment contributes this frame, in both box detail levels. */
 export interface SegmentSample {
@@ -117,11 +92,14 @@ export interface SegmentSample {
 	readonly active: boolean;
 	/** Widest-first, for `composeSegments`. Empty when `!active`. */
 	readonly variants: readonly string[];
-	/** Column fields for detailed mode — always populated, even when `!active` (a resting row, not an absence; see the module doc). */
-	readonly detail: SegmentDetail;
+	/** Detailed-mode status line — always populated, even when `!active` (a resting line, not an absence; see the module doc). Plain spans; the widget colors them at render time (Plan 018). */
+	readonly line: SegmentLine;
 }
 
 const INACTIVE = { active: false as const, variants: [] as const };
+
+/** The shared idle phrase — a lone dim em-dash (D4's *idle* resting shape: nothing yet this session). */
+const IDLE_SPANS: readonly PhraseSpan[] = [{ key: "idle", text: "—", tone: "dim" }];
 
 /** Priority order derives from `BOX_SEGMENT_IDS` so it can never drift from the settings module's own list. */
 function priorityOf(id: BoxSegmentId): number {
@@ -167,21 +145,13 @@ export function buildCacheMeterSegment(
 	preset: SymbolPreset = "unicode",
 ): SegmentSample {
 	const priority = priorityOf("cacheMeter");
-	const glyph = cacheBadgeGlyph(preset);
 	const snapshot = state.snapshot();
 	if (snapshot.promptTokens === 0) {
 		return {
 			id: "cacheMeter",
 			priority,
 			...INACTIVE,
-			detail: {
-				glyph: theme.fg("dim", glyph),
-				label: "cache",
-				bar: renderProgressBar(0, theme, colors.hit, "dim", preset, undefined, RENDER_TIER, "up-good"),
-				primary: "—",
-				secondary: "",
-				trailing: "",
-			},
+			line: { dot: "idle", label: "cache", accent: colors.badge, spans: IDLE_SPANS },
 		};
 	}
 
@@ -190,34 +160,34 @@ export function buildCacheMeterSegment(
 			renderCacheMeterRow(snapshot, width, now, theme, "subtle", snapshot.warmth, false, colors, preset),
 		),
 	);
-	// Pad to "100.0%" width (6 chars) for tabular alignment (oh-my-pi-jj7.9)
-	const pct = `${(snapshot.warmth * 100).toFixed(1)}%`.padStart(6, " ");
 	return {
 		id: "cacheMeter",
 		priority,
 		active: true,
 		variants,
-		detail: {
-			glyph: theme.fg(colors.badge, glyph),
+		line: {
+			dot: "live",
 			label: "cache",
-			bar: renderProgressBar(snapshot.warmth, theme, colors.hit, "dim", preset, undefined, RENDER_TIER, "up-good"),
-			primary: pct,
-			secondary:
+			accent: colors.badge,
+			spans: [
+				{ key: "pct", text: `${(snapshot.warmth * 100).toFixed(1)}%` },
 				snapshot.savedCost !== undefined
-					? `saved ${formatCost(snapshot.savedCost)}`
-					: `${snapshot.hitCount}/${snapshot.requestCount}`,
-			trailing: `r ${formatNumber(snapshot.cacheReadTokens)} · w ${formatNumber(snapshot.cacheWriteTokens)} · miss ${formatNumber(snapshot.missTokens)}`,
+					? { key: "saved", text: `saved ${formatCost(snapshot.savedCost)}` }
+					: { key: "hits", text: `${snapshot.hitCount}/${snapshot.requestCount}` },
+				{
+					key: "tokens",
+					text: `r ${formatNumber(snapshot.cacheReadTokens)} · w ${formatNumber(snapshot.cacheWriteTokens)} · miss ${formatNumber(snapshot.missTokens)}`,
+					wideOnly: true,
+				},
+			],
 		},
 	};
 }
-/** Same idle convention as the keeper's own `renderEqualizerText` ("--" when nothing is streaming), without that renderer's `eq ` row prefix — this is a column value, not a standalone row. Padded for tabular alignment (oh-my-pi-jj7.9). */
+
+/** Same idle convention as the keeper's own `renderEqualizerText` ("--" when nothing is streaming), without that renderer's `eq ` row prefix — this is a span value, not a standalone row, so it carries no alignment padding. */
 function cadenceRateLabel(tokensPerSecond: number | null): string {
-	if (tokensPerSecond === null || !Number.isFinite(tokensPerSecond) || tokensPerSecond <= 0) {
-		// Pad "--" to match "160 t/s" width (7 chars)
-		return "  --   ";
-	}
-	// Pad to "160 t/s" width (7 chars) for alignment across 0-160 range
-	return `${Math.round(tokensPerSecond).toString().padStart(3, " ")} t/s`;
+	if (tokensPerSecond === null || !Number.isFinite(tokensPerSecond) || tokensPerSecond <= 0) return "--";
+	return `${Math.round(tokensPerSecond)} t/s`;
 }
 
 /**
@@ -228,11 +198,7 @@ function cadenceRateLabel(tokensPerSecond: number | null): string {
  * assistant `message_start`, mirroring `CadenceEqualizerController`'s own
  * mount trigger) and the live sampled rate (from the same
  * `calculateTokensPerSecond` provider that controller's `sampleRate` calls),
- * neither of which lives on `CadenceEqualizerState`. The detail glyph is
- * always the live `renderCompactEqualizer` strip rather than a separate fixed
- * resting badge (this keeper exports no badge glyph) — at true rest the bands
- * are exactly zero, so the same call already renders the correct dim resting
- * strip, reusing the exported renderer instead of inventing new text.
+ * neither of which lives on `CadenceEqualizerState`.
  */
 /** Cadence Equalizer segment metadata for legend. */
 export const CADENCE_EQUALIZER_SEGMENT = {
@@ -252,17 +218,16 @@ export function buildCadenceEqualizerSegment(
 	preset: SymbolPreset = "unicode",
 ): SegmentSample {
 	const priority = priorityOf("cadenceEqualizer");
-	const bands = state.snapshotBands();
-	const glyph = renderCompactEqualizer(bands, theme, colors);
 	if (!hasStreamed) {
 		return {
 			id: "cadenceEqualizer",
 			priority,
 			...INACTIVE,
-			detail: { glyph, label: "cadence", bar: "", primary: "—", secondary: "", trailing: "" },
+			line: { dot: "idle", label: "cadence", accent: colors.burst, spans: IDLE_SPANS },
 		};
 	}
 
+	const bands = state.snapshotBands();
 	const peaks = state.snapshotPeaks();
 	const variants = dedupe([
 		renderEqualizerRow(bands, peaks, theme, colors, preset),
@@ -281,16 +246,14 @@ export function buildCadenceEqualizerSegment(
 		priority,
 		active: true,
 		variants,
-		detail: {
-			glyph,
+		line: {
+			dot: "live",
 			label: "cadence",
-			bar: "",
-			primary: cadenceRateLabel(tokensPerSecond),
-			// Pad peak value to "peak 160" width (8 chars) for tabular alignment (oh-my-pi-jj7.9)
-			secondary: `peak ${Math.round(peakAmplitude * MAX_REFERENCE_RATE)
-				.toString()
-				.padStart(3, " ")}`,
-			trailing: renderEqualizerRow(bands, peaks, theme, colors, preset),
+			accent: colors.burst,
+			spans: [
+				{ key: "rate", text: cadenceRateLabel(tokensPerSecond) },
+				{ key: "peak", text: `peak ${Math.round(peakAmplitude * MAX_REFERENCE_RATE)}` },
+			],
 		},
 	};
 }
@@ -302,8 +265,7 @@ export function buildCadenceEqualizerSegment(
  * `noteRead`/`noteWrite`. Like Cache Meter, this segment never reproduces
  * the standalone widget's per-frame cosmetics: the alarm badge's pulse blink
  * lives inside `AuditTrailBoxWidget` itself (see `controller.ts`'s module
- * doc), so the glyph here always draws the plain poisoned/badge color,
- * unpulsed.
+ * doc), so this line never blinks.
  */
 /** Audit Trail segment metadata for legend. */
 export const AUDIT_TRAIL_SEGMENT = {
@@ -321,20 +283,12 @@ export function buildAuditTrailBoxSegment(
 	preset: SymbolPreset = "unicode",
 ): SegmentSample {
 	const priority = priorityOf("auditTrailBox");
-	const glyph = auditBadgeGlyph(preset);
 	if (state.size === 0) {
 		return {
 			id: "auditTrailBox",
 			priority,
 			...INACTIVE,
-			detail: {
-				glyph: theme.fg("dim", glyph),
-				label: "audit",
-				bar: "",
-				primary: "—",
-				secondary: "",
-				trailing: "",
-			},
+			line: { dot: "idle", label: "audit", accent: colors.badge, spans: IDLE_SPANS },
 		};
 	}
 
@@ -347,7 +301,7 @@ export function buildAuditTrailBoxSegment(
 	const counts = STATUS_RISK_ORDER.filter(status => snapshot.counts[status] > 0)
 		.map(status => `${snapshot.counts[status]}${statusGlyphMap[status]}`)
 		.join(" ");
-	// Most recently touched path, for the "last path" column — snapshot.paths is
+	// Most recently touched path, for the wide-width tail — snapshot.paths is
 	// already risk-sorted, not recency-sorted, so this needs its own scan.
 	let lastTouched: PathRecord | undefined;
 	for (const record of snapshot.paths) {
@@ -355,37 +309,32 @@ export function buildAuditTrailBoxSegment(
 	}
 	const metrics = snapshot.metrics;
 
+	const spans: PhraseSpan[] = [
+		{ key: "counts", text: counts },
+		{
+			key: "metrics",
+			text: `reads ${metrics.reads} · writes ${metrics.writes} · amp ${metrics.writeAmplification.toFixed(1)}×`,
+		},
+	];
+	if (lastTouched !== undefined) spans.push({ key: "last", text: basename(lastTouched.path), wideOnly: true });
+
 	return {
 		id: "auditTrailBox",
 		priority,
 		active: true,
 		variants,
-		detail: {
-			glyph:
-				snapshot.counts.poisoned > 0
-					? dashedUnderline(theme.fg(colors.poisoned, glyph), TERMINAL_PROGRAM)
-					: theme.fg(colors.badge, glyph),
-			label: "audit",
-			bar: "",
-			primary: counts,
-			secondary: lastTouched === undefined ? "" : basename(lastTouched.path),
-			// Pad to "99.9×" width (4 chars) for tabular alignment; realistic max is <100× (oh-my-pi-jj7.9)
-			trailing: `reads ${metrics.reads} · writes ${metrics.writes} · amp ${metrics.writeAmplification.toFixed(1).padStart(4, " ")}×`,
-		},
+		line: { dot: "live", label: "audit", accent: colors.badge, spans },
 	};
 }
 
-/** `resets <N>m`/`resets <N>s`-style ETA to the binding bucket's reset, or `""` when the response reported none. Padded for tabular alignment (oh-my-pi-jj7.9). */
+/** `resets <N>m`/`resets <N>s`-style ETA to the binding bucket's reset, or `""` when the response reported none. */
 function resetEtaLabel(resetAtMs: number | undefined, now: number): string {
 	if (resetAtMs === undefined) return "";
 	const remainingMs = resetAtMs - now;
 	if (remainingMs <= 0) return "resets now";
 	const minutes = Math.floor(remainingMs / 60_000);
-	// Pad to "resets 999m" max width (11 chars) for minutes, "resets 59s" (10 chars) for seconds
-	if (minutes >= 1) return `resets ${minutes.toString().padStart(3, " ")}m`;
-	return `resets ${Math.max(1, Math.round(remainingMs / 1000))
-		.toString()
-		.padStart(2, " ")}s`;
+	if (minutes >= 1) return `resets ${minutes}m`;
+	return `resets ${Math.max(1, Math.round(remainingMs / 1000))}s`;
 }
 
 /**
@@ -403,12 +352,6 @@ function resetEtaLabel(resetAtMs: number | undefined, now: number): string {
  * regardless of `colors` — `TidepoolColors`/`tidepoolColors` only ever
  * override the `water` slot, so an accent override recolors the water alone,
  * exactly as the standalone widget's own accent contract promises.
- *
- * Rate-Limit Tidepool exports no badge glyph of its own — only bar-fill glyphs
- * (`waterGlyph`/`waterShimmerGlyph`/`pebbleGlyph`/`sandGlyph`) parametrized by tier
- * and animation phase. `box.limits` (`../glyph-presets.ts`) is this box's own literal
- * badge, matching Plan 017 Decision 1's table row (same precedent as `box.files`/
- * `box.reflect` below) — now preset-aware instead of a bare hardcoded `"◗"`.
  */
 /** Rate-Limit Tidepool segment metadata for legend. */
 export const RATE_LIMIT_TIDEPOOL_SEGMENT = {
@@ -423,24 +366,16 @@ export function buildRateLimitTidepoolSegment(
 	now: number,
 	theme: BoxTheme,
 	colors: TidepoolColors = TIDEPOOL_COLORS,
-	preset: SymbolPreset = "unicode",
+	_preset: SymbolPreset = "unicode",
 ): SegmentSample {
 	const priority = priorityOf("rateLimitTidepool");
-	const glyph = resolveGlyph("box.limits", preset);
 	const snapshot = state.snapshot();
 	if (snapshot === undefined) {
 		return {
 			id: "rateLimitTidepool",
 			priority,
 			...INACTIVE,
-			detail: {
-				glyph: theme.fg("dim", glyph),
-				label: "limits",
-				bar: renderProgressBar(0, theme, colors.water, "dim", preset, undefined, RENDER_TIER, "down-good"),
-				primary: "—",
-				secondary: "",
-				trailing: "",
-			},
+			line: { dot: "idle", label: "limits", accent: colors.water, spans: IDLE_SPANS },
 		};
 	}
 
@@ -449,23 +384,20 @@ export function buildRateLimitTidepoolSegment(
 		[999, 30, 12].map(width => renderTidepoolRow(level, snapshot.provider, now, width, theme, "subtle", colors)),
 	);
 	const clampedLevel = level <= 0 ? 0 : level >= 1 ? 1 : level;
+	const resetEta = resetEtaLabel(snapshot.resetAtMs, now);
+
+	const spans: PhraseSpan[] = [
+		{ key: "pct", text: `${Math.round(clampedLevel * 100)}%` },
+		{ key: "provider", text: snapshot.provider },
+	];
+	if (resetEta !== "") spans.push({ key: "reset", text: resetEta });
 
 	return {
 		id: "rateLimitTidepool",
 		priority,
 		active: true,
 		variants,
-		detail: {
-			glyph: theme.fg(colors.water, glyph),
-			label: "limits",
-			bar: renderProgressBar(clampedLevel, theme, colors.water, "dim", preset, undefined, RENDER_TIER, "down-good"),
-			// Pad to "100%" width (4 chars) for tabular alignment (oh-my-pi-jj7.9)
-			primary: `${Math.round(clampedLevel * 100)
-				.toString()
-				.padStart(3, " ")}%`,
-			secondary: snapshot.provider,
-			trailing: resetEtaLabel(snapshot.resetAtMs, now),
-		},
+		line: { dot: "live", label: "limits", accent: colors.water, spans },
 	};
 }
 
@@ -516,14 +448,7 @@ export function buildToolConstellationSegment(
 			id: "toolConstellation",
 			priority,
 			...INACTIVE,
-			detail: {
-				glyph: theme.fg("dim", emptyGlyph(preset)),
-				label: "tools",
-				bar: "",
-				primary: "—",
-				secondary: "",
-				trailing: "",
-			},
+			line: { dot: "idle", label: "tools", accent: "dim", spans: IDLE_SPANS },
 		};
 	}
 
@@ -542,21 +467,20 @@ export function buildToolConstellationSegment(
 		.map(category => `${icons[category]}${counts.get(category)} ${category}`)
 		.join(" · ");
 
+	const spans: PhraseSpan[] = [{ key: "total", text: `${total} calls` }];
+	if (dominant !== undefined) spans.push({ key: "top", text: dominant });
+	spans.push({ key: "tally", text: tally, wideOnly: true });
+
 	return {
 		id: "toolConstellation",
 		priority,
 		active: true,
 		variants,
-		detail: {
-			glyph:
-				dominant === undefined
-					? theme.fg("dim", emptyGlyph(preset))
-					: theme.fg(CATEGORY_THEME_COLOR[dominant], icons[dominant]),
+		line: {
+			dot: "live",
 			label: "tools",
-			bar: "",
-			primary: `${total} calls`,
-			secondary: dominant ?? "",
-			trailing: tally,
+			accent: dominant === undefined ? "dim" : CATEGORY_THEME_COLOR[dominant],
+			spans,
 		},
 	};
 }
@@ -582,11 +506,6 @@ function compareVisibleRows(a: PalimpsestRow, b: PalimpsestRow): number {
  * reproduces the ember tier's per-frame hot-pulse bolding — an
  * `AnimatedWidget`-only cosmetic, the same accepted gap as Cache Meter's
  * hit-rate ease (see `controller.ts`'s module doc).
- *
- * Palimpsest exports no badge glyph of its own (unlike Cache Meter's badge or Audit
- * Trail's badge) — `box.files` (`../glyph-presets.ts`) is this box's own literal,
- * matching Plan 017 Decision 5's detailed-mode mock, now preset-aware instead of a bare
- * hardcoded `"▓"`.
  */
 /** Palimpsest segment metadata for legend. */
 export const PALIMPSEST_SEGMENT = {
@@ -599,12 +518,11 @@ export const PALIMPSEST_SEGMENT = {
 export function buildPalimpsestSegment(
 	state: PalimpsestState,
 	_now: number,
-	theme: BoxTheme,
+	_theme: BoxTheme,
 	colors: PalimpsestColors = PALIMPSEST_COLORS,
-	preset: SymbolPreset = "unicode",
+	_preset: SymbolPreset = "unicode",
 ): SegmentSample {
 	const priority = priorityOf("palimpsest");
-	const glyph = resolveGlyph("box.files", preset);
 	const visible = state
 		.snapshot()
 		.rows.filter(row => row.overlapCount >= GLOW_THRESHOLD)
@@ -614,14 +532,7 @@ export function buildPalimpsestSegment(
 			id: "palimpsest",
 			priority,
 			...INACTIVE,
-			detail: {
-				glyph: theme.fg("dim", glyph),
-				label: "files",
-				bar: "",
-				primary: "—",
-				secondary: "",
-				trailing: "",
-			},
+			line: { dot: "idle", label: "files", accent: colors.ember, spans: IDLE_SPANS },
 		};
 	}
 
@@ -637,13 +548,14 @@ export function buildPalimpsestSegment(
 		priority,
 		active: true,
 		variants,
-		detail: {
-			glyph: dashedUnderline(theme.fg(colors.ember, glyph), TERMINAL_PROGRAM),
+		line: {
+			dot: "live",
 			label: "files",
-			bar: "",
-			primary: basename(hottest.path),
-			secondary: `×${hottest.overlapCount}`,
-			trailing: `${visible.length} row${visible.length === 1 ? "" : "s"}`,
+			accent: colors.ember,
+			spans: [
+				{ key: "hot", text: `${basename(hottest.path)} ×${hottest.overlapCount}` },
+				{ key: "rows", text: `${visible.length} row${visible.length === 1 ? "" : "s"}` },
+			],
 		},
 	};
 }
@@ -658,11 +570,6 @@ export function buildPalimpsestSegment(
  * clock — the SAME clock `controller.ts` stamps `applyTrigger`'s trigger
  * timestamp with — so `state.rippleElapsedMs(now)` renders the correct phase
  * even when the trigger landed before the box's first repaint (Decision 4).
- *
- * Reflection Ripple exports no badge glyph of its own (only the phase-parametrized
- * `ringGlyph(brightness)`) — `box.reflect` (`../glyph-presets.ts`) is this box's own
- * literal, matching Plan 017 Decision 1's table row (same precedent as `box.files`/
- * `box.limits` above), now preset-aware instead of a bare hardcoded `"○"`.
  */
 /** Reflection Ripple segment metadata for legend. */
 export const REFLECTION_RIPPLE_SEGMENT = {
@@ -677,24 +584,16 @@ export function buildReflectionRippleSegment(
 	now: number,
 	theme: BoxTheme,
 	colors: ReflectionRippleColors = REFLECTION_RIPPLE_COLORS,
-	preset: SymbolPreset = "unicode",
+	_preset: SymbolPreset = "unicode",
 ): SegmentSample {
 	const priority = priorityOf("reflectionRipple");
-	const glyph = resolveGlyph("box.reflect", preset);
 	const snapshot = state.snapshot();
 	if (snapshot.phase !== "rippling") {
 		return {
 			id: "reflectionRipple",
 			priority,
 			...INACTIVE,
-			detail: {
-				glyph: theme.fg("dim", glyph),
-				label: "reflect",
-				bar: "",
-				primary: "—",
-				secondary: "",
-				trailing: "",
-			},
+			line: { dot: "idle", label: "reflect", accent: colors.ring, spans: IDLE_SPANS },
 		};
 	}
 
@@ -708,13 +607,14 @@ export function buildReflectionRippleSegment(
 		priority,
 		active: true,
 		variants,
-		detail: {
-			glyph: theme.fg(colors.ring, glyph),
+		line: {
+			dot: "live",
 			label: "reflect",
-			bar: "",
-			primary: snapshot.ruleNames.join(", "),
-			secondary: String(snapshot.triggerCount),
-			trailing: "—",
+			accent: colors.ring,
+			spans: [
+				{ key: "rules", text: snapshot.ruleNames.join(", ") },
+				{ key: "count", text: String(snapshot.triggerCount) },
+			],
 		},
 	};
 }

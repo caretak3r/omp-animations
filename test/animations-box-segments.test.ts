@@ -9,19 +9,9 @@ import {
 	buildToolConstellationSegment,
 } from "../src/animations-box/segments";
 import { BOX_SEGMENT_IDS } from "../src/animations-box/settings";
-import {
-	AUDIT_TRAIL_BOX_COLORS,
-	AuditLedgerState,
-	badgeGlyph as auditBadgeGlyphFor,
-	renderAuditMeterRow,
-	statusGlyphs,
-} from "../src/audit-trail-box";
-import {
-	CACHE_METER_COLORS,
-	CacheMeterState,
-	badgeGlyph as cacheBadgeGlyphFor,
-	renderCacheMeterRow,
-} from "../src/cache-meter";
+import type { PhraseSpan } from "../src/animations-box/status-line";
+import { AUDIT_TRAIL_BOX_COLORS, AuditLedgerState, renderAuditMeterRow, statusGlyphs } from "../src/audit-trail-box";
+import { CACHE_METER_COLORS, CacheMeterState, renderCacheMeterRow } from "../src/cache-meter";
 import {
 	CadenceEqualizerState,
 	cadenceEqualizerColors,
@@ -33,19 +23,24 @@ import { MAX_REFERENCE_RATE } from "../src/cadence-equalizer/scale";
 import { GLOW_THRESHOLD, PALIMPSEST_COLORS, PalimpsestState } from "../src/palimpsest";
 import { RateLimitTidepoolState, refillLevel, renderTidepoolRow, TIDEPOOL_COLORS } from "../src/rate-limit-tidepool";
 import { REFLECTION_RIPPLE_COLORS, ReflectionRippleState, renderReflectionRippleRow } from "../src/reflection-ripple";
-import { ConstellationState, categoryIcon, emptyGlyph, renderConstellationTally } from "../src/tool-constellation";
+import {
+	CATEGORY_THEME_COLOR,
+	ConstellationState,
+	categoryIcon,
+	renderConstellationTally,
+} from "../src/tool-constellation";
 
-// Identity theme so assertions see plain text instead of ANSI escapes.
+// Identity theme so variant assertions see plain text instead of ANSI escapes.
+// Builders emit PLAIN spans (Plan 018) — the theme only ever reaches the
+// simple-mode variant renderers, so no color-tagging double is needed here.
 const idTheme = { fg: (_color: string, text: string) => text };
-// Color-tagging theme for tests that need to assert which color token the builder chose.
-const taggedTheme = { fg: (color: string, text: string) => `${color}:${text}` };
 
 // Unicode-tier glyphs, resolved once — every builder call below defaults to `"unicode"`.
-const BADGE_GLYPH = cacheBadgeGlyphFor("unicode");
-const AUDIT_BADGE_GLYPH = auditBadgeGlyphFor("unicode");
 const STATUS_GLYPHS = statusGlyphs("unicode");
 const CATEGORY_ICON = categoryIcon("unicode");
-const EMPTY_GLYPH = emptyGlyph("unicode");
+
+/** D4's *idle* resting phrase — a lone dim em-dash, shared by every builder. */
+const IDLE_SPANS: readonly PhraseSpan[] = [{ key: "idle", text: "—", tone: "dim" }];
 
 function usageSample(
 	provider: string,
@@ -70,32 +65,25 @@ describe("buildCacheMeterSegment — priority", () => {
 	});
 });
 
-describe("buildCacheMeterSegment — resting row (Decision 5: enabled-but-idle, never absent)", () => {
+describe("buildCacheMeterSegment — resting line (Decision 5: enabled-but-idle, never absent)", () => {
 	it("is inactive with empty variants before any prompt-cache telemetry has landed", () => {
 		const sample = buildCacheMeterSegment(new CacheMeterState(), 0, idTheme);
 		expect(sample.active).toBe(false);
 		expect(sample.variants).toEqual([]);
 	});
 
-	it("still renders a full dim resting row: glyph, label 'cache', hollow bar, primary '—', empty secondary/trailing", () => {
+	it("still renders a full resting line: idle dot, label 'cache', badge accent, lone dim em-dash", () => {
 		const sample = buildCacheMeterSegment(new CacheMeterState(), 0, idTheme);
-		expect(sample.detail).toEqual({
-			glyph: BADGE_GLYPH,
+		expect(sample.line).toEqual({
+			dot: "idle",
 			label: "cache",
-			bar: "[░░░░░░░░░░]",
-			primary: "—",
-			secondary: "",
-			trailing: "",
+			accent: CACHE_METER_COLORS.badge,
+			spans: IDLE_SPANS,
 		});
-	});
-
-	it("colors the resting glyph dim, not the active badge accent", () => {
-		const sample = buildCacheMeterSegment(new CacheMeterState(), 0, taggedTheme);
-		expect(sample.detail.glyph).toBe(`dim:${BADGE_GLYPH}`);
 	});
 });
 
-describe("buildCacheMeterSegment — active row", () => {
+describe("buildCacheMeterSegment — active line", () => {
 	function warmedState(): CacheMeterState {
 		const state = new CacheMeterState();
 		state.recordUsage(usageSample("anthropic", "claude", { input: 400, cacheRead: 600, cacheWrite: 200 }));
@@ -116,14 +104,6 @@ describe("buildCacheMeterSegment — active row", () => {
 		expect(sample.variants).toEqual(dedupedExpected);
 	});
 
-	it("never eases the warmth or blinks the badge — always the snapshot's true warmth, unalerted", () => {
-		const state = warmedState();
-		const sample = buildCacheMeterSegment(state, 999, idTheme);
-		// alerted=false and displayWarmth=snapshot.warmth are baked into every variant already
-		// asserted above; this pins the detail column's own percentage to the same true value.
-		expect(sample.detail.primary).toBe(" 50.0%");
-	});
-
 	it("consecutive-equal variants never repeat (dedupe held)", () => {
 		const state = warmedState();
 		const sample = buildCacheMeterSegment(state, 0, idTheme);
@@ -132,15 +112,29 @@ describe("buildCacheMeterSegment — active row", () => {
 		}
 	});
 
-	it("detail.secondary falls back to hit/request counts when no savings rate is derivable", () => {
+	it("lights the live dot and keeps the badge accent, honoring an accent override", () => {
+		const state = warmedState();
+		const colors = { ...CACHE_METER_COLORS, badge: "syntaxString" as const };
+		const sample = buildCacheMeterSegment(state, 0, idTheme, colors);
+		expect(sample.line.dot).toBe("live");
+		expect(sample.line.accent).toBe("syntaxString");
+	});
+
+	it("pct span is the snapshot's true warmth — never eased, never alerted", () => {
+		const state = warmedState();
+		const sample = buildCacheMeterSegment(state, 999, idTheme);
+		expect(sample.line.spans[0]).toEqual({ key: "pct", text: "50.0%" });
+	});
+
+	it("falls back to a hits span (hit/request counts) when no savings rate is derivable", () => {
 		const state = warmedState(); // no Usage.cost supplied anywhere
 		const snapshot = state.snapshot();
 		expect(snapshot.savedCost).toBeUndefined();
 		const sample = buildCacheMeterSegment(state, 0, idTheme);
-		expect(sample.detail.secondary).toBe(`${snapshot.hitCount}/${snapshot.requestCount}`);
+		expect(sample.line.spans[1]).toEqual({ key: "hits", text: `${snapshot.hitCount}/${snapshot.requestCount}` });
 	});
 
-	it("detail.secondary leads with saved cost once a rate is derivable", () => {
+	it("leads with a saved-cost span once a rate is derivable", () => {
 		const state = new CacheMeterState();
 		state.recordUsage(
 			usageSample("anthropic", "claude", {
@@ -150,47 +144,30 @@ describe("buildCacheMeterSegment — active row", () => {
 				cost: { input: 0.3, output: 0.05, cacheRead: 0.02, cacheWrite: 0.01, total: 0.38 },
 			}),
 		);
-		const snapshot = state.snapshot();
-		expect(snapshot.savedCost).toBeDefined();
+		const savedCost = state.snapshot().savedCost as number;
+		expect(savedCost).toBeDefined();
 		const sample = buildCacheMeterSegment(state, 0, idTheme);
-		expect(sample.detail.secondary).toBe(`saved $${(snapshot.savedCost as number).toFixed(2)}`);
+		const expected = savedCost < 0.01 ? "<$0.01" : `$${savedCost.toFixed(2)}`;
+		expect(sample.line.spans[1]).toEqual({ key: "saved", text: `saved ${expected}` });
 	});
 
-	it("detail.trailing is 'r <read> · w <write> · miss <miss>' using the same number formatting as the standalone widget", () => {
+	it("carries the r/w/miss token triple only as a wide-only tail span", () => {
 		const state = warmedState();
 		const snapshot = state.snapshot();
 		const sample = buildCacheMeterSegment(state, 0, idTheme);
-		expect(sample.detail.trailing).toBe(
-			`r ${snapshot.cacheReadTokens} · w ${snapshot.cacheWriteTokens} · miss ${snapshot.missTokens}`,
-		);
-	});
-
-	it("colors the active glyph with the badge accent, honoring an accent override", () => {
-		const state = warmedState();
-		const colors = { ...CACHE_METER_COLORS, badge: "syntaxString" as const };
-		const sample = buildCacheMeterSegment(state, 0, taggedTheme, colors);
-		expect(sample.detail.glyph).toBe(`syntaxString:${BADGE_GLYPH}`);
+		expect(sample.line.spans[2]).toEqual({
+			key: "tokens",
+			text: `r ${snapshot.cacheReadTokens} · w ${snapshot.cacheWriteTokens} · miss ${snapshot.missTokens}`,
+			wideOnly: true,
+		});
 	});
 });
 
 describe("buildCacheMeterSegment — glyph preset", () => {
-	function warmedState(): CacheMeterState {
+	it("forwards the preset into the simple-mode variants (ascii badge substitute '#')", () => {
 		const state = new CacheMeterState();
 		state.recordUsage(usageSample("anthropic", "claude", { input: 400, cacheRead: 600, cacheWrite: 200 }));
-		return state;
-	}
-
-	it("defaults to the unicode badge when no preset is passed", () => {
-		const sample = buildCacheMeterSegment(new CacheMeterState(), 0, idTheme);
-		expect(sample.detail.glyph).toBe(BADGE_GLYPH);
-	});
-
-	it("swaps the badge for the ascii substitute when preset is 'ascii', resting and active", () => {
-		const resting = buildCacheMeterSegment(new CacheMeterState(), 0, idTheme, CACHE_METER_COLORS, "ascii");
-		expect(resting.detail.glyph).toBe("#");
-
-		const active = buildCacheMeterSegment(warmedState(), 0, idTheme, CACHE_METER_COLORS, "ascii");
-		expect(active.detail.glyph).toBe("#");
+		const active = buildCacheMeterSegment(state, 0, idTheme, CACHE_METER_COLORS, "ascii");
 		expect(active.variants[0]?.startsWith("#")).toBe(true);
 	});
 });
@@ -208,31 +185,25 @@ describe("buildCadenceEqualizerSegment — priority", () => {
 	});
 });
 
-describe("buildCadenceEqualizerSegment — resting row (Decision 5: enabled-but-idle, never absent)", () => {
+describe("buildCadenceEqualizerSegment — resting line (Decision 5: enabled-but-idle, never absent)", () => {
 	it("is inactive with empty variants before the first assistant message_start (hasStreamed=false)", () => {
 		const sample = buildCadenceEqualizerSegment(new CadenceEqualizerState(), false, null, 0, idTheme);
 		expect(sample.active).toBe(false);
 		expect(sample.variants).toEqual([]);
 	});
 
-	it("still renders a full resting row: label 'cadence', primary '—', empty secondary/trailing", () => {
+	it("still renders a full resting line: idle dot, label 'cadence', burst accent, lone dim em-dash", () => {
 		const sample = buildCadenceEqualizerSegment(new CadenceEqualizerState(), false, null, 0, idTheme);
-		expect(sample.detail.label).toBe("cadence");
-		expect(sample.detail.primary).toBe("—");
-		expect(sample.detail.secondary).toBe("");
-		expect(sample.detail.trailing).toBe("");
-	});
-
-	it("the resting glyph is the live renderCompactEqualizer strip over the state's own (zero) bands, never a separate invented literal", () => {
-		const state = new CadenceEqualizerState();
-		const sample = buildCadenceEqualizerSegment(state, false, null, 0, taggedTheme);
-		expect(sample.detail.glyph).toBe(
-			renderCompactEqualizer(state.snapshotBands(), taggedTheme, cadenceEqualizerColors()),
-		);
+		expect(sample.line).toEqual({
+			dot: "idle",
+			label: "cadence",
+			accent: cadenceEqualizerColors().burst,
+			spans: IDLE_SPANS,
+		});
 	});
 });
 
-describe("buildCadenceEqualizerSegment — active row", () => {
+describe("buildCadenceEqualizerSegment — active line", () => {
 	function warmedCadenceState(): CadenceEqualizerState {
 		const state = new CadenceEqualizerState();
 		for (let i = 0; i < 10; i++) state.pushSample(0.9);
@@ -264,43 +235,36 @@ describe("buildCadenceEqualizerSegment — active row", () => {
 		}
 	});
 
-	it("detail.primary is '<N> t/s', rounded, when a live rate is sampled", () => {
+	it("rate span is '<N> t/s', rounded, when a live rate is sampled", () => {
 		const state = warmedCadenceState();
 		const sample = buildCadenceEqualizerSegment(state, true, 41.6, 0, idTheme);
-		expect(sample.detail.primary).toBe(" 42 t/s");
+		expect(sample.line.dot).toBe("live");
+		expect(sample.line.spans[0]).toEqual({ key: "rate", text: "42 t/s" });
 	});
 
-	it("detail.primary falls back to renderEqualizerText's own idle convention ('--') once hasStreamed is true but nothing is currently sampled", () => {
+	it("rate span falls back to the keeper's own idle convention ('--') once hasStreamed is true but nothing is currently sampled", () => {
 		const state = warmedCadenceState();
 		const sample = buildCadenceEqualizerSegment(state, true, null, 0, idTheme);
-		expect(sample.detail.primary).toBe("  --   ");
+		expect(sample.line.spans[0]).toEqual({ key: "rate", text: "--" });
 	});
 
-	it("detail.secondary is 'peak <N>', the highest band-peak amplitude denormalized back through MAX_REFERENCE_RATE", () => {
+	it("peak span is 'peak <N>', the highest band-peak amplitude denormalized back through MAX_REFERENCE_RATE", () => {
 		const state = warmedCadenceState();
 		const peaks = state.snapshotPeaks();
 		let peakAmplitude = 0;
 		for (const peak of peaks) if (peak > peakAmplitude) peakAmplitude = peak;
 		const sample = buildCadenceEqualizerSegment(state, true, 41, 0, idTheme);
-		expect(sample.detail.secondary).toBe(`peak ${Math.round(peakAmplitude * MAX_REFERENCE_RATE)}`);
+		expect(sample.line.spans[1]).toEqual({
+			key: "peak",
+			text: `peak ${Math.round(peakAmplitude * MAX_REFERENCE_RATE)}`,
+		});
 	});
 
-	it("detail.trailing is the full renderEqualizerRow band bar (peak caps included)", () => {
-		const state = warmedCadenceState();
-		const sample = buildCadenceEqualizerSegment(state, true, 41, 0, idTheme);
-		expect(sample.detail.trailing).toBe(
-			renderEqualizerRow(state.snapshotBands(), state.snapshotPeaks(), idTheme, cadenceEqualizerColors()),
-		);
-	});
-
-	it("detail.glyph is the renderCompactEqualizer strip over the SAME live bands, honoring an accent override for the burst bucket", () => {
+	it("keeps the burst accent, honoring an accent override", () => {
 		const state = warmedCadenceState();
 		const colors = cadenceEqualizerColors("syntaxString");
-		const sample = buildCadenceEqualizerSegment(state, true, 41, 0, taggedTheme, colors);
-		expect(sample.detail.glyph).toBe(renderCompactEqualizer(state.snapshotBands(), taggedTheme, colors));
-		// The warmed state (target 0.9, 10 steps) drives the fast band well past the
-		// burst threshold (>0.75 normalized), so the override must actually surface.
-		expect(sample.detail.glyph).toContain("syntaxString:");
+		const sample = buildCadenceEqualizerSegment(state, true, 41, 0, idTheme, colors);
+		expect(sample.line.accent).toBe(colors.burst);
 	});
 });
 
@@ -315,32 +279,25 @@ describe("buildAuditTrailBoxSegment — priority", () => {
 	});
 });
 
-describe("buildAuditTrailBoxSegment — resting row (Decision 5: enabled-but-idle, never absent)", () => {
+describe("buildAuditTrailBoxSegment — resting line (Decision 5: enabled-but-idle, never absent)", () => {
 	it("is inactive with empty variants before any tool has touched a path", () => {
 		const sample = buildAuditTrailBoxSegment(new AuditLedgerState(), 0, idTheme);
 		expect(sample.active).toBe(false);
 		expect(sample.variants).toEqual([]);
 	});
 
-	it("still renders a full dim resting row: glyph, label 'audit', primary '—', empty secondary/trailing", () => {
+	it("still renders a full resting line: idle dot, label 'audit', badge accent, lone dim em-dash", () => {
 		const sample = buildAuditTrailBoxSegment(new AuditLedgerState(), 0, idTheme);
-		expect(sample.detail).toEqual({
-			glyph: AUDIT_BADGE_GLYPH,
+		expect(sample.line).toEqual({
+			dot: "idle",
 			label: "audit",
-			bar: "",
-			primary: "—",
-			secondary: "",
-			trailing: "",
+			accent: AUDIT_TRAIL_BOX_COLORS.badge,
+			spans: IDLE_SPANS,
 		});
-	});
-
-	it("colors the resting glyph dim, not the active badge accent", () => {
-		const sample = buildAuditTrailBoxSegment(new AuditLedgerState(), 0, taggedTheme);
-		expect(sample.detail.glyph).toBe(`dim:${AUDIT_BADGE_GLYPH}`);
 	});
 });
 
-describe("buildAuditTrailBoxSegment — active row", () => {
+describe("buildAuditTrailBoxSegment — active line", () => {
 	it("is active once the first path is tracked, with variants matching renderAuditMeterRow at the exact 999/40/18 budgets, deduped", () => {
 		const state = new AuditLedgerState();
 		state.noteRead("/repo/src/foo.ts");
@@ -365,72 +322,37 @@ describe("buildAuditTrailBoxSegment — active row", () => {
 		}
 	});
 
-	it("detail.primary is the status counts, highest-risk-first, using the keeper's own STATUS_GLYPHS", () => {
+	it("counts span is the status counts, highest-risk-first, using the keeper's own status glyphs", () => {
 		const state = new AuditLedgerState();
 		state.noteRead("/repo/src/foo.ts"); // fresh
 		const sample = buildAuditTrailBoxSegment(state, 0, idTheme);
-		expect(sample.detail.primary).toBe(`1${STATUS_GLYPHS.fresh}`);
+		expect(sample.line.dot).toBe("live");
+		expect(sample.line.spans[0]).toEqual({ key: "counts", text: `1${STATUS_GLYPHS.fresh}` });
 	});
 
-	it("detail.secondary is the basename of the most recently touched path", () => {
+	it("metrics span is 'reads <reads> · writes <writes> · amp <write amplification>×'", () => {
+		const state = new AuditLedgerState();
+		state.noteRead("/repo/src/foo.ts");
+		state.noteWrite("/repo/src/foo.ts", 0);
+		const sample = buildAuditTrailBoxSegment(state, 0, idTheme);
+		expect(sample.line.spans[1]).toEqual({ key: "metrics", text: "reads 1 · writes 1 · amp 1.0×" });
+	});
+
+	it("last span is the basename of the most recently touched path, wide-only", () => {
 		const state = new AuditLedgerState();
 		state.noteRead("/repo/src/foo.ts");
 		state.noteTurn(); // advance the turn clock so bar.ts's touch is unambiguously later
 		state.noteWrite("/repo/src/bar.ts", 0);
 		const sample = buildAuditTrailBoxSegment(state, 0, idTheme);
-		expect(sample.detail.secondary).toBe("bar.ts");
+		expect(sample.line.spans[2]).toEqual({ key: "last", text: "bar.ts", wideOnly: true });
 	});
 
-	it("detail.trailing is 'reads <reads> · writes <writes> · amp <write amplification>×'", () => {
-		const state = new AuditLedgerState();
-		state.noteRead("/repo/src/foo.ts");
-		state.noteWrite("/repo/src/foo.ts", 0);
-		const sample = buildAuditTrailBoxSegment(state, 0, idTheme);
-		expect(sample.detail.trailing).toBe("reads 1 · writes 1 · amp  1.0×");
-	});
-
-	it("colors the active glyph with the badge accent when nothing is poisoned, honoring an accent override", () => {
+	it("keeps the badge accent, honoring an accent override", () => {
 		const state = new AuditLedgerState();
 		state.noteRead("/repo/src/foo.ts");
 		const colors = { ...AUDIT_TRAIL_BOX_COLORS, badge: "syntaxString" as const };
-		const sample = buildAuditTrailBoxSegment(state, 0, taggedTheme, colors);
-		expect(sample.detail.glyph).toBe(`syntaxString:${AUDIT_BADGE_GLYPH}`);
-	});
-
-	it("colors the glyph with the poisoned token once a path has crossed the POISONED gate, never pulsing it", () => {
-		const state = new AuditLedgerState();
-		state.noteRead("/repo/src/foo.ts", { hash: "h1" });
-		// Two consecutive divergent probe ticks are required before POISONED sticks (POISON_STREAK_TICKS).
-		state.noteProbe([{ path: "/repo/src/foo.ts", hash: "h2", reachable: true }], 0);
-		state.noteProbe([{ path: "/repo/src/foo.ts", hash: "h2", reachable: true }], 1);
-		const snapshot = state.snapshot();
-		expect(snapshot.counts.poisoned).toBe(1);
-
-		const sample = buildAuditTrailBoxSegment(state, 999, taggedTheme, AUDIT_TRAIL_BOX_COLORS);
-		expect(sample.detail.glyph).toBe(`${AUDIT_TRAIL_BOX_COLORS.poisoned}:${AUDIT_BADGE_GLYPH}`);
-	});
-});
-
-describe("buildAuditTrailBoxSegment — glyph preset", () => {
-	it("defaults to the unicode badge and status glyphs when no preset is passed", () => {
-		const resting = buildAuditTrailBoxSegment(new AuditLedgerState(), 0, idTheme);
-		expect(resting.detail.glyph).toBe(AUDIT_BADGE_GLYPH);
-
-		const state = new AuditLedgerState();
-		state.noteRead("/repo/src/foo.ts");
-		const active = buildAuditTrailBoxSegment(state, 0, idTheme);
-		expect(active.detail.primary).toBe(`1${STATUS_GLYPHS.fresh}`);
-	});
-
-	it("swaps the badge and status glyphs for their ascii substitutes when preset is 'ascii'", () => {
-		const resting = buildAuditTrailBoxSegment(new AuditLedgerState(), 0, idTheme, AUDIT_TRAIL_BOX_COLORS, "ascii");
-		expect(resting.detail.glyph).toBe("@");
-
-		const state = new AuditLedgerState();
-		state.noteRead("/repo/src/foo.ts");
-		const active = buildAuditTrailBoxSegment(state, 0, idTheme, AUDIT_TRAIL_BOX_COLORS, "ascii");
-		expect(active.detail.glyph).toBe("@");
-		expect(active.detail.primary).toBe("1v"); // fresh -> "v" in ascii
+		const sample = buildAuditTrailBoxSegment(state, 0, idTheme, colors);
+		expect(sample.line.accent).toBe("syntaxString");
 	});
 });
 
@@ -445,32 +367,25 @@ describe("buildRateLimitTidepoolSegment — priority", () => {
 	});
 });
 
-describe("buildRateLimitTidepoolSegment — resting row (Decision 5: enabled-but-idle, never absent)", () => {
+describe("buildRateLimitTidepoolSegment — resting line (Decision 5: enabled-but-idle, never absent)", () => {
 	it("is inactive with empty variants before any recognized response has landed (snapshot() undefined)", () => {
 		const sample = buildRateLimitTidepoolSegment(new RateLimitTidepoolState(), 0, idTheme);
 		expect(sample.active).toBe(false);
 		expect(sample.variants).toEqual([]);
 	});
 
-	it("still renders a full dim resting row: glyph '◗', label 'limits', hollow bar, primary '—', empty secondary/trailing", () => {
+	it("still renders a full resting line: idle dot, label 'limits', water accent, lone dim em-dash", () => {
 		const sample = buildRateLimitTidepoolSegment(new RateLimitTidepoolState(), 0, idTheme);
-		expect(sample.detail).toEqual({
-			glyph: "◗",
+		expect(sample.line).toEqual({
+			dot: "idle",
 			label: "limits",
-			bar: "[░░░░░░░░░░]",
-			primary: "—",
-			secondary: "",
-			trailing: "",
+			accent: TIDEPOOL_COLORS.water,
+			spans: IDLE_SPANS,
 		});
-	});
-
-	it("colors the resting glyph dim, not the active water accent", () => {
-		const sample = buildRateLimitTidepoolSegment(new RateLimitTidepoolState(), 0, taggedTheme);
-		expect(sample.detail.glyph).toBe("dim:◗");
 	});
 });
 
-describe("buildRateLimitTidepoolSegment — active row", () => {
+describe("buildRateLimitTidepoolSegment — active line", () => {
 	function pooledState(
 		level = 0.78,
 		resetAtMs: number | undefined = undefined,
@@ -503,83 +418,58 @@ describe("buildRateLimitTidepoolSegment — active row", () => {
 		}
 	});
 
-	it("detail.primary is the refill-adjusted level as a rounded percentage", () => {
+	it("pct span is the refill-adjusted level as a rounded percentage", () => {
 		const state = pooledState(0.784);
 		const sample = buildRateLimitTidepoolSegment(state, 0, idTheme);
-		expect(sample.detail.primary).toBe(" 78%");
+		expect(sample.line.dot).toBe("live");
+		expect(sample.line.spans[0]).toEqual({ key: "pct", text: "78%" });
 	});
 
-	it("detail.primary eases toward full as now advances from observedAtMs toward resetAtMs (refillLevel)", () => {
+	it("pct span eases toward full as now advances from observedAtMs toward resetAtMs (refillLevel)", () => {
 		const state = pooledState(0.5, 10_000, 0);
 		const sample = buildRateLimitTidepoolSegment(state, 5_000, idTheme);
 		const expectedLevel = refillLevel(0.5, 5_000, 0, 10_000);
-		expect(sample.detail.primary).toBe(`${String(Math.round(expectedLevel * 100)).padStart(3, " ")}%`);
-		expect(sample.detail.primary).not.toBe("50%"); // must have actually refilled, not held the raw observed level
+		expect(sample.line.spans[0]).toEqual({ key: "pct", text: `${Math.round(expectedLevel * 100)}%` });
+		expect(Math.round(expectedLevel * 100)).not.toBe(50); // must have actually refilled, not held the raw observed level
 	});
 
-	it("detail.secondary is the bare provider", () => {
+	it("provider span is the bare provider", () => {
 		const state = pooledState();
 		const sample = buildRateLimitTidepoolSegment(state, 0, idTheme);
-		expect(sample.detail.secondary).toBe("anthropic");
+		expect(sample.line.spans[1]).toEqual({ key: "provider", text: "anthropic" });
 	});
 
-	it("detail.trailing is 'resets <N>m' for a reset more than a minute out", () => {
+	it("reset span is 'resets <N>m' for a reset more than a minute out", () => {
 		const state = pooledState(0.5, 12 * 60_000, 0);
 		const sample = buildRateLimitTidepoolSegment(state, 0, idTheme);
-		expect(sample.detail.trailing).toBe("resets  12m");
+		expect(sample.line.spans[2]).toEqual({ key: "reset", text: "resets 12m" });
 	});
 
-	it("detail.trailing is 'resets <N>s' for a sub-minute reset", () => {
+	it("reset span is 'resets <N>s' for a sub-minute reset", () => {
 		const state = pooledState(0.5, 30_000, 0);
 		const sample = buildRateLimitTidepoolSegment(state, 0, idTheme);
-		expect(sample.detail.trailing).toBe("resets 30s");
+		expect(sample.line.spans[2]).toEqual({ key: "reset", text: "resets 30s" });
 	});
 
-	it("detail.trailing is empty when the binding bucket reported no reset", () => {
+	it("reset span is absent when the binding bucket reported no reset", () => {
 		const state = pooledState(0.5, undefined, 0);
 		const sample = buildRateLimitTidepoolSegment(state, 0, idTheme);
-		expect(sample.detail.trailing).toBe("");
+		expect(sample.line.spans).toHaveLength(2);
+		expect(sample.line.spans.some(span => span.key === "reset")).toBe(false);
 	});
 
-	it("detail.trailing reads 'resets now' once the reset has already passed", () => {
+	it("reset span reads 'resets now' once the reset has already passed", () => {
 		const state = pooledState(0.5, 1_000, 0);
 		const sample = buildRateLimitTidepoolSegment(state, 5_000, idTheme);
-		expect(sample.detail.trailing).toBe("resets now");
+		expect(sample.line.spans[2]).toEqual({ key: "reset", text: "resets now" });
 	});
 
-	it("colors the active glyph with the water accent, honoring an accent override — the sand alarm color stays fixed regardless", () => {
+	it("keeps the water accent, honoring an accent override — the sand alarm color stays fixed regardless", () => {
 		const state = pooledState();
 		const colors = { ...TIDEPOOL_COLORS, water: "syntaxString" as const };
-		const sample = buildRateLimitTidepoolSegment(state, 0, taggedTheme, colors);
-		expect(sample.detail.glyph).toBe("syntaxString:◗");
+		const sample = buildRateLimitTidepoolSegment(state, 0, idTheme, colors);
+		expect(sample.line.accent).toBe("syntaxString");
 		expect(colors.sand).toBe(TIDEPOOL_COLORS.sand);
-	});
-});
-
-describe("buildRateLimitTidepoolSegment — glyph preset", () => {
-	function pooledState(): RateLimitTidepoolState {
-		const state = new RateLimitTidepoolState();
-		state.applySample({
-			provider: "anthropic",
-			family: "anthropic",
-			level: 0.78,
-			resetAtMs: undefined,
-			observedAtMs: 0,
-		});
-		return state;
-	}
-
-	it("defaults to the unicode badge '◗' when no preset is passed", () => {
-		const sample = buildRateLimitTidepoolSegment(new RateLimitTidepoolState(), 0, idTheme);
-		expect(sample.detail.glyph).toBe("◗");
-	});
-
-	it("swaps the badge for the ascii substitute ')' when preset is 'ascii', resting and active", () => {
-		const resting = buildRateLimitTidepoolSegment(new RateLimitTidepoolState(), 0, idTheme, TIDEPOOL_COLORS, "ascii");
-		expect(resting.detail.glyph).toBe(")");
-
-		const active = buildRateLimitTidepoolSegment(pooledState(), 0, idTheme, TIDEPOOL_COLORS, "ascii");
-		expect(active.detail.glyph).toBe(")");
 	});
 });
 
@@ -594,32 +484,25 @@ describe("buildToolConstellationSegment — priority", () => {
 	});
 });
 
-describe("buildToolConstellationSegment — resting row (Decision 5: enabled-but-idle, never absent)", () => {
+describe("buildToolConstellationSegment — resting line (Decision 5: enabled-but-idle, never absent)", () => {
 	it("is inactive with empty variants before any tool_call has fired", () => {
 		const sample = buildToolConstellationSegment(new ConstellationState(), 0, idTheme);
 		expect(sample.active).toBe(false);
 		expect(sample.variants).toEqual([]);
 	});
 
-	it("still renders a full dim resting row: glyph, label 'tools', primary '—', empty secondary/trailing", () => {
+	it("still renders a full resting line: idle dot, label 'tools', dim accent, lone dim em-dash", () => {
 		const sample = buildToolConstellationSegment(new ConstellationState(), 0, idTheme);
-		expect(sample.detail).toEqual({
-			glyph: EMPTY_GLYPH,
+		expect(sample.line).toEqual({
+			dot: "idle",
 			label: "tools",
-			bar: "",
-			primary: "—",
-			secondary: "",
-			trailing: "",
+			accent: "dim",
+			spans: IDLE_SPANS,
 		});
-	});
-
-	it("colors the resting glyph dim", () => {
-		const sample = buildToolConstellationSegment(new ConstellationState(), 0, taggedTheme);
-		expect(sample.detail.glyph).toBe(`dim:${EMPTY_GLYPH}`);
 	});
 });
 
-describe("buildToolConstellationSegment — active row", () => {
+describe("buildToolConstellationSegment — active line", () => {
 	it("collapses to a single variant when only one category has fired (full and truncated coincide)", () => {
 		const state = new ConstellationState();
 		state.recordFire("read", 0);
@@ -646,55 +529,46 @@ describe("buildToolConstellationSegment — active row", () => {
 		state.recordFire("write", 0); // categorizes to "write", fired first
 		state.recordFire("read", 0); // categorizes to "read", fired second, but read precedes write in CATEGORY_ORDER
 		const sample = buildToolConstellationSegment(state, 0, idTheme);
-		expect(sample.detail.secondary).toBe("read");
+		expect(sample.line.spans[1]).toEqual({ key: "top", text: "read" });
 	});
 
-	it("detail.primary is the total fire count across every category", () => {
+	it("total span is the total fire count across every category", () => {
 		const state = new ConstellationState();
 		state.recordFire("read", 0);
 		state.recordFire("read", 0);
 		state.recordFire("bash", 0);
 		const sample = buildToolConstellationSegment(state, 0, idTheme);
-		expect(sample.detail.primary).toBe("3 calls");
+		expect(sample.line.dot).toBe("live");
+		expect(sample.line.spans[0]).toEqual({ key: "total", text: "3 calls" });
 	});
 
-	it("detail.trailing is the icon+count+name tally, in CATEGORY_ORDER, uncolored", () => {
+	it("tally span is the icon+count+name tally, in CATEGORY_ORDER, wide-only", () => {
 		const state = new ConstellationState();
 		state.recordFire("read", 0);
 		state.recordFire("read", 0);
 		state.recordFire("bash", 0);
 		const sample = buildToolConstellationSegment(state, 0, idTheme);
-		expect(sample.detail.trailing).toBe(`${CATEGORY_ICON.read}2 read · ${CATEGORY_ICON.bash}1 bash`);
+		expect(sample.line.spans[2]).toEqual({
+			key: "tally",
+			text: `${CATEGORY_ICON.read}2 read · ${CATEGORY_ICON.bash}1 bash`,
+			wideOnly: true,
+		});
 	});
 
-	it("colors the dominant-category glyph with CATEGORY_THEME_COLOR — no accent override slot exists for this segment", () => {
+	it("accents the line with the dominant category's CATEGORY_THEME_COLOR — no accent override slot exists for this segment", () => {
 		const state = new ConstellationState();
 		state.recordFire("read", 0);
-		const sample = buildToolConstellationSegment(state, 0, taggedTheme);
-		expect(sample.detail.glyph).toBe("syntaxVariable:⛏\uFE0E");
+		const sample = buildToolConstellationSegment(state, 0, idTheme);
+		expect(sample.line.accent).toBe(CATEGORY_THEME_COLOR.read);
 	});
 });
 
 describe("buildToolConstellationSegment — glyph preset", () => {
-	it("defaults to the unicode empty glyph and category icons when no preset is passed", () => {
-		const resting = buildToolConstellationSegment(new ConstellationState(), 0, idTheme);
-		expect(resting.detail.glyph).toBe(EMPTY_GLYPH);
-
-		const state = new ConstellationState();
-		state.recordFire("read", 0);
-		const active = buildToolConstellationSegment(state, 0, idTheme);
-		expect(active.detail.trailing).toBe(`${CATEGORY_ICON.read}1 read`);
-	});
-
-	it("swaps the empty glyph and category icons for their ascii substitutes when preset is 'ascii'", () => {
-		const resting = buildToolConstellationSegment(new ConstellationState(), 0, idTheme, "ascii");
-		expect(resting.detail.glyph).toBe(".");
-
+	it("forwards the preset into the tally span's category icons (ascii substitutes)", () => {
 		const state = new ConstellationState();
 		state.recordFire("read", 0);
 		const active = buildToolConstellationSegment(state, 0, idTheme, "ascii");
-		expect(active.detail.trailing).toBe("^1 read"); // read -> "^" in ascii
-		expect(active.detail.glyph).toBe("^");
+		expect(active.line.spans[2]).toEqual({ key: "tally", text: "^1 read", wideOnly: true }); // read -> "^" in ascii
 	});
 });
 
@@ -709,7 +583,7 @@ describe("buildPalimpsestSegment — priority", () => {
 	});
 });
 
-describe("buildPalimpsestSegment — resting row (Decision 5: enabled-but-idle, never absent)", () => {
+describe("buildPalimpsestSegment — resting line (Decision 5: enabled-but-idle, never absent)", () => {
 	it("is inactive with empty variants before any region clears GLOW_THRESHOLD", () => {
 		const sample = buildPalimpsestSegment(new PalimpsestState(), 0, idTheme);
 		expect(sample.active).toBe(false);
@@ -724,25 +598,18 @@ describe("buildPalimpsestSegment — resting row (Decision 5: enabled-but-idle, 
 		expect(sample.active).toBe(false);
 	});
 
-	it("still renders a full dim resting row: glyph '▓', label 'files', primary '—', empty secondary/trailing", () => {
+	it("still renders a full resting line: idle dot, label 'files', ember accent, lone dim em-dash", () => {
 		const sample = buildPalimpsestSegment(new PalimpsestState(), 0, idTheme);
-		expect(sample.detail).toEqual({
-			glyph: "▓",
+		expect(sample.line).toEqual({
+			dot: "idle",
 			label: "files",
-			bar: "",
-			primary: "—",
-			secondary: "",
-			trailing: "",
+			accent: PALIMPSEST_COLORS.ember,
+			spans: IDLE_SPANS,
 		});
-	});
-
-	it("colors the resting glyph dim", () => {
-		const sample = buildPalimpsestSegment(new PalimpsestState(), 0, taggedTheme);
-		expect(sample.detail.glyph).toBe("dim:▓");
 	});
 });
 
-describe("buildPalimpsestSegment — active row", () => {
+describe("buildPalimpsestSegment — active line", () => {
 	function thrashedState(): PalimpsestState {
 		const state = new PalimpsestState();
 		state.applySpans("/repo/src/foo.ts", [{ start: 1, end: 5 }]);
@@ -774,50 +641,25 @@ describe("buildPalimpsestSegment — active row", () => {
 		state.applySpans("/repo/b.ts", [{ start: 1, end: 5 }]); // b.ts thrashes at turn 1, more recent
 
 		const sample = buildPalimpsestSegment(state, 0, idTheme);
-		expect(sample.detail.primary).toBe("b.ts");
-		expect(sample.detail.trailing).toBe("2 rows");
+		expect(sample.line.spans[0]).toEqual({ key: "hot", text: "b.ts ×2" });
+		expect(sample.line.spans[1]).toEqual({ key: "rows", text: "2 rows" });
 	});
 
-	it("detail: ember glyph, basename primary, ×<overlap> secondary, pluralized visible-row count trailing", () => {
+	it("hot span is '<basename> ×<overlap>', rows span pluralizes the visible-row count", () => {
 		const state = thrashedState();
 		const sample = buildPalimpsestSegment(state, 0, idTheme);
-		expect(sample.detail).toEqual({
-			glyph: "▓",
-			label: "files",
-			bar: "",
-			primary: "foo.ts",
-			secondary: "×2",
-			trailing: "1 row",
-		});
+		expect(sample.line.dot).toBe("live");
+		expect(sample.line.spans).toEqual([
+			{ key: "hot", text: "foo.ts ×2" },
+			{ key: "rows", text: "1 row" },
+		]);
 	});
 
-	it("colors the active glyph with the ember accent, honoring an accent override", () => {
+	it("keeps the ember accent, honoring an accent override", () => {
 		const state = thrashedState();
 		const colors = { ...PALIMPSEST_COLORS, ember: "syntaxString" as const };
-		const sample = buildPalimpsestSegment(state, 0, taggedTheme, colors);
-		expect(sample.detail.glyph).toBe("syntaxString:▓");
-	});
-});
-
-describe("buildPalimpsestSegment — glyph preset", () => {
-	function thrashedState(): PalimpsestState {
-		const state = new PalimpsestState();
-		state.applySpans("/repo/src/foo.ts", [{ start: 1, end: 5 }]);
-		state.applySpans("/repo/src/foo.ts", [{ start: 1, end: 5 }]);
-		return state;
-	}
-
-	it("defaults to the unicode badge '▓' when no preset is passed", () => {
-		const sample = buildPalimpsestSegment(new PalimpsestState(), 0, idTheme);
-		expect(sample.detail.glyph).toBe("▓");
-	});
-
-	it("swaps the badge for the ascii substitute '%' when preset is 'ascii', resting and active", () => {
-		const resting = buildPalimpsestSegment(new PalimpsestState(), 0, idTheme, PALIMPSEST_COLORS, "ascii");
-		expect(resting.detail.glyph).toBe("%");
-
-		const active = buildPalimpsestSegment(thrashedState(), 0, idTheme, PALIMPSEST_COLORS, "ascii");
-		expect(active.detail.glyph).toBe("%");
+		const sample = buildPalimpsestSegment(state, 0, idTheme, colors);
+		expect(sample.line.accent).toBe("syntaxString");
 	});
 });
 
@@ -832,7 +674,7 @@ describe("buildReflectionRippleSegment — priority", () => {
 	});
 });
 
-describe("buildReflectionRippleSegment — resting row (Decision 1: idle is the COMMON state, not a startup gap)", () => {
+describe("buildReflectionRippleSegment — resting line (Decision 1: idle is the COMMON state, not a startup gap)", () => {
 	it("is inactive with empty variants before any ttsr_triggered event, and again once a ripple has settled", () => {
 		const state = new ReflectionRippleState();
 		const sample = buildReflectionRippleSegment(state, 0, idTheme);
@@ -847,25 +689,18 @@ describe("buildReflectionRippleSegment — resting row (Decision 1: idle is the 
 		expect(settledSample.variants).toEqual([]);
 	});
 
-	it("still renders a full dim resting row: glyph '○', label 'reflect', primary '—', empty secondary/trailing", () => {
+	it("still renders a full resting line: idle dot, label 'reflect', ring accent, lone dim em-dash", () => {
 		const sample = buildReflectionRippleSegment(new ReflectionRippleState(), 0, idTheme);
-		expect(sample.detail).toEqual({
-			glyph: "○",
+		expect(sample.line).toEqual({
+			dot: "idle",
 			label: "reflect",
-			bar: "",
-			primary: "—",
-			secondary: "",
-			trailing: "",
+			accent: REFLECTION_RIPPLE_COLORS.ring,
+			spans: IDLE_SPANS,
 		});
-	});
-
-	it("colors the resting glyph dim, not the active ring accent", () => {
-		const sample = buildReflectionRippleSegment(new ReflectionRippleState(), 0, taggedTheme);
-		expect(sample.detail.glyph).toBe("dim:○");
 	});
 });
 
-describe("buildReflectionRippleSegment — active row", () => {
+describe("buildReflectionRippleSegment — active line", () => {
 	function ripplingState(ruleNames: readonly string[] = ["myRule"], triggeredAt = 0): ReflectionRippleState {
 		const state = new ReflectionRippleState();
 		state.applyTrigger(ruleNames, triggeredAt);
@@ -895,31 +730,26 @@ describe("buildReflectionRippleSegment — active row", () => {
 		}
 	});
 
-	it("detail.primary joins every matched rule name, in event order", () => {
+	it("rules span joins every matched rule name, in event order", () => {
 		const state = ripplingState(["ruleA", "ruleB"], 0);
 		const sample = buildReflectionRippleSegment(state, 0, idTheme);
-		expect(sample.detail.primary).toBe("ruleA, ruleB");
+		expect(sample.line.dot).toBe("live");
+		expect(sample.line.spans[0]).toEqual({ key: "rules", text: "ruleA, ruleB" });
 	});
 
-	it("detail.secondary is the bare session trigger count", () => {
+	it("count span is the bare session trigger count", () => {
 		const state = new ReflectionRippleState();
 		state.applyTrigger(["a"], 0);
 		state.applyTrigger(["b"], 10);
 		const sample = buildReflectionRippleSegment(state, 10, idTheme);
-		expect(sample.detail.secondary).toBe("2");
+		expect(sample.line.spans[1]).toEqual({ key: "count", text: "2" });
 	});
 
-	it("detail.trailing is always the fixed '—' — this segment has no fifth column of data", () => {
-		const state = ripplingState();
-		const sample = buildReflectionRippleSegment(state, 0, idTheme);
-		expect(sample.detail.trailing).toBe("—");
-	});
-
-	it("colors the active glyph with the ring accent, honoring an accent override", () => {
+	it("keeps the ring accent, honoring an accent override", () => {
 		const state = ripplingState();
 		const colors = { ...REFLECTION_RIPPLE_COLORS, ring: "syntaxString" as const };
-		const sample = buildReflectionRippleSegment(state, 0, taggedTheme, colors);
-		expect(sample.detail.glyph).toBe("syntaxString:○");
+		const sample = buildReflectionRippleSegment(state, 0, idTheme, colors);
+		expect(sample.line.accent).toBe("syntaxString");
 	});
 
 	it("phase math is a pure function of (now - trigger timestamp) on the injected clock, never mount/render-relative", () => {
@@ -932,32 +762,5 @@ describe("buildReflectionRippleSegment — active row", () => {
 				.map(width => renderReflectionRippleRow(500, width, idTheme, "subtle", REFLECTION_RIPPLE_COLORS))
 				.filter((v, i, arr) => i === 0 || arr[i - 1] !== v),
 		);
-	});
-});
-
-describe("buildReflectionRippleSegment — glyph preset", () => {
-	function ripplingState(): ReflectionRippleState {
-		const state = new ReflectionRippleState();
-		state.applyTrigger(["myRule"], 0);
-		return state;
-	}
-
-	it("defaults to the unicode badge '○' when no preset is passed", () => {
-		const sample = buildReflectionRippleSegment(new ReflectionRippleState(), 0, idTheme);
-		expect(sample.detail.glyph).toBe("○");
-	});
-
-	it("swaps the badge for the ascii substitute 'o' when preset is 'ascii', resting and active", () => {
-		const resting = buildReflectionRippleSegment(
-			new ReflectionRippleState(),
-			0,
-			idTheme,
-			REFLECTION_RIPPLE_COLORS,
-			"ascii",
-		);
-		expect(resting.detail.glyph).toBe("o");
-
-		const active = buildReflectionRippleSegment(ripplingState(), 0, idTheme, REFLECTION_RIPPLE_COLORS, "ascii");
-		expect(active.detail.glyph).toBe("o");
 	});
 });

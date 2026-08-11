@@ -10,16 +10,17 @@
  * `simple` draws one composed row via the kit's `composeSegments`, built only
  * from the segments that are currently `active`; an idle segment simply
  * contributes nothing to that row (its `variants` are empty). `detailed`
- * draws one fixed-column row per ENABLED segment regardless of `active` — an
- * idle segment renders its own dim resting row (`glyph · label · "—"`, built
- * by the segment source, not this widget) instead of being absent, so height
- * in detailed mode is a pure function of the enabled set and never jitters
- * with runtime activity. This is the one behavior this class does NOT inherit
- * unchanged from the `/tmp/anim-livebox` Phase-1 prototype, whose
- * `renderFrame` dropped every inactive segment (and returned nothing at all
- * when none were active) — Decision 5 supersedes that. Both modes remain pure
- * functions of `buildSamples(now)`'s output; this class holds no
- * segment-specific business logic of its own.
+ * draws one STATUS LINE per ENABLED segment regardless of `active` — `dot ·
+ * label · phrase` (Plan 018), rendered by `status-line.ts`'s
+ * `renderStatusLine` from the plain spans each segment source emits; an idle
+ * segment renders its own dim resting line (`○ label   —`) instead of being
+ * absent, so height in detailed mode is a pure function of the enabled set
+ * and never jitters with runtime activity. Coloring — dot tone, span tones,
+ * gradient percentages, and the change-flash driven by this widget's own
+ * `FlashTracker` on its existing frame clock — happens at render time here,
+ * NOT in the segment sources (Plan 018's one deliberate contract change from
+ * 017). Both modes remain pure functions of `buildSamples(now)`'s output;
+ * this class holds no segment-specific business logic of its own.
  *
  * The border chrome itself breathes (Decision 2): every glyph of the top
  * row, bottom row, and side pipes is colored uniformly, per frame, via
@@ -32,7 +33,7 @@
  * pre-dxi.5 behavior, unchanged.
  */
 
-import type { ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { SymbolPreset, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
 import type { AccentColor } from "../appearance";
 import {
@@ -43,12 +44,18 @@ import {
 } from "../breathing-border";
 import type { AnimatedWidgetOptions, FrameScheduler, MotionPolicy } from "../kit";
 import { AnimatedWidget, composeSegments, segment as toKitSegment } from "../kit";
-import type { BoxTheme, SegmentDetail, SegmentSample } from "./segments";
+import { resolveRenderTier, styledUnderlineProgram } from "../terminal-capabilities";
+import type { BoxTheme, SegmentSample } from "./segments";
 import type { BoxDetail } from "./settings";
+import { type FlashTier, FlashTracker, renderStatusLine } from "./status-line";
 
 const BORDER_COLS = 4;
 const BORDER_ROWS = 2;
 
+// Resolved once at module load, same as `segments.ts`: gradient gating rides the
+// real color mode; styled underlines honor the test escape hatch.
+const RENDER_TIER = resolveRenderTier();
+const TERMINAL_PROGRAM = styledUnderlineProgram(RENDER_TIER);
 /** Pad/truncate `text` to exactly `width` visible columns — never over, never under. */
 function cell(text: string, width: number): string {
 	if (width <= 0) return "";
@@ -92,34 +99,6 @@ function contentLine(
 	return `${pipe} ${cell(text, inner)} ${pipe}`;
 }
 
-/**
- * Fixed-column detail row: glyph · label · bar · primary · secondary ·
- * trailing, sized to `inner`. `bar` is a pre-rendered `[##########]` shape
- * (`""` when the segment has no bounded metric — see `SegmentDetail`'s doc)
- * and needs no further coloring here, same as every other column. Degrades
- * by truncating the trailing (history) column first, then hard-truncates the
- * whole row as a final safety net so it never overflows `inner` even when
- * the fixed columns alone would.
- */
-function detailRowText(detail: SegmentDetail, inner: number): string {
-	const cGlyph = 6;
-	const cLabel = 8;
-	const cBar = 12;
-	const cPri = 8;
-	const cSec = 12;
-	const gutters = 5;
-	const cTrail = Math.max(0, inner - (cGlyph + cLabel + cBar + cPri + cSec + gutters));
-	const body = [
-		cell(detail.glyph, cGlyph),
-		cell(detail.label, cLabel),
-		cell(detail.bar, cBar),
-		cell(detail.primary, cPri),
-		cell(detail.secondary, cSec),
-		cell(detail.trailing, cTrail),
-	].join(" ");
-	return cell(body, inner);
-}
-
 export interface AnimationsBoxWidgetOptions extends AnimatedWidgetOptions {
 	/** Foreground coloring, for both segment content and the border chrome (Decision 2). */
 	theme: BoxTheme;
@@ -143,6 +122,8 @@ export interface AnimationsBoxWidgetOptions extends AnimatedWidgetOptions {
 	getBorderBrightness: (nowMs: number) => number | undefined;
 	/** Accent override for the border's peak brightness — the existing `breathingBorderAccentColor` setting; `undefined` keeps the breathing-border keeper's built-in palette. */
 	accentColor?: AccentColor;
+	/** Host glyph preset for the semantic status dots (detailed mode). Mirrors the controller's mount-captured preset; defaults to `unicode`. */
+	preset?: SymbolPreset;
 }
 
 export class AnimationsBoxWidget extends AnimatedWidget {
@@ -154,6 +135,8 @@ export class AnimationsBoxWidget extends AnimatedWidget {
 	#policy: MotionPolicy;
 	#getBorderBrightness: (nowMs: number) => number | undefined;
 	#colors: BreathingBorderColors;
+	#preset: SymbolPreset;
+	#flash = new FlashTracker();
 
 	constructor(options: AnimationsBoxWidgetOptions) {
 		super(options);
@@ -165,6 +148,7 @@ export class AnimationsBoxWidget extends AnimatedWidget {
 		this.#policy = options.policy;
 		this.#getBorderBrightness = options.getBorderBrightness;
 		this.#colors = breathingBorderColors(options.accentColor);
+		this.#preset = options.preset ?? "unicode";
 	}
 
 	onFrame(_elapsedMs: number): void {
@@ -182,7 +166,27 @@ export class AnimationsBoxWidget extends AnimatedWidget {
 		const borderColor = this.#resolveBorderColor(now);
 
 		if (this.#getDetail() === "detailed") {
-			const rows = samples.map(s => contentLine(detailRowText(s.detail, inner), inner, width, theme, borderColor));
+			// Reduced-motion forces off-tier flash regardless of setting (D6/jj7.7);
+			// otherwise the flash rides the motion tier itself.
+			const flashTier: FlashTier = this.#policy.reducedMotion ? "off" : this.#policy.tier;
+			const rows = samples.map(s =>
+				contentLine(
+					renderStatusLine(s.line, inner, {
+						theme,
+						preset: this.#preset,
+						colorMode: RENDER_TIER.colorMode,
+						program: TERMINAL_PROGRAM,
+						segmentId: s.id,
+						now,
+						flashTier,
+						flash: this.#flash,
+					}),
+					inner,
+					width,
+					theme,
+					borderColor,
+				),
+			);
 			return [borderTop(width, theme, borderColor), ...rows, borderBottom(width, theme, borderColor)];
 		}
 

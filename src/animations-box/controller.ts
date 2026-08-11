@@ -309,6 +309,7 @@ export class AnimationsBoxController {
 					getDetail: () => this.#config.detail,
 					getBorderBrightness: now => this.#getBorderBrightness(now),
 					accentColor: this.#accentColor,
+					preset: this.#glyphPreset,
 				});
 			},
 			this.#widgetOptions,

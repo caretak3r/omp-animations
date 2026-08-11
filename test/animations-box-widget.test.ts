@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { visibleWidth } from "@oh-my-pi/pi-tui";
 import type { SegmentSample } from "../src/animations-box/segments";
 import { AnimationsBoxWidget, BOX_BORDER_COLS, BOX_BORDER_ROWS } from "../src/animations-box/widget";
 import type { AccentColor } from "../src/appearance";
@@ -39,7 +40,7 @@ const RESTING: SegmentSample = {
 	priority: 1,
 	active: false,
 	variants: [],
-	detail: { glyph: "▤", label: "cache", bar: "", primary: "—", secondary: "", trailing: "" },
+	line: { dot: "idle", label: "cache", accent: "dim", spans: [{ key: "idle", text: "—", tone: "dim" }] },
 };
 
 const ACTIVE: SegmentSample = {
@@ -47,13 +48,15 @@ const ACTIVE: SegmentSample = {
 	priority: 1,
 	active: true,
 	variants: ["ACTIVE WIDE", "AW"],
-	detail: {
-		glyph: "▤",
+	line: {
+		dot: "live",
 		label: "cache",
-		bar: "[██████░░░░]",
-		primary: "62.4%",
-		secondary: "saved $0.41",
-		trailing: "r 12K · w 2K",
+		accent: "dim",
+		spans: [
+			{ key: "pct", text: "62.4%" },
+			{ key: "saved", text: "saved $0.41" },
+			{ key: "tokens", text: "r 12K · w 2K", wideOnly: true },
+		],
 	},
 };
 
@@ -124,31 +127,30 @@ describe("AnimationsBoxWidget — detailed mode: one row per ENABLED segment, ac
 	it("holds an exact golden resting-row frame at width 69 — the maintainer's real pane", () => {
 		const width = 69;
 		const inner = width - BOX_BORDER_COLS; // 65
-		const cTrail = inner - (6 + 8 + 12 + 8 + 12 + 5); // 14
-		const body = [
-			`▤${" ".repeat(5)}`, // glyph, 6 cols
-			`cache${" ".repeat(3)}`, // label, 8 cols
-			" ".repeat(12), // bar, 12 cols
-			`—${" ".repeat(7)}`, // primary, 8 cols
-			" ".repeat(12), // secondary, 12 cols
-			" ".repeat(cTrail), // trailing
-		].join(" ");
-		expect(body.length).toBe(inner);
+		// dot(1) + gap(2) + label gutter(7) + gap(2) = 12 prefix columns, then the idle dash.
+		const body = "○  cache    —";
+		expect(visibleWidth(body)).toBe(13);
 
 		const rows = makeWidget({ samples: [RESTING], detail: "detailed" }).render(width);
-		expect(rows).toEqual([`╭${"─".repeat(width - 2)}╮`, `│ ${body} │`, `╰${"─".repeat(width - 2)}╯`]);
+		expect(rows).toEqual([
+			`╭${"─".repeat(width - 2)}╮`,
+			`│ ${body}${" ".repeat(inner - visibleWidth(body))} │`,
+			`╰${"─".repeat(width - 2)}╯`,
+		]);
 	});
 
-	it("truncates the trailing column first, then hard-truncates the whole row, never overflowing the border", () => {
+	it("truncates the wide tail first, then hard-truncates the whole row, never overflowing the border", () => {
 		const overflowing: SegmentSample = {
 			...ACTIVE,
-			detail: {
-				glyph: "▤",
+			line: {
+				dot: "live",
 				label: "cache",
-				bar: "[██████░░░░]",
-				primary: "62.4%",
-				secondary: "saved $0.41",
-				trailing: "x".repeat(200),
+				accent: "dim",
+				spans: [
+					{ key: "pct", text: "62.4%" },
+					{ key: "saved", text: "saved $0.41" },
+					{ key: "tokens", text: "x".repeat(200), wideOnly: true },
+				],
 			},
 		};
 		for (const width of [69, 45, 20, 6]) {
