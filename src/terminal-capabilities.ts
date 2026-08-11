@@ -132,3 +132,183 @@ export function resolveRenderTier(env: Record<string, string | undefined> = Bun.
 
 	return { colorMode, graphics, syncOutput, program };
 }
+
+/**
+ * RGB color value from OSC 11 background query response.
+ * Values are normalized to 0-255 range regardless of terminal's hex precision.
+ */
+export interface RgbColor {
+	r: number;
+	g: number;
+	b: number;
+}
+
+/**
+ * Background brightness classification based on relative luminance.
+ */
+export type BackgroundKind = "dark" | "light" | "unknown";
+
+/**
+ * Parse OSC 11 response into RGB color.
+ * Terminals reply with hex values (1-4 digits per channel): rgb:RRRR/GGGG/BBBB
+ * Response can be BEL or ST terminated.
+ *
+ * @returns RGB color with values normalized to 0-255, or null if unparseable
+ */
+export function parseOsc11Response(response: string): RgbColor | null {
+	const pattern = /^\x1b\]11;rgba?:([0-9a-fA-F]{1,4})\/([0-9a-fA-F]{1,4})\/([0-9a-fA-F]{1,4})(?:\x07|\x1b\\)$/;
+	const match = response.match(pattern);
+	if (!match) return null;
+
+	const [, rHex, gHex, bHex] = match;
+	if (!rHex || !gHex || !bHex) return null;
+
+	// Normalize hex values to 0-255 range. Terminals may send 2-digit (FF) or
+	// 4-digit (FFFF) hex per channel. Scale to 8-bit by taking the high byte
+	// for 4-digit values (FFFF → FF), treating 2-digit as-is.
+	const parseChannel = (hex: string): number => {
+		const val = parseInt(hex, 16);
+		// 4-digit: scale from 16-bit (0-65535) to 8-bit (0-255)
+		// 2-digit: already 8-bit
+		return hex.length > 2 ? Math.round((val / 65535) * 255) : val;
+	};
+
+	return {
+		r: parseChannel(rHex),
+		g: parseChannel(gHex),
+		b: parseChannel(bHex),
+	};
+}
+
+/**
+ * Calculate relative luminance using sRGB color space formula (ITU-R BT.709).
+ *
+ * L = 0.2126 * R + 0.7152 * G + 0.0722 * B
+ *
+ * where R, G, B are gamma-corrected linear values. For 8-bit sRGB:
+ * - V = channel / 255
+ * - Linear = V ≤ 0.03928 ? V/12.92 : ((V + 0.055)/1.055)^2.4
+ *
+ * @returns Relative luminance in range [0, 1]
+ */
+export function calculateLuminance(r: number, g: number, b: number): number {
+	const toLinear = (val: number): number => {
+		const v = val / 255;
+		return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+	};
+
+	const rLin = toLinear(r);
+	const gLin = toLinear(g);
+	const bLin = toLinear(b);
+
+	return 0.2126 * rLin + 0.7152 * gLin + 0.0722 * bLin;
+}
+
+/**
+ * Classify background as light or dark based on relative luminance threshold.
+ * Uses standard 0.5 threshold (midpoint of [0,1] luminance range).
+ * Luminance > 0.5 → light background, ≤ 0.5 → dark.
+ *
+ * @returns "light" or "dark" based on luminance threshold
+ */
+export function classifyBackground(r: number, g: number, b: number): "light" | "dark" {
+	const luminance = calculateLuminance(r, g, b);
+	return luminance > 0.5 ? "light" : "dark";
+}
+
+/**
+ * Cached background kind result from the last successful OSC 11 query.
+ * "unknown" means no query has succeeded yet (non-TTY, timeout, or unsupported terminal).
+ * Theme layer can consult this to adapt color schemes.
+ */
+let backgroundKind: BackgroundKind = "unknown";
+
+/**
+ * Get the current background kind from the cached probe result.
+ * Returns "unknown" if no successful OSC 11 query has completed.
+ * Callers should assume dark when unknown (preserves today's behavior).
+ */
+export function getBackgroundKind(): BackgroundKind {
+	return backgroundKind;
+}
+
+/**
+ * Override the background kind. Used by tests and runtime OSC 11 integration
+ * to update the cached state.
+ */
+export function setBackgroundKind(kind: BackgroundKind): void {
+	backgroundKind = kind;
+}
+
+/**
+ * Query terminal background color via OSC 11 escape sequence.
+ * Returns RGB color on success, null on timeout/non-TTY/parse failure.
+ *
+ * This is a lightweight standalone probe for the animations kit.
+ *
+ * @param timeoutMs Maximum time to wait for response (default 500ms)
+ * @returns RGB color from terminal, or null if unavailable
+ */
+export async function queryBackgroundColor(timeoutMs = 500): Promise<RgbColor | null> {
+	// Only works on TTY
+	if (!process.stdout.isTTY || !process.stdin.isTTY) {
+		return null;
+	}
+
+	// Save stdin state
+	const wasRaw = process.stdin.isRaw || false;
+	const wasEncoding = process.stdin.readableEncoding;
+	const { promise, resolve } = Promise.withResolvers<RgbColor | null>();
+
+	let responseBuffer = "";
+	let timeoutHandle: Timer | undefined;
+	let resolved = false;
+
+	// Single cleanup + resolution path: detach the listener, restore stdin
+	// state, and settle the promise exactly once.
+	const settle = (color: RgbColor | null) => {
+		if (resolved) {
+			return;
+		}
+		resolved = true;
+		clearTimeout(timeoutHandle);
+		process.stdin.removeListener("data", onData);
+		process.stdin.pause();
+		if (process.stdin.setRawMode) {
+			process.stdin.setRawMode(wasRaw);
+		}
+		if (wasEncoding) {
+			process.stdin.setEncoding(wasEncoding);
+		}
+		resolve(color);
+	};
+
+	const onData = (chunk: Buffer | string) => {
+		responseBuffer += chunk.toString();
+		const color = parseOsc11Response(responseBuffer);
+		if (color) {
+			settle(color);
+		}
+	};
+
+	timeoutHandle = setTimeout(() => settle(null), timeoutMs);
+
+	try {
+		// Set up stdin to receive response
+		if (process.stdin.setRawMode) {
+			process.stdin.setRawMode(true);
+		}
+		process.stdin.setEncoding("utf8");
+		process.stdin.resume();
+		process.stdin.on("data", onData);
+
+		// Send OSC 11 query (BEL terminated)
+		// Note: Using BEL (\x07) terminator for maximum compatibility.
+		// Terminals may reply with either BEL or ST (\x1b\\) - parser handles both.
+		process.stdout.write("\x1b]11;?\x07");
+	} catch {
+		settle(null);
+	}
+
+	return promise;
+}
