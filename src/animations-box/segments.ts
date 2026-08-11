@@ -182,7 +182,8 @@ export function buildCacheMeterSegment(
 			renderCacheMeterRow(snapshot, width, now, theme, "subtle", snapshot.warmth, false, colors, preset),
 		),
 	);
-	const pct = `${(snapshot.warmth * 100).toFixed(1)}%`;
+	// Pad to "100.0%" width (6 chars) for tabular alignment (oh-my-pi-jj7.9)
+	const pct = `${(snapshot.warmth * 100).toFixed(1)}%`.padStart(6, " ");
 	return {
 		id: "cacheMeter",
 		priority,
@@ -202,10 +203,14 @@ export function buildCacheMeterSegment(
 	};
 }
 
-/** Same idle convention as the keeper's own `renderEqualizerText` ("--" when nothing is streaming), without that renderer's `eq ` row prefix — this is a column value, not a standalone row. */
+/** Same idle convention as the keeper's own `renderEqualizerText` ("--" when nothing is streaming), without that renderer's `eq ` row prefix — this is a column value, not a standalone row. Padded for tabular alignment (oh-my-pi-jj7.9). */
 function cadenceRateLabel(tokensPerSecond: number | null): string {
-	if (tokensPerSecond === null || !Number.isFinite(tokensPerSecond) || tokensPerSecond <= 0) return "--";
-	return `${Math.round(tokensPerSecond)} t/s`;
+	if (tokensPerSecond === null || !Number.isFinite(tokensPerSecond) || tokensPerSecond <= 0) {
+		// Pad "--" to match "160 t/s" width (7 chars)
+		return "  --   ";
+	}
+	// Pad to "160 t/s" width (7 chars) for alignment across 0-160 range
+	return `${Math.round(tokensPerSecond).toString().padStart(3, " ")} t/s`;
 }
 
 /**
@@ -266,7 +271,10 @@ export function buildCadenceEqualizerSegment(
 			label: "cadence",
 			bar: "",
 			primary: cadenceRateLabel(tokensPerSecond),
-			secondary: `peak ${Math.round(peakAmplitude * MAX_REFERENCE_RATE)}`,
+			// Pad peak value to "peak 160" width (8 chars) for tabular alignment (oh-my-pi-jj7.9)
+			secondary: `peak ${Math.round(peakAmplitude * MAX_REFERENCE_RATE)
+				.toString()
+				.padStart(3, " ")}`,
 			trailing: renderEqualizerRow(bands, peaks, theme, colors, preset),
 		},
 	};
@@ -338,19 +346,23 @@ export function buildAuditTrailBoxSegment(
 			bar: "",
 			primary: counts,
 			secondary: lastTouched === undefined ? "" : basename(lastTouched.path),
-			trailing: `reads ${metrics.reads} · writes ${metrics.writes} · amp ${metrics.writeAmplification.toFixed(1)}×`,
+			// Pad to "99.9×" width (4 chars) for tabular alignment; realistic max is <100× (oh-my-pi-jj7.9)
+			trailing: `reads ${metrics.reads} · writes ${metrics.writes} · amp ${metrics.writeAmplification.toFixed(1).padStart(4, " ")}×`,
 		},
 	};
 }
 
-/** `resets <N>m`/`resets <N>s`-style ETA to the binding bucket's reset, or `""` when the response reported none. */
+/** `resets <N>m`/`resets <N>s`-style ETA to the binding bucket's reset, or `""` when the response reported none. Padded for tabular alignment (oh-my-pi-jj7.9). */
 function resetEtaLabel(resetAtMs: number | undefined, now: number): string {
 	if (resetAtMs === undefined) return "";
 	const remainingMs = resetAtMs - now;
 	if (remainingMs <= 0) return "resets now";
 	const minutes = Math.floor(remainingMs / 60_000);
-	if (minutes >= 1) return `resets ${minutes}m`;
-	return `resets ${Math.max(1, Math.round(remainingMs / 1000))}s`;
+	// Pad to "resets 999m" max width (11 chars) for minutes, "resets 59s" (10 chars) for seconds
+	if (minutes >= 1) return `resets ${minutes.toString().padStart(3, " ")}m`;
+	return `resets ${Math.max(1, Math.round(remainingMs / 1000))
+		.toString()
+		.padStart(2, " ")}s`;
 }
 
 /**
@@ -416,7 +428,10 @@ export function buildRateLimitTidepoolSegment(
 			glyph: theme.fg(colors.water, glyph),
 			label: "limits",
 			bar: renderProgressBar(clampedLevel, theme, colors.water, "dim", preset, undefined, RENDER_TIER, "down-good"),
-			primary: `${Math.round(clampedLevel * 100)}%`,
+			// Pad to "100%" width (4 chars) for tabular alignment (oh-my-pi-jj7.9)
+			primary: `${Math.round(clampedLevel * 100)
+				.toString()
+				.padStart(3, " ")}%`,
 			secondary: snapshot.provider,
 			trailing: resetEtaLabel(snapshot.resetAtMs, now),
 		},

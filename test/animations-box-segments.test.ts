@@ -118,11 +118,10 @@ describe("buildCacheMeterSegment — active row", () => {
 
 	it("never eases the warmth or blinks the badge — always the snapshot's true warmth, unalerted", () => {
 		const state = warmedState();
-		const snapshot = state.snapshot();
 		const sample = buildCacheMeterSegment(state, 999, idTheme);
 		// alerted=false and displayWarmth=snapshot.warmth are baked into every variant already
 		// asserted above; this pins the detail column's own percentage to the same true value.
-		expect(sample.detail.primary).toBe(`${(snapshot.warmth * 100).toFixed(1)}%`);
+		expect(sample.detail.primary).toBe(" 50.0%");
 	});
 
 	it("consecutive-equal variants never repeat (dedupe held)", () => {
@@ -268,13 +267,13 @@ describe("buildCadenceEqualizerSegment — active row", () => {
 	it("detail.primary is '<N> t/s', rounded, when a live rate is sampled", () => {
 		const state = warmedCadenceState();
 		const sample = buildCadenceEqualizerSegment(state, true, 41.6, 0, idTheme);
-		expect(sample.detail.primary).toBe("42 t/s");
+		expect(sample.detail.primary).toBe(" 42 t/s");
 	});
 
 	it("detail.primary falls back to renderEqualizerText's own idle convention ('--') once hasStreamed is true but nothing is currently sampled", () => {
 		const state = warmedCadenceState();
 		const sample = buildCadenceEqualizerSegment(state, true, null, 0, idTheme);
-		expect(sample.detail.primary).toBe("--");
+		expect(sample.detail.primary).toBe("  --   ");
 	});
 
 	it("detail.secondary is 'peak <N>', the highest band-peak amplitude denormalized back through MAX_REFERENCE_RATE", () => {
@@ -386,11 +385,8 @@ describe("buildAuditTrailBoxSegment — active row", () => {
 		const state = new AuditLedgerState();
 		state.noteRead("/repo/src/foo.ts");
 		state.noteWrite("/repo/src/foo.ts", 0);
-		const snapshot = state.snapshot();
 		const sample = buildAuditTrailBoxSegment(state, 0, idTheme);
-		expect(sample.detail.trailing).toBe(
-			`reads ${snapshot.metrics.reads} · writes ${snapshot.metrics.writes} · amp ${snapshot.metrics.writeAmplification.toFixed(1)}×`,
-		);
+		expect(sample.detail.trailing).toBe("reads 1 · writes 1 · amp  1.0×");
 	});
 
 	it("colors the active glyph with the badge accent when nothing is poisoned, honoring an accent override", () => {
@@ -510,14 +506,14 @@ describe("buildRateLimitTidepoolSegment — active row", () => {
 	it("detail.primary is the refill-adjusted level as a rounded percentage", () => {
 		const state = pooledState(0.784);
 		const sample = buildRateLimitTidepoolSegment(state, 0, idTheme);
-		expect(sample.detail.primary).toBe("78%");
+		expect(sample.detail.primary).toBe(" 78%");
 	});
 
 	it("detail.primary eases toward full as now advances from observedAtMs toward resetAtMs (refillLevel)", () => {
 		const state = pooledState(0.5, 10_000, 0);
 		const sample = buildRateLimitTidepoolSegment(state, 5_000, idTheme);
 		const expectedLevel = refillLevel(0.5, 5_000, 0, 10_000);
-		expect(sample.detail.primary).toBe(`${Math.round(expectedLevel * 100)}%`);
+		expect(sample.detail.primary).toBe(`${String(Math.round(expectedLevel * 100)).padStart(3, " ")}%`);
 		expect(sample.detail.primary).not.toBe("50%"); // must have actually refilled, not held the raw observed level
 	});
 
@@ -530,7 +526,7 @@ describe("buildRateLimitTidepoolSegment — active row", () => {
 	it("detail.trailing is 'resets <N>m' for a reset more than a minute out", () => {
 		const state = pooledState(0.5, 12 * 60_000, 0);
 		const sample = buildRateLimitTidepoolSegment(state, 0, idTheme);
-		expect(sample.detail.trailing).toBe("resets 12m");
+		expect(sample.detail.trailing).toBe("resets  12m");
 	});
 
 	it("detail.trailing is 'resets <N>s' for a sub-minute reset", () => {

@@ -646,7 +646,7 @@ describe("AnimationsBoxController — rate-limit tidepool state wiring", () => {
 		expect(limitsRow).toBeDefined();
 		expect(limitsRow).toContain("78%");
 		expect(limitsRow).toContain("anthropic");
-		expect(limitsRow).toContain("resets 12m");
+		expect(limitsRow).toContain("resets  12m");
 		widget.dispose();
 	});
 

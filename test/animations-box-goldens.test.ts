@@ -310,10 +310,10 @@ describe("AnimationsBoxController + AnimationsBoxWidget — full-box golden fram
 
 		expect(widget.renderFrame(69)).toEqual([
 			"╭───────────────────────────────────────────────────────────────────╮",
-			"│ ▤      cache    [█████░░░░░] 50.0%    1/1          r 600 · w 200… │",
-			"│ ▃▁▁    cadence               100 t/s  peak 55      ⣀⡀⠀            │",
+			"│ ▤      cache    [█████░░░░░]  50.0%   1/1          r 600 · w 200… │",
+			"│ ▃▁▁    cadence               100 t/s  peak  55     ⣀⡀⠀            │",
 			"│ ▣      audit                 1✎\uFE0E       widget.ts    reads 1 · wri… │",
-			"│ ◗      limits   [███████▊░░] 78%      anthropic    resets 12m     │",
+			"│ ◗      limits   [███████▊░░]  78%     anthropic    resets  12m    │",
 			"│ ⛏\uFE0E      tools                 2 calls  read         ⛏\uFE0E1 read · ✎\uFE0E1 … │",
 			"│ ▓      files                 —                                    │",
 			"│ ○      reflect               —                                    │",
@@ -322,10 +322,10 @@ describe("AnimationsBoxController + AnimationsBoxWidget — full-box golden fram
 
 		expect(widget.renderFrame(45)).toEqual([
 			"╭───────────────────────────────────────────╮",
-			"│ ▤      cache    [█████░░░░░] 50.0%    1/… │",
+			"│ ▤      cache    [█████░░░░░]  50.0%   1/… │",
 			"│ ▃▁▁    cadence               100 t/s  pe… │",
 			"│ ▣      audit                 1✎\uFE0E       wi… │",
-			"│ ◗      limits   [███████▊░░] 78%      an… │",
+			"│ ◗      limits   [███████▊░░]  78%     an… │",
 			"│ ⛏\uFE0E      tools                 2 calls  re… │",
 			"│ ▓      files                 —          … │",
 			"│ ○      reflect               —          … │",
@@ -334,10 +334,10 @@ describe("AnimationsBoxController + AnimationsBoxWidget — full-box golden fram
 
 		expect(widget.renderFrame(120)).toEqual([
 			"╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
-			"│ ▤      cache    [█████░░░░░] 50.0%    1/1          r 600 · w 200 · miss 400                                          │",
-			"│ ▃▁▁    cadence               100 t/s  peak 55      ⣀⡀⠀                                                               │",
-			"│ ▣      audit                 1✎\uFE0E       widget.ts    reads 1 · writes 1 · amp 1.0×                                     │",
-			"│ ◗      limits   [███████▊░░] 78%      anthropic    resets 12m                                                        │",
+			"│ ▤      cache    [█████░░░░░]  50.0%   1/1          r 600 · w 200 · miss 400                                          │",
+			"│ ▃▁▁    cadence               100 t/s  peak  55     ⣀⡀⠀                                                               │",
+			"│ ▣      audit                 1✎\uFE0E       widget.ts    reads 1 · writes 1 · amp  1.0×                                    │",
+			"│ ◗      limits   [███████▊░░]  78%     anthropic    resets  12m                                                       │",
 			"│ ⛏\uFE0E      tools                 2 calls  read         ⛏\uFE0E1 read · ✎\uFE0E1 write                                                │",
 			"│ ▓      files                 —                                                                                       │",
 			"│ ○      reflect               —                                                                                       │",
