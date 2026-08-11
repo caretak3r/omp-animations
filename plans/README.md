@@ -149,6 +149,21 @@ invoked/retained telemetry, no multi-source enumeration.
 
 ---
 
+# Round 4 — maintainer feature request (plan 019)
+
+A direct maintainer request (2026-08-10): a live tree of the main agent and its subagents.
+Feasibility-checked against the **installed** extension API before writing, same discipline as
+Round 3.
+
+| Plan | Title | Effort | Risk | Verdict |
+|------|-------|--------|------|---------|
+| [019](019-agent-tree-widget.md) | Agent Tree — live main+subagent tree widget (name · model · activity gist · task) | L | MED | **CONFIRMED (with caveats)** — `AgentRef.parentId` gives the tree; registry reached via injected `api.pi` (no value import); activity needs a frame-tick `registry.list()` poll (`setActivity` emits no event, plan-012 caveat); per-node "task" is derived (first user message → `displayName` fallback); per-token subagent CoT taps deliberately out of scope |
+
+**Dependency notes (Round 4):** independent of 018 (no shared files except `registrar.ts` +
+the manifest, which 018 no longer touches after its S4). Re-scopes the retired plan-012 idea —
+`agent-fleet` is not in this package's keep-set, so 019 is a fresh standalone animation.
+---
+
 ## Status
 
 | Plan | Status |
@@ -170,3 +185,5 @@ invoked/retained telemetry, no multi-source enumeration.
 | 015 | DONE — executed + reviewed (advisor `execute`, 2026-07-17); worktree `/tmp/wt-015`, branch `advisor/015-goal-horizon-generic-budget` @ `e6c9c04`, gate 825/0/3638; awaiting maintainer merge |
 | 016 | TODO — Prompt Charge between-turn signals (thinking + context; approval deferred) |
 | 017 | IMPLEMENTED — all 8 beads done + reviewed 2026-08-07 (gates 906/0/2858 at `e797f14`; sandbox evidence in PROGRESS.md); awaiting maintainer live acceptance |
+| 018 | IN PROGRESS — S1–S4 landed on `main` (`dfbee03`..`8257d58`); S5 (goldens + legend + doctor, sole goldens owner) open |
+| 019 | TODO — Agent Tree widget (plan written 2026-08-10, feasibility-verified against installed dist/types) |
