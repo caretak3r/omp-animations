@@ -33,6 +33,7 @@ gating (Plan 001).
 | [004](004-terminal-width-glyph-safety.md) | Terminal-width glyph safety in grids & bars | aesthetics | M | LOW | high — objective, terminal-corrupting misalignment |
 | [005](005-motion-tier-polish.md) | Motion-tier ladder + off-badge polish | aesthetics | S | LOW | med — two degenerate `subtle` tiers; inconsistent off badges |
 | [006](006-shared-frame-clock.md) | **SPIKE** — one shared frame clock for the family | speed (arch) | L | MED | measure-first — up to 16 timers vs. the documented one |
+| [018](018-status-lines-redesign.md) | Status-lines redesign of the box's detailed mode | aesthetics/UX | L | MED | **top (2026-08-10 field report)** — detailed mode is unreadable in live use; supersedes 017's detailed-row grammar |
 
 **Dependency notes:**
 - **001 is independent** and the highest-value (setup axis). Do it first or in parallel.
