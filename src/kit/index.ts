@@ -6,3 +6,4 @@ export * from "./animation-host";
 export * from "./backpressure";
 export * from "./motion-policy";
 export * from "./segment";
+export * from "./synced-frame";
