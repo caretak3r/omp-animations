@@ -134,6 +134,19 @@ export function resolveRenderTier(env: Record<string, string | undefined> = Bun.
 }
 
 /**
+ * Whether the terminal supports styled underlines (SGR 4:3 curly, 4:5 dashed).
+ * Kitty, Ghostty, iTerm2, and WezTerm all support these escape sequences.
+ * Used to add a colorblind-friendly semantic channel (curly = warning, dashed = error)
+ * layered on top of color, never replacing it.
+ *
+ * @param program - Terminal program identifier (from {@link resolveRenderTier}).
+ * @returns `true` when styled underlines are supported, `false` otherwise.
+ */
+export function supportsStyledUnderlines(program: RenderTier["program"]): boolean {
+	return program === "ghostty" || program === "kitty" || program === "iterm" || program === "wezterm";
+}
+
+/**
  * RGB color value from OSC 11 background query response.
  * Values are normalized to 0-255 range regardless of terminal's hex precision.
  */

@@ -75,6 +75,8 @@ import {
 	type ReflectionRippleState,
 	renderReflectionRippleRow,
 } from "../reflection-ripple";
+import { dashedUnderline } from "../styled-underline";
+import { resolveRenderTier } from "../terminal-capabilities";
 import {
 	CATEGORY_ORDER,
 	CATEGORY_THEME_COLOR,
@@ -86,6 +88,13 @@ import {
 } from "../tool-constellation";
 import { BOX_SEGMENT_IDS, type BoxSegmentId } from "./settings";
 
+// Resolve render tier once at module load for gradient gating and styled-underline.
+// Tests can disable styled underlines via OMP_ANIMATIONS_DISABLE_STYLED_UNDERLINES=1.
+const RENDER_TIER = resolveRenderTier();
+const TERMINAL_PROGRAM =
+	typeof Bun !== "undefined" && Bun.env.OMP_ANIMATIONS_DISABLE_STYLED_UNDERLINES === "1"
+		? ("other" as const)
+		: RENDER_TIER.program;
 /** The slice of {@link Theme} every segment builder needs — just foreground coloring. */
 export type BoxTheme = Pick<Theme, "fg">;
 
@@ -321,7 +330,10 @@ export function buildAuditTrailBoxSegment(
 		active: true,
 		variants,
 		detail: {
-			glyph: theme.fg(snapshot.counts.poisoned > 0 ? colors.poisoned : colors.badge, glyph),
+			glyph:
+				snapshot.counts.poisoned > 0
+					? dashedUnderline(theme.fg(colors.poisoned, glyph), TERMINAL_PROGRAM)
+					: theme.fg(colors.badge, glyph),
 			label: "audit",
 			bar: "",
 			primary: counts,
@@ -564,7 +576,7 @@ export function buildPalimpsestSegment(
 		active: true,
 		variants,
 		detail: {
-			glyph: theme.fg(colors.ember, glyph),
+			glyph: dashedUnderline(theme.fg(colors.ember, glyph), TERMINAL_PROGRAM),
 			label: "files",
 			bar: "",
 			primary: basename(hottest.path),
