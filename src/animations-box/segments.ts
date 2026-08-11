@@ -32,8 +32,6 @@ import {
 	type AuditTrailBoxColors,
 	type PathRecord,
 	renderAuditMeterRow,
-	STATUS_RISK_ORDER,
-	statusGlyphs,
 } from "../audit-trail-box";
 import { CACHE_METER_COLORS, type CacheMeterColors, type CacheMeterState, renderCacheMeterRow } from "../cache-meter";
 import {
@@ -74,7 +72,6 @@ import {
 	CATEGORY_ORDER,
 	CATEGORY_THEME_COLOR,
 	type ConstellationState,
-	categoryIcon,
 	renderConstellationTally,
 	type ToolCategory,
 } from "../tool-constellation";
@@ -325,10 +322,11 @@ export function buildAuditTrailBoxSegment(
 		[999, 40, 18].map(width => renderAuditMeterRow(snapshot, width, now, theme, "subtle", colors, preset)),
 	);
 
-	const statusGlyphMap = statusGlyphs(preset);
-	const counts = STATUS_RISK_ORDER.filter(status => snapshot.counts[status] > 0)
-		.map(status => `${snapshot.counts[status]}${statusGlyphMap[status]}`)
-		.join(" ");
+	// D3: statuses surface as words, and only the risk-bearing two — `poisoned`
+	// is "changed on disk", `dirty` is "edited"; redundant/cold/fresh are
+	// bookkeeping and never make the phrase. `amp N×` is cut entirely.
+	const poisoned = snapshot.counts.poisoned;
+	const dirty = snapshot.counts.dirty;
 	// Most recently touched path, for the wide-width tail — snapshot.paths is
 	// already risk-sorted, not recency-sorted, so this needs its own scan.
 	let lastTouched: PathRecord | undefined;
@@ -338,20 +336,22 @@ export function buildAuditTrailBoxSegment(
 	const metrics = snapshot.metrics;
 
 	const spans: PhraseSpan[] = [
-		{ key: "counts", text: counts },
-		{
-			key: "metrics",
-			text: `reads ${metrics.reads} · writes ${metrics.writes} · amp ${metrics.writeAmplification.toFixed(1)}×`,
-		},
+		{ key: "reads", text: `${metrics.reads} read${metrics.reads === 1 ? "" : "s"}` },
+		{ key: "writes", text: `${metrics.writes} write${metrics.writes === 1 ? "" : "s"}` },
 	];
+	if (poisoned > 0) spans.push({ key: "poisoned", text: `${poisoned} changed on disk`, tone: "alert" });
+	if (dirty > 0) spans.push({ key: "dirty", text: `${dirty} edited`, tone: "notable" });
 	if (lastTouched !== undefined) spans.push({ key: "last", text: basename(lastTouched.path), wideOnly: true });
+
+	// D6: alerts persist — the dot escalates with the worst outstanding status.
+	const dot: StatusDot = poisoned > 0 ? "alert" : dirty > 0 ? "notable" : "live";
 
 	return {
 		id: "auditTrailBox",
 		priority,
 		active: true,
 		variants,
-		line: { dot: "live", label: "audit", accent: colors.badge, spans },
+		line: { dot, label: "audit", accent: colors.badge, spans },
 	};
 }
 
@@ -499,15 +499,19 @@ export function buildToolConstellationSegment(
 			: renderConstellationTally(new Map([[dominant, counts.get(dominant) ?? 0]]), theme, preset);
 	const variants = dedupe([full, narrow]);
 
-	const icons = categoryIcon(preset);
+	// D3+D6: category icons are gone from the box; the phrase is the total plus
+	// a top-2 words tally — the dominant category appears there once and is
+	// repeated nowhere else. Stable sort keeps CATEGORY_ORDER as the tie-break,
+	// matching dominantCategory's own first-canonical-wins rule.
 	const total = [...counts.values()].reduce((sum, count) => sum + count, 0);
-	const tally = CATEGORY_ORDER.filter(category => (counts.get(category) ?? 0) > 0)
-		.map(category => `${icons[category]}${counts.get(category)} ${category}`)
+	const top = CATEGORY_ORDER.filter(category => (counts.get(category) ?? 0) > 0)
+		.sort((a, b) => (counts.get(b) ?? 0) - (counts.get(a) ?? 0))
+		.slice(0, 2)
+		.map(category => `${category} (${counts.get(category)})`)
 		.join(" · ");
 
 	const spans: PhraseSpan[] = [{ key: "total", text: `${total} calls` }];
-	if (dominant !== undefined) spans.push({ key: "top", text: dominant });
-	spans.push({ key: "tally", text: tally, wideOnly: true });
+	if (top.length > 0) spans.push({ key: "top", text: top, sep: " — " });
 
 	return {
 		id: "toolConstellation",
@@ -592,7 +596,7 @@ export function buildPalimpsestSegment(
 			accent: colors.ember,
 			spans: [
 				{ key: "hot", text: `${basename(hottest.path)} ×${hottest.overlapCount}` },
-				{ key: "rows", text: `${visible.length} row${visible.length === 1 ? "" : "s"}` },
+				{ key: "count", text: `${visible.length} hot file${visible.length === 1 ? "" : "s"}` },
 			],
 		},
 	};

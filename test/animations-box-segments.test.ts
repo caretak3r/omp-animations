@@ -10,7 +10,13 @@ import {
 } from "../src/animations-box/segments";
 import { BOX_SEGMENT_IDS } from "../src/animations-box/settings";
 import type { PhraseSpan } from "../src/animations-box/status-line";
-import { AUDIT_TRAIL_BOX_COLORS, AuditLedgerState, renderAuditMeterRow, statusGlyphs } from "../src/audit-trail-box";
+import {
+	AUDIT_TRAIL_BOX_COLORS,
+	AuditLedgerState,
+	POISON_STREAK_TICKS,
+	type ProbeReading,
+	renderAuditMeterRow,
+} from "../src/audit-trail-box";
 import { CACHE_METER_COLORS, CacheMeterState, renderCacheMeterRow } from "../src/cache-meter";
 import {
 	CadenceEqualizerState,
@@ -23,24 +29,23 @@ import { MAX_REFERENCE_RATE } from "../src/cadence-equalizer/scale";
 import { GLOW_THRESHOLD, PALIMPSEST_COLORS, PalimpsestState } from "../src/palimpsest";
 import { RateLimitTidepoolState, refillLevel, renderTidepoolRow, TIDEPOOL_COLORS } from "../src/rate-limit-tidepool";
 import { REFLECTION_RIPPLE_COLORS, ReflectionRippleState, renderReflectionRippleRow } from "../src/reflection-ripple";
-import {
-	CATEGORY_THEME_COLOR,
-	ConstellationState,
-	categoryIcon,
-	renderConstellationTally,
-} from "../src/tool-constellation";
+import { CATEGORY_THEME_COLOR, ConstellationState, renderConstellationTally } from "../src/tool-constellation";
 
 // Identity theme so variant assertions see plain text instead of ANSI escapes.
 // Builders emit PLAIN spans (Plan 018) — the theme only ever reaches the
 // simple-mode variant renderers, so no color-tagging double is needed here.
 const idTheme = { fg: (_color: string, text: string) => text };
 
-// Unicode-tier glyphs, resolved once — every builder call below defaults to `"unicode"`.
-const STATUS_GLYPHS = statusGlyphs("unicode");
-const CATEGORY_ICON = categoryIcon("unicode");
-
 /** D4's *idle* resting phrase — a lone dim em-dash, shared by every builder. */
 const IDLE_SPANS: readonly PhraseSpan[] = [{ key: "idle", text: "—", tone: "dim" }];
+
+/** Drive `state` past divergence hysteresis for `path`, well clear of any formatter window. */
+function poison(state: AuditLedgerState, path: string, startMs: number, hash: string): void {
+	const reading: ProbeReading = { path, hash, reachable: true };
+	for (let tick = 0; tick < POISON_STREAK_TICKS; tick++) {
+		state.noteProbe([reading], startMs + tick * 1000);
+	}
+}
 
 function usageSample(
 	provider: string,
@@ -374,29 +379,42 @@ describe("buildAuditTrailBoxSegment — active line", () => {
 		}
 	});
 
-	it("counts span is the status counts, highest-risk-first, using the keeper's own status glyphs", () => {
+	it("phrase leads with plain-word read/write tallies — no glyphs, no amp (D3)", () => {
 		const state = new AuditLedgerState();
-		state.noteRead("/repo/src/foo.ts"); // fresh
+		state.noteRead("/repo/src/foo.ts"); // fresh — no risk statuses outstanding
 		const sample = buildAuditTrailBoxSegment(state, 0, idTheme);
 		expect(sample.line.dot).toBe("live");
-		expect(sample.line.spans[0]).toEqual({ key: "counts", text: `1${STATUS_GLYPHS.fresh}` });
+		expect(sample.line.spans[0]).toEqual({ key: "reads", text: "1 read" });
+		expect(sample.line.spans[1]).toEqual({ key: "writes", text: "0 writes" });
+		expect(sample.line.spans.some(span => span.key === "poisoned" || span.key === "dirty")).toBe(false);
 	});
 
-	it("metrics span is 'reads <reads> · writes <writes> · amp <write amplification>×'", () => {
+	it("a dirty path surfaces as an 'edited' notable span and escalates the dot to notable (D3+D6)", () => {
 		const state = new AuditLedgerState();
-		state.noteRead("/repo/src/foo.ts");
 		state.noteWrite("/repo/src/foo.ts", 0);
 		const sample = buildAuditTrailBoxSegment(state, 0, idTheme);
-		expect(sample.line.spans[1]).toEqual({ key: "metrics", text: "reads 1 · writes 1 · amp 1.0×" });
+		expect(sample.line.dot).toBe("notable");
+		expect(sample.line.spans[2]).toEqual({ key: "dirty", text: "1 edited", tone: "notable" });
 	});
 
-	it("last span is the basename of the most recently touched path, wide-only", () => {
+	it("a poisoned path surfaces as 'changed on disk' with the alert tone and dot, outranking dirty (D6: alerts persist)", () => {
+		const state = new AuditLedgerState();
+		state.noteRead("/repo/src/poisoned.ts", { hash: "h1" });
+		poison(state, "/repo/src/poisoned.ts", 10_000, "h2");
+		state.noteWrite("/repo/src/dirty.ts", 20_000);
+		const sample = buildAuditTrailBoxSegment(state, 20_000, idTheme);
+		expect(sample.line.dot).toBe("alert");
+		expect(sample.line.spans[2]).toEqual({ key: "poisoned", text: "1 changed on disk", tone: "alert" });
+		expect(sample.line.spans[3]).toEqual({ key: "dirty", text: "1 edited", tone: "notable" });
+	});
+
+	it("last span is the basename of the most recently touched path, wide-only, always the phrase tail", () => {
 		const state = new AuditLedgerState();
 		state.noteRead("/repo/src/foo.ts");
 		state.noteTurn(); // advance the turn clock so bar.ts's touch is unambiguously later
 		state.noteWrite("/repo/src/bar.ts", 0);
 		const sample = buildAuditTrailBoxSegment(state, 0, idTheme);
-		expect(sample.line.spans[2]).toEqual({ key: "last", text: "bar.ts", wideOnly: true });
+		expect(sample.line.spans.at(-1)).toEqual({ key: "last", text: "bar.ts", wideOnly: true });
 	});
 
 	it("keeps the badge accent, honoring an accent override", () => {
@@ -614,7 +632,7 @@ describe("buildToolConstellationSegment — active line", () => {
 		state.recordFire("write", 0); // categorizes to "write", fired first
 		state.recordFire("read", 0); // categorizes to "read", fired second, but read precedes write in CATEGORY_ORDER
 		const sample = buildToolConstellationSegment(state, 0, idTheme);
-		expect(sample.line.spans[1]).toEqual({ key: "top", text: "read" });
+		expect(sample.line.spans[1]).toEqual({ key: "top", text: "read (1) · write (1)", sep: " — " });
 	});
 
 	it("total span is the total fire count across every category", () => {
@@ -627,17 +645,15 @@ describe("buildToolConstellationSegment — active line", () => {
 		expect(sample.line.spans[0]).toEqual({ key: "total", text: "3 calls" });
 	});
 
-	it("tally span is the icon+count+name tally, in CATEGORY_ORDER, wide-only", () => {
+	it("top span is the top-2 plain-word tally with counts, em-dash separated, never a third entry (D3)", () => {
 		const state = new ConstellationState();
 		state.recordFire("read", 0);
 		state.recordFire("read", 0);
 		state.recordFire("bash", 0);
+		state.recordFire("search", 0);
 		const sample = buildToolConstellationSegment(state, 0, idTheme);
-		expect(sample.line.spans[2]).toEqual({
-			key: "tally",
-			text: `${CATEGORY_ICON.read}2 read · ${CATEGORY_ICON.bash}1 bash`,
-			wideOnly: true,
-		});
+		expect(sample.line.spans[1]).toEqual({ key: "top", text: "read (2) · bash (1)", sep: " — " });
+		expect(sample.line.spans).toHaveLength(2); // no icon tally span — the dominant appears exactly once
 	});
 
 	it("accents the line with the dominant category's CATEGORY_THEME_COLOR — no accent override slot exists for this segment", () => {
@@ -649,11 +665,12 @@ describe("buildToolConstellationSegment — active line", () => {
 });
 
 describe("buildToolConstellationSegment — glyph preset", () => {
-	it("forwards the preset into the tally span's category icons (ascii substitutes)", () => {
+	it("forwards the preset into the simple-mode variants only — the status line carries no icons (D3)", () => {
 		const state = new ConstellationState();
 		state.recordFire("read", 0);
 		const active = buildToolConstellationSegment(state, 0, idTheme, "ascii");
-		expect(active.line.spans[2]).toEqual({ key: "tally", text: "^1 read", wideOnly: true }); // read -> "^" in ascii
+		expect(active.variants[0]).toContain("^"); // read -> "^" in ascii
+		expect(active.line.spans.map(span => span.key)).toEqual(["total", "top"]);
 	});
 });
 
@@ -727,16 +744,16 @@ describe("buildPalimpsestSegment — active line", () => {
 
 		const sample = buildPalimpsestSegment(state, 0, idTheme);
 		expect(sample.line.spans[0]).toEqual({ key: "hot", text: "b.ts ×2" });
-		expect(sample.line.spans[1]).toEqual({ key: "rows", text: "2 rows" });
+		expect(sample.line.spans[1]).toEqual({ key: "count", text: "2 hot files" });
 	});
 
-	it("hot span is '<basename> ×<overlap>', rows span pluralizes the visible-row count", () => {
+	it("hot span is '<basename> ×<overlap>', count span pluralizes the hot-file tally", () => {
 		const state = thrashedState();
 		const sample = buildPalimpsestSegment(state, 0, idTheme);
 		expect(sample.line.dot).toBe("live");
 		expect(sample.line.spans).toEqual([
 			{ key: "hot", text: "foo.ts ×2" },
-			{ key: "rows", text: "1 row" },
+			{ key: "count", text: "1 hot file" },
 		]);
 	});
 
