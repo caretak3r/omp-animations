@@ -67,10 +67,10 @@ function toolCallEvent(toolName: string, toolCallId = "1"): ToolCallEvent {
 }
 
 describe("tool constellation glyphs (preset-aware)", () => {
-	it("categoryIcon/starGlyph/cometGlyph/emptyGlyph default to unicode, byte-identical to the original hardcoded values", () => {
+	it("categoryIcon/starGlyph/cometGlyph/emptyGlyph default to unicode; ambiguous-presentation glyphs carry VS15", () => {
 		expect(categoryIcon()).toEqual({
-			read: "⛏",
-			write: "✎",
+			read: "⛏\uFE0E",
+			write: "✎\uFE0E",
 			bash: "↯",
 			search: "◈",
 			agent: "◆",
@@ -78,8 +78,8 @@ describe("tool constellation glyphs (preset-aware)", () => {
 			other: "∘",
 		});
 		expect(starGlyph(0)).toBe("·");
-		expect(starGlyph(1)).toBe("✹");
-		expect(cometGlyph()).toBe("☄");
+		expect(starGlyph(1)).toBe("✹\uFE0E");
+		expect(cometGlyph()).toBe("☄\uFE0E");
 		expect(emptyGlyph()).toBe("·");
 	});
 

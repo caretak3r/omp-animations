@@ -68,18 +68,18 @@ describe("resolveGlyph — unicode preset (default, byte-identical to today's ha
 		expect(resolveGlyph("auditTrail.badge", "unicode")).toBe("▣");
 		expect(resolveGlyph("auditTrail.badgePulse", "unicode")).toBe("▢");
 		expect(resolveGlyph("auditTrail.status.poisoned", "unicode")).toBe("⊘");
-		expect(resolveGlyph("auditTrail.status.dirty", "unicode")).toBe("✎");
+		expect(resolveGlyph("auditTrail.status.dirty", "unicode")).toBe("✎\uFE0E");
 		expect(resolveGlyph("auditTrail.status.redundant", "unicode")).toBe("⟳");
-		expect(resolveGlyph("auditTrail.status.cold", "unicode")).toBe("❄");
-		expect(resolveGlyph("auditTrail.status.fresh", "unicode")).toBe("✓");
+		expect(resolveGlyph("auditTrail.status.cold", "unicode")).toBe("❄\uFE0E");
+		expect(resolveGlyph("auditTrail.status.fresh", "unicode")).toBe("✓\uFE0E");
 		expect(resolveGlyph("toolConstellation.star.0", "unicode")).toBe("·");
 		expect(resolveGlyph("toolConstellation.star.1", "unicode")).toBe("•");
-		expect(resolveGlyph("toolConstellation.star.2", "unicode")).toBe("✦");
-		expect(resolveGlyph("toolConstellation.star.3", "unicode")).toBe("✹");
-		expect(resolveGlyph("toolConstellation.comet", "unicode")).toBe("☄");
+		expect(resolveGlyph("toolConstellation.star.2", "unicode")).toBe("✦\uFE0E");
+		expect(resolveGlyph("toolConstellation.star.3", "unicode")).toBe("✹\uFE0E");
+		expect(resolveGlyph("toolConstellation.comet", "unicode")).toBe("☄\uFE0E");
 		expect(resolveGlyph("toolConstellation.empty", "unicode")).toBe("·");
-		expect(resolveGlyph("toolConstellation.category.read", "unicode")).toBe("⛏");
-		expect(resolveGlyph("toolConstellation.category.write", "unicode")).toBe("✎");
+		expect(resolveGlyph("toolConstellation.category.read", "unicode")).toBe("⛏\uFE0E");
+		expect(resolveGlyph("toolConstellation.category.write", "unicode")).toBe("✎\uFE0E");
 		expect(resolveGlyph("toolConstellation.category.bash", "unicode")).toBe("↯");
 		expect(resolveGlyph("toolConstellation.category.search", "unicode")).toBe("◈");
 		expect(resolveGlyph("toolConstellation.category.agent", "unicode")).toBe("◆");
@@ -246,7 +246,7 @@ describe("resolveGlyphRamp", () => {
 
 describe("resolveStarGlyphRamp", () => {
 	it("returns the unicode star ramp, dimmest to brightest, excluding the comet glyph", () => {
-		expect(resolveStarGlyphRamp("unicode")).toEqual(["·", "•", "✦", "✹"]);
+		expect(resolveStarGlyphRamp("unicode")).toEqual(["·", "•", "✦\uFE0E", "✹\uFE0E"]);
 	});
 
 	it("returns the ascii star ramp in the same order, every entry one 7-bit column", () => {
@@ -280,4 +280,19 @@ describe("resolveRingGlyphRamp", () => {
 	it("nerd's ramp is identical to unicode's", () => {
 		expect(resolveRingGlyphRamp("nerd")).toEqual(resolveRingGlyphRamp("unicode"));
 	});
+});
+
+describe("glyph column width (VS15 audit — every glyph must measure exactly 1 column)", () => {
+	const presets = ["unicode", "nerd", "ascii"] as const;
+	const expectedWidth = 1;
+
+	for (const preset of presets) {
+		it(`${preset} tier: all glyphs measure exactly 1 column`, () => {
+			const violations = ALL_KEYS.filter(key => Bun.stringWidth(resolveGlyph(key, preset)) !== expectedWidth).map(
+				key =>
+					`${preset}.${key} = "${resolveGlyph(key, preset)}" measures ${Bun.stringWidth(resolveGlyph(key, preset))} columns`,
+			);
+			expect(violations).toEqual([]);
+		});
+	}
 });

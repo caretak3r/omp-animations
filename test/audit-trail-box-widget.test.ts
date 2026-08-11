@@ -68,10 +68,16 @@ function chill(state: AuditLedgerState): void {
 }
 
 describe("audit trail box glyphs (preset-aware)", () => {
-	it("badgeGlyph/badgePulseGlyph/statusGlyphs default to unicode, byte-identical to the original hardcoded values", () => {
+	it("badgeGlyph/badgePulseGlyph/statusGlyphs default to unicode; ambiguous-presentation glyphs carry VS15", () => {
 		expect(badgeGlyph()).toBe("▣");
 		expect(badgePulseGlyph()).toBe("▢");
-		expect(statusGlyphs()).toEqual({ poisoned: "⊘", dirty: "✎", redundant: "⟳", cold: "❄", fresh: "✓" });
+		expect(statusGlyphs()).toEqual({
+			poisoned: "⊘",
+			dirty: "✎\uFE0E",
+			redundant: "⟳",
+			cold: "❄\uFE0E",
+			fresh: "✓\uFE0E",
+		});
 	});
 
 	it("ascii substitutes are exact one-column values, all seven distinct from one another", () => {
@@ -328,10 +334,10 @@ describe("audit trail box panel (slash-command surface)", () => {
 		poison(state, "v-poisoned.ts");
 
 		const rows = renderAuditPanel(state.snapshot(), idTheme).slice(1, -1);
-		const order = rows.map(row => row.trim().charAt(0));
-		expect(order[0]).toBe(STATUS_GLYPHS.poisoned);
-		expect(order[1]).toBe(STATUS_GLYPHS.dirty);
-		expect(order).toContain(STATUS_GLYPHS.cold);
+		const order = rows.map(row => row.trim());
+		expect(order[0]?.startsWith(STATUS_GLYPHS.poisoned)).toBe(true);
+		expect(order[1]?.startsWith(STATUS_GLYPHS.dirty)).toBe(true);
+		expect(order.some(row => row.startsWith(STATUS_GLYPHS.cold))).toBe(true);
 	});
 
 	it("caps rows and reports the remainder", () => {

@@ -675,7 +675,7 @@ describe("buildToolConstellationSegment — active row", () => {
 		const state = new ConstellationState();
 		state.recordFire("read", 0);
 		const sample = buildToolConstellationSegment(state, 0, taggedTheme);
-		expect(sample.detail.glyph).toBe("syntaxVariable:⛏");
+		expect(sample.detail.glyph).toBe("syntaxVariable:⛏\uFE0E");
 	});
 });
 

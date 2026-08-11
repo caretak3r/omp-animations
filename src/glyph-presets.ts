@@ -79,18 +79,18 @@ const UNICODE_GLYPHS: Record<GlyphKey, string> = {
 	"auditTrail.badge": "▣",
 	"auditTrail.badgePulse": "▢",
 	"auditTrail.status.poisoned": "⊘",
-	"auditTrail.status.dirty": "✎",
+	"auditTrail.status.dirty": "✎\uFE0E", // U+270E + VS15: has emoji variant
 	"auditTrail.status.redundant": "⟳",
-	"auditTrail.status.cold": "❄",
-	"auditTrail.status.fresh": "✓",
+	"auditTrail.status.cold": "❄\uFE0E", // U+2744 + VS15: default emoji presentation
+	"auditTrail.status.fresh": "✓\uFE0E", // U+2713 + VS15: has emoji variant
 	"toolConstellation.star.0": "·",
 	"toolConstellation.star.1": "•",
-	"toolConstellation.star.2": "✦",
-	"toolConstellation.star.3": "✹",
-	"toolConstellation.comet": "☄",
+	"toolConstellation.star.2": "✦\uFE0E", // U+2726 + VS15: has emoji variant
+	"toolConstellation.star.3": "✹\uFE0E", // U+2739 + VS15: has emoji variant
+	"toolConstellation.comet": "☄\uFE0E", // U+2604 + VS15: default emoji presentation
 	"toolConstellation.empty": "·",
-	"toolConstellation.category.read": "⛏",
-	"toolConstellation.category.write": "✎",
+	"toolConstellation.category.read": "⛏\uFE0E", // U+26CF + VS15: default emoji presentation
+	"toolConstellation.category.write": "✎\uFE0E", // U+270E + VS15: has emoji variant
 	"toolConstellation.category.bash": "↯",
 	"toolConstellation.category.search": "◈",
 	"toolConstellation.category.agent": "◆",

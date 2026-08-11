@@ -312,9 +312,9 @@ describe("AnimationsBoxController + AnimationsBoxWidget — full-box golden fram
 			"╭───────────────────────────────────────────────────────────────────╮",
 			"│ ▤      cache    [█████░░░░░] 50.0%    1/1          r 600 · w 200… │",
 			"│ ▃▁▁    cadence               100 t/s  peak 55       ▃  ▁  ▁       │",
-			"│ ▣      audit                 1✎       widget.ts    reads 1 · wri… │",
+			"│ ▣      audit                 1✎\uFE0E       widget.ts    reads 1 · wri… │",
 			"│ ◗      limits   [████████░░] 78%      anthropic    resets 12m     │",
-			"│ ⛏      tools                 2 calls  read         ⛏1 read · ✎1 … │",
+			"│ ⛏\uFE0E      tools                 2 calls  read         ⛏\uFE0E1 read · ✎\uFE0E1 … │",
 			"│ ▓      files                 —                                    │",
 			"│ ○      reflect               —                                    │",
 			"╰───────────────────────────────────────────────────────────────────╯",
@@ -324,9 +324,9 @@ describe("AnimationsBoxController + AnimationsBoxWidget — full-box golden fram
 			"╭───────────────────────────────────────────╮",
 			"│ ▤      cache    [█████░░░░░] 50.0%    1/… │",
 			"│ ▃▁▁    cadence               100 t/s  pe… │",
-			"│ ▣      audit                 1✎       wi… │",
+			"│ ▣      audit                 1✎\uFE0E       wi… │",
 			"│ ◗      limits   [████████░░] 78%      an… │",
-			"│ ⛏      tools                 2 calls  re… │",
+			"│ ⛏\uFE0E      tools                 2 calls  re… │",
 			"│ ▓      files                 —          … │",
 			"│ ○      reflect               —          … │",
 			"╰───────────────────────────────────────────╯",
@@ -336,9 +336,9 @@ describe("AnimationsBoxController + AnimationsBoxWidget — full-box golden fram
 			"╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
 			"│ ▤      cache    [█████░░░░░] 50.0%    1/1          r 600 · w 200 · miss 400                                          │",
 			"│ ▃▁▁    cadence               100 t/s  peak 55       ▃  ▁  ▁                                                          │",
-			"│ ▣      audit                 1✎       widget.ts    reads 1 · writes 1 · amp 1.0×                                     │",
+			"│ ▣      audit                 1✎\uFE0E       widget.ts    reads 1 · writes 1 · amp 1.0×                                     │",
 			"│ ◗      limits   [████████░░] 78%      anthropic    resets 12m                                                        │",
-			"│ ⛏      tools                 2 calls  read         ⛏1 read · ✎1 write                                                │",
+			"│ ⛏\uFE0E      tools                 2 calls  read         ⛏\uFE0E1 read · ✎\uFE0E1 write                                                │",
 			"│ ▓      files                 —                                                                                       │",
 			"│ ○      reflect               —                                                                                       │",
 			"╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
@@ -352,19 +352,19 @@ describe("AnimationsBoxController + AnimationsBoxWidget — full-box golden fram
 
 		expect(widget.renderFrame(69)).toEqual([
 			"╭───────────────────────────────────────────────────────────────────╮",
-			"│ ▤ 50.0% ·  ▃  ▁  ▁       · ▣ 1✎ r/w 1/1 ×1.0 ↻0% · 78% · ⛏ 1      │",
+			"│ ▤ 50.0% ·  ▃  ▁  ▁       · ▣ 1✎\uFE0E r/w 1/1 ×1.0 ↻0% · 78% · ⛏\uFE0E 1      │",
 			"╰───────────────────────────────────────────────────────────────────╯",
 		]);
 
 		expect(widget.renderFrame(45)).toEqual([
 			"╭───────────────────────────────────────────╮",
-			"│ ▤ 50.0% · ▃▁▁   · ▣ 1✎ · 78% · ⛏ 1 · ✎ 1  │",
+			"│ ▤ 50.0% · ▃▁▁   · ▣ 1✎\uFE0E · 78% · ⛏\uFE0E 1 · ✎\uFE0E 1  │",
 			"╰───────────────────────────────────────────╯",
 		]);
 
 		expect(widget.renderFrame(120)).toEqual([
 			"╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
-			"│ ▤ HIT 50.0% (1/1) ▅ READ 600 WRITE 200 MISS 400 ·  ▃  ▁  ▁       · ▣ 1✎ r/w 1/1 ×1.0 ↻0% · 78% · ⛏ 1 · ✎ 1           │",
+			"│ ▤ HIT 50.0% (1/1) ▅ READ 600 WRITE 200 MISS 400 ·  ▃  ▁  ▁       · ▣ 1✎\uFE0E r/w 1/1 ×1.0 ↻0% · 78% · ⛏\uFE0E 1 · ✎\uFE0E 1           │",
 			"╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
 		]);
 
