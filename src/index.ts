@@ -13,6 +13,7 @@
 // animation from the broader oh-my-pi-animations suite was deliberately left out
 // of this package's copy rather than shipped unregistered.
 
+export * from "./animations-box/doctor";
 export * from "./appearance";
 export { createAuditTrailBoxExtension } from "./audit-trail-box";
 export { createBreathingBorderExtension } from "./breathing-border";
