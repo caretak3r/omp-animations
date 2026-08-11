@@ -7,6 +7,7 @@ import {
 	type FrameScheduler,
 	type MotionEnvironment,
 	MotionPolicy,
+	REDUCED_MOTION_CADENCE_MULTIPLIER,
 	resolveMotionTier,
 	TIER_CADENCE_MS,
 } from "../../src/kit";
@@ -196,6 +197,95 @@ describe("MotionPolicy gating", () => {
 
 		policy.setSetting("off");
 		expect(scheduler.activeTimers).toBe(0);
+	});
+});
+
+describe("MotionPolicy reduced motion", () => {
+	it("enables reduced motion when OMP_ANIMATIONS_REDUCED_MOTION=1", () => {
+		const policy = new MotionPolicy(interactiveEnv({ env: { OMP_ANIMATIONS_REDUCED_MOTION: "1" } }), "full");
+		expect(policy.reducedMotion).toBe(true);
+	});
+
+	it("enables reduced motion when OMP_ANIMATIONS_REDUCED_MOTION=true (case-insensitive)", () => {
+		const policyLower = new MotionPolicy(interactiveEnv({ env: { OMP_ANIMATIONS_REDUCED_MOTION: "true" } }), "full");
+		expect(policyLower.reducedMotion).toBe(true);
+
+		const policyUpper = new MotionPolicy(interactiveEnv({ env: { OMP_ANIMATIONS_REDUCED_MOTION: "TRUE" } }), "full");
+		expect(policyUpper.reducedMotion).toBe(true);
+
+		const policyMixed = new MotionPolicy(interactiveEnv({ env: { OMP_ANIMATIONS_REDUCED_MOTION: "True" } }), "full");
+		expect(policyMixed.reducedMotion).toBe(true);
+	});
+
+	it("disables reduced motion when env var is unset or has other values", () => {
+		const unset = new MotionPolicy(interactiveEnv(), "full");
+		expect(unset.reducedMotion).toBe(false);
+
+		const empty = new MotionPolicy(interactiveEnv({ env: { OMP_ANIMATIONS_REDUCED_MOTION: "" } }), "full");
+		expect(empty.reducedMotion).toBe(false);
+
+		const zero = new MotionPolicy(interactiveEnv({ env: { OMP_ANIMATIONS_REDUCED_MOTION: "0" } }), "full");
+		expect(zero.reducedMotion).toBe(false);
+
+		const false_ = new MotionPolicy(interactiveEnv({ env: { OMP_ANIMATIONS_REDUCED_MOTION: "false" } }), "full");
+		expect(false_.reducedMotion).toBe(false);
+
+		const other = new MotionPolicy(interactiveEnv({ env: { OMP_ANIMATIONS_REDUCED_MOTION: "yes" } }), "full");
+		expect(other.reducedMotion).toBe(false);
+	});
+
+	it("applies cadence multiplier when reduced motion is enabled", () => {
+		const normalFull = new MotionPolicy(interactiveEnv(), "full");
+		expect(normalFull.cadenceMs).toBe(TIER_CADENCE_MS.full);
+
+		const reducedFull = new MotionPolicy(interactiveEnv({ env: { OMP_ANIMATIONS_REDUCED_MOTION: "1" } }), "full");
+		expect(reducedFull.cadenceMs).toBe(TIER_CADENCE_MS.full * REDUCED_MOTION_CADENCE_MULTIPLIER);
+
+		const normalSubtle = new MotionPolicy(interactiveEnv(), "subtle");
+		expect(normalSubtle.cadenceMs).toBe(TIER_CADENCE_MS.subtle);
+
+		const reducedSubtle = new MotionPolicy(interactiveEnv({ env: { OMP_ANIMATIONS_REDUCED_MOTION: "1" } }), "subtle");
+		expect(reducedSubtle.cadenceMs).toBe(TIER_CADENCE_MS.subtle * REDUCED_MOTION_CADENCE_MULTIPLIER);
+	});
+
+	it("does not affect off tier (cadence stays 0)", () => {
+		const reducedOff = new MotionPolicy(interactiveEnv({ env: { OMP_ANIMATIONS_REDUCED_MOTION: "1" } }), "off");
+		expect(reducedOff.cadenceMs).toBe(0);
+	});
+
+	it("updates reduced motion state when environment changes", () => {
+		const policy = new MotionPolicy(interactiveEnv(), "full");
+		expect(policy.reducedMotion).toBe(false);
+		expect(policy.cadenceMs).toBe(TIER_CADENCE_MS.full);
+
+		policy.setEnvironment(interactiveEnv({ env: { OMP_ANIMATIONS_REDUCED_MOTION: "1" } }));
+		expect(policy.reducedMotion).toBe(true);
+		expect(policy.cadenceMs).toBe(TIER_CADENCE_MS.full * REDUCED_MOTION_CADENCE_MULTIPLIER);
+
+		policy.setEnvironment(interactiveEnv());
+		expect(policy.reducedMotion).toBe(false);
+		expect(policy.cadenceMs).toBe(TIER_CADENCE_MS.full);
+	});
+
+	it("updates reduced motion state on refresh", () => {
+		const env = interactiveEnv();
+		const policy = new MotionPolicy(env, "full");
+		expect(policy.reducedMotion).toBe(false);
+
+		// Simulate env change (though in real usage, env would be read from Bun.env)
+		env.env = { OMP_ANIMATIONS_REDUCED_MOTION: "1" };
+		policy.refresh();
+		expect(policy.reducedMotion).toBe(true);
+		expect(policy.cadenceMs).toBe(TIER_CADENCE_MS.full * REDUCED_MOTION_CADENCE_MULTIPLIER);
+	});
+
+	it("applies reduced cadence to AnimationHost timer", () => {
+		const scheduler = new FakeScheduler();
+		const reducedPolicy = new MotionPolicy(interactiveEnv({ env: { OMP_ANIMATIONS_REDUCED_MOTION: "1" } }), "full");
+		const host = new AnimationHost({ policy: reducedPolicy, scheduler });
+		host.subscribe(() => {});
+
+		expect(scheduler.activeIntervalMs).toBe(TIER_CADENCE_MS.full * REDUCED_MOTION_CADENCE_MULTIPLIER);
 	});
 });
 

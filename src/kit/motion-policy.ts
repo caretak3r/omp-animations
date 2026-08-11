@@ -58,6 +58,17 @@ export const TIER_CADENCE_MS: Readonly<Record<MotionTier, number>> = {
 	full: 1000 / 30,
 };
 
+/**
+ * Cadence multiplier applied when reduced motion is enabled
+ * (`OMP_ANIMATIONS_REDUCED_MOTION=1`). Base tier cadence is multiplied by this
+ * factor to slow down animations while keeping widgets visible. Mirrors web
+ * `prefers-reduced-motion`: dial down frame cadence and skip decorative
+ * transitions WITHOUT disabling widgets.
+ * - full (33.3ms @ 30fps) → 66.7ms (~15fps)
+ * - subtle (83.3ms @ 12fps) → 166.7ms (~6fps)
+ */
+export const REDUCED_MOTION_CADENCE_MULTIPLIER = 2;
+
 /** Notified with the newly-resolved tier whenever it changes. */
 export type MotionTierListener = (tier: MotionTier) => void;
 
@@ -73,11 +84,15 @@ export class MotionPolicy {
 	#env: MotionEnvironment;
 	#tier: MotionTier;
 	#listeners = new Set<MotionTierListener>();
+	#reducedMotion: boolean;
 
 	constructor(env: MotionEnvironment, setting: MotionSetting = "full") {
 		this.#env = env;
 		this.#setting = setting;
 		this.#tier = resolveMotionTier(env, setting);
+		const vars = env.env ?? Bun.env;
+		const value = vars.OMP_ANIMATIONS_REDUCED_MOTION;
+		this.#reducedMotion = value === "1" || value?.toLowerCase() === "true";
 	}
 
 	/** Currently-resolved tier. */
@@ -85,9 +100,19 @@ export class MotionPolicy {
 		return this.#tier;
 	}
 
-	/** Cadence in ms/frame for the current tier (`0` when `off`). */
+	/** Cadence in ms/frame for the current tier (`0` when `off`), with reduced-motion multiplier applied when enabled. */
 	get cadenceMs(): number {
-		return TIER_CADENCE_MS[this.#tier];
+		const base = TIER_CADENCE_MS[this.#tier];
+		return this.#reducedMotion ? base * REDUCED_MOTION_CADENCE_MULTIPLIER : base;
+	}
+
+	/**
+	 * Whether reduced-motion mode is enabled (`OMP_ANIMATIONS_REDUCED_MOTION=1`).
+	 * Widgets can check this to skip decorative transitions (e.g., easing,
+	 * fades) while still rendering content.
+	 */
+	get reducedMotion(): boolean {
+		return this.#reducedMotion;
 	}
 
 	/** Number of subscribed tier listeners. Mirrors `AnimationHost.subscriberCount` for leak checks. */
@@ -105,11 +130,17 @@ export class MotionPolicy {
 	/** Replace the ambient environment (e.g. after a resize/mode change) and re-resolve. */
 	setEnvironment(env: MotionEnvironment): void {
 		this.#env = env;
+		const vars = env.env ?? Bun.env;
+		const value = vars.OMP_ANIMATIONS_REDUCED_MOTION;
+		this.#reducedMotion = value === "1" || value?.toLowerCase() === "true";
 		this.#reresolve();
 	}
 
-	/** Re-read the environment (including live backpressure) and re-resolve. */
+	/** Re-read the environment (including live backpressure and reduced motion) and re-resolve. */
 	refresh(): void {
+		const vars = this.#env.env ?? Bun.env;
+		const value = vars.OMP_ANIMATIONS_REDUCED_MOTION;
+		this.#reducedMotion = value === "1" || value?.toLowerCase() === "true";
 		this.#reresolve();
 	}
 
