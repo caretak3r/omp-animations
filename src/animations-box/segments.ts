@@ -95,8 +95,8 @@ const TERMINAL_PROGRAM =
 	typeof Bun !== "undefined" && Bun.env.OMP_ANIMATIONS_DISABLE_STYLED_UNDERLINES === "1"
 		? ("other" as const)
 		: RENDER_TIER.program;
-/** The slice of {@link Theme} every segment builder needs — just foreground coloring. */
-export type BoxTheme = Pick<Theme, "fg">;
+/** The slice of {@link Theme} every segment builder needs — foreground coloring plus color hex for gradient bars. */
+export type BoxTheme = Pick<Theme, "fg"> & Partial<Pick<Theme, "getColorHex">>;
 
 /** One column's worth of detailed-mode text — always plain, colored last by the segment builder itself (the widget does no coloring of its own). */
 export interface SegmentDetail {
@@ -169,7 +169,7 @@ export function buildCacheMeterSegment(
 			detail: {
 				glyph: theme.fg("dim", glyph),
 				label: "cache",
-				bar: renderProgressBar(0, theme, colors.hit, "dim", preset),
+				bar: renderProgressBar(0, theme, colors.hit, "dim", preset, undefined, RENDER_TIER, "up-good"),
 				primary: "—",
 				secondary: "",
 				trailing: "",
@@ -191,7 +191,7 @@ export function buildCacheMeterSegment(
 		detail: {
 			glyph: theme.fg(colors.badge, glyph),
 			label: "cache",
-			bar: renderProgressBar(snapshot.warmth, theme, colors.hit, "dim", preset),
+			bar: renderProgressBar(snapshot.warmth, theme, colors.hit, "dim", preset, undefined, RENDER_TIER, "up-good"),
 			primary: pct,
 			secondary:
 				snapshot.savedCost !== undefined
@@ -393,7 +393,7 @@ export function buildRateLimitTidepoolSegment(
 			detail: {
 				glyph: theme.fg("dim", glyph),
 				label: "limits",
-				bar: renderProgressBar(0, theme, colors.water, "dim", preset),
+				bar: renderProgressBar(0, theme, colors.water, "dim", preset, undefined, RENDER_TIER, "down-good"),
 				primary: "—",
 				secondary: "",
 				trailing: "",
@@ -415,7 +415,7 @@ export function buildRateLimitTidepoolSegment(
 		detail: {
 			glyph: theme.fg(colors.water, glyph),
 			label: "limits",
-			bar: renderProgressBar(clampedLevel, theme, colors.water, "dim", preset),
+			bar: renderProgressBar(clampedLevel, theme, colors.water, "dim", preset, undefined, RENDER_TIER, "down-good"),
 			primary: `${Math.round(clampedLevel * 100)}%`,
 			secondary: snapshot.provider,
 			trailing: resetEtaLabel(snapshot.resetAtMs, now),

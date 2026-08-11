@@ -1,9 +1,26 @@
 import { describe, expect, it } from "bun:test";
 import type { ProgressBarTheme } from "../src/progress-bar";
 import { PROGRESS_BAR_CELLS, progressBarFilledCells, renderProgressBar } from "../src/progress-bar";
+import type { RenderTier } from "../src/terminal-capabilities";
 
-const idTheme: ProgressBarTheme = { fg: (_color, text) => text };
-const taggedTheme: ProgressBarTheme = { fg: (color, text) => `${color}:${text}` };
+const idTheme: ProgressBarTheme = {
+	fg: (_color, text) => text,
+	getColorHex: color => {
+		if (color === "error") return "#ff0000";
+		if (color === "warning") return "#ffff00";
+		if (color === "success") return "#00ff00";
+		return "#ffffff";
+	},
+};
+const taggedTheme: ProgressBarTheme = {
+	fg: (color, text) => `${color}:${text}`,
+	getColorHex: color => {
+		if (color === "error") return "#ff0000";
+		if (color === "warning") return "#ffff00";
+		if (color === "success") return "#00ff00";
+		return "#ffffff";
+	},
+};
 
 describe("progressBarFilledCells", () => {
 	it("rounds to the nearest cell across the full range", () => {
@@ -129,5 +146,263 @@ describe("renderProgressBar — ascii preset byte-identical (whole-cell round-ne
 			const normalizedUnicode = unicodeBar.replace(/█/g, "#").replace(/░/g, "-");
 			expect(asciiBar).toBe(normalizedUnicode);
 		}
+	});
+});
+
+describe("renderProgressBar — gradient threshold colors (truecolor-gated)", () => {
+	const truecolorTier: RenderTier = { colorMode: "truecolor", graphics: false, syncOutput: false, program: "other" };
+	const color256Tier: RenderTier = { colorMode: "256", graphics: false, syncOutput: false, program: "other" };
+	const basicTier: RenderTier = { colorMode: "basic", graphics: false, syncOutput: false, program: "other" };
+
+	// Helper to extract RGB values from ANSI truecolor sequence
+	function extractRgb(ansiString: string): [number, number, number] | null {
+		const match = ansiString.match(/\x1b\[38;2;(\d+);(\d+);(\d+)m/);
+		if (!match) return null;
+		return [Number.parseInt(match[1], 10), Number.parseInt(match[2], 10), Number.parseInt(match[3], 10)];
+	}
+
+	it("up-good: colors shift from red (0.1) → yellow (0.5) → green (1) at truecolor", () => {
+		const r10 = renderProgressBar(
+			0.1,
+			idTheme,
+			"accent",
+			"dim",
+			"unicode",
+			PROGRESS_BAR_CELLS,
+			truecolorTier,
+			"up-good",
+		);
+		const r25 = renderProgressBar(
+			0.25,
+			idTheme,
+			"accent",
+			"dim",
+			"unicode",
+			PROGRESS_BAR_CELLS,
+			truecolorTier,
+			"up-good",
+		);
+		const r50 = renderProgressBar(
+			0.5,
+			idTheme,
+			"accent",
+			"dim",
+			"unicode",
+			PROGRESS_BAR_CELLS,
+			truecolorTier,
+			"up-good",
+		);
+		const r75 = renderProgressBar(
+			0.75,
+			idTheme,
+			"accent",
+			"dim",
+			"unicode",
+			PROGRESS_BAR_CELLS,
+			truecolorTier,
+			"up-good",
+		);
+		const r100 = renderProgressBar(
+			1,
+			idTheme,
+			"accent",
+			"dim",
+			"unicode",
+			PROGRESS_BAR_CELLS,
+			truecolorTier,
+			"up-good",
+		);
+
+		// Extract RGB from first filled cell
+		const rgb10 = extractRgb(r10);
+		const rgb25 = extractRgb(r25);
+		const rgb50 = extractRgb(r50);
+		const rgb75 = extractRgb(r75);
+		const rgb100 = extractRgb(r100);
+
+		// At 0.1: should be mostly red
+		expect(rgb10).not.toBeNull();
+		expect(rgb10![0]).toBeGreaterThan(200); // mostly red
+		expect(rgb10![1]).toBeLessThan(100); // little green
+
+		// At 0.5: should be yellow (mix of red and green)
+		expect(rgb50).not.toBeNull();
+		expect(rgb50![0]).toBe(255); // full red
+		expect(rgb50![1]).toBe(255); // full green
+
+		// At 1: should be pure green
+		expect(rgb100).not.toBeNull();
+		expect(rgb100![0]).toBe(0); // no red
+		expect(rgb100![1]).toBe(255); // full green
+
+		// Monotonic: green channel increases in first half, red channel decreases in second half
+		expect(rgb25![1]).toBeGreaterThan(rgb10![1]); // green increases 0.1 → 0.25
+		expect(rgb75![0]).toBeLessThan(rgb50![0]); // red decreases 0.5 → 0.75
+	});
+	it("down-good: colors shift from green (0.1) → yellow (0.5) → red (1) at truecolor", () => {
+		const r10 = renderProgressBar(
+			0.1,
+			idTheme,
+			"accent",
+			"dim",
+			"unicode",
+			PROGRESS_BAR_CELLS,
+			truecolorTier,
+			"down-good",
+		);
+		const r50 = renderProgressBar(
+			0.5,
+			idTheme,
+			"accent",
+			"dim",
+			"unicode",
+			PROGRESS_BAR_CELLS,
+			truecolorTier,
+			"down-good",
+		);
+		const r100 = renderProgressBar(
+			1,
+			idTheme,
+			"accent",
+			"dim",
+			"unicode",
+			PROGRESS_BAR_CELLS,
+			truecolorTier,
+			"down-good",
+		);
+
+		const rgb10 = extractRgb(r10);
+		const rgb50 = extractRgb(r50);
+		const rgb100 = extractRgb(r100);
+
+		// At 0.1: should be mostly green
+		expect(rgb10).not.toBeNull();
+		expect(rgb10![0]).toBeLessThan(100); // little red
+		expect(rgb10![1]).toBeGreaterThan(200); // mostly green
+
+		// At 0.5: should be yellow
+		expect(rgb50).not.toBeNull();
+		expect(rgb50![0]).toBe(255); // full red
+		expect(rgb50![1]).toBe(255); // full green
+
+		// At 1: should be pure red
+		expect(rgb100).not.toBeNull();
+		expect(rgb100![0]).toBe(255); // full red
+		expect(rgb100![1]).toBe(0); // no green
+	});
+
+	it("same ratio, opposite directions → different colors", () => {
+		const upGood = renderProgressBar(
+			0.3,
+			idTheme,
+			"accent",
+			"dim",
+			"unicode",
+			PROGRESS_BAR_CELLS,
+			truecolorTier,
+			"up-good",
+		);
+		const downGood = renderProgressBar(
+			0.3,
+			idTheme,
+			"accent",
+			"dim",
+			"unicode",
+			PROGRESS_BAR_CELLS,
+			truecolorTier,
+			"down-good",
+		);
+
+		const rgbUp = extractRgb(upGood);
+		const rgbDown = extractRgb(downGood);
+
+		// Colors should be different
+		expect(rgbUp).not.toBeNull();
+		expect(rgbDown).not.toBeNull();
+		expect(rgbUp![0]).not.toBe(rgbDown![0]); // Different red component
+		expect(rgbUp![1]).not.toBe(rgbDown![1]); // Different green component
+	});
+
+	it("truecolor gating: 256-color mode falls back to flat color (byte-identical to no-gradient)", () => {
+		const withoutGradient = renderProgressBar(
+			0.5,
+			taggedTheme,
+			"accent",
+			"dim",
+			"unicode",
+			PROGRESS_BAR_CELLS,
+			color256Tier,
+		);
+		const withGradient256 = renderProgressBar(
+			0.5,
+			taggedTheme,
+			"accent",
+			"dim",
+			"unicode",
+			PROGRESS_BAR_CELLS,
+			color256Tier,
+			"up-good",
+		);
+
+		// Should be byte-identical (no gradient applied)
+		expect(withGradient256).toBe(withoutGradient);
+	});
+
+	it("truecolor gating: basic mode falls back to flat color (byte-identical to no-gradient)", () => {
+		const withoutGradient = renderProgressBar(
+			0.5,
+			taggedTheme,
+			"accent",
+			"dim",
+			"unicode",
+			PROGRESS_BAR_CELLS,
+			basicTier,
+		);
+		const withGradientBasic = renderProgressBar(
+			0.5,
+			taggedTheme,
+			"accent",
+			"dim",
+			"unicode",
+			PROGRESS_BAR_CELLS,
+			basicTier,
+			"up-good",
+		);
+
+		// Should be byte-identical (no gradient applied)
+		expect(withGradientBasic).toBe(withoutGradient);
+	});
+
+	it("no renderTier provided: falls back to flat color", () => {
+		const withoutTier = renderProgressBar(
+			0.5,
+			taggedTheme,
+			"accent",
+			"dim",
+			"unicode",
+			PROGRESS_BAR_CELLS,
+			undefined,
+			"up-good",
+		);
+		const withoutGradient = renderProgressBar(0.5, taggedTheme, "accent", "dim", "unicode", PROGRESS_BAR_CELLS);
+
+		// Should be byte-identical (no gradient applied)
+		expect(withoutTier).toBe(withoutGradient);
+	});
+
+	it("no gradient direction provided: falls back to flat color", () => {
+		const withoutDirection = renderProgressBar(
+			0.5,
+			taggedTheme,
+			"accent",
+			"dim",
+			"unicode",
+			PROGRESS_BAR_CELLS,
+			truecolorTier,
+		);
+		const withoutGradient = renderProgressBar(0.5, taggedTheme, "accent", "dim", "unicode", PROGRESS_BAR_CELLS);
+
+		// Should be byte-identical (no gradient applied)
+		expect(withoutDirection).toBe(withoutGradient);
 	});
 });
