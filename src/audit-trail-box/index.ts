@@ -1,10 +1,6 @@
 import { isAbsolute, resolve } from "node:path";
-import type {
-	ExtensionCommandContext,
-	ExtensionContext,
-	ExtensionFactory,
-	WidgetPlacement,
-} from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
+import type { ExtensionContext, ExtensionFactory } from "@oh-my-pi/pi-coding-agent";
+import type { ExtensionCommandContext, WidgetPlacement } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
 import type {
 	BashToolResultEvent,
 	EditToolResultEvent,
@@ -12,7 +8,7 @@ import type {
 	ToolResultEvent,
 	WriteToolResultEvent,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
-import type { ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { AccentColor } from "../appearance";
 import type { MotionSetting } from "../kit";
 import { type AuditTrailBoxContext, AuditTrailBoxController } from "./controller";
 import { hashContent, type ProbeSource } from "./probe";
@@ -255,7 +251,7 @@ export interface AuditTrailBoxExtensionOptions {
 	/** Widget placement injected by the registrar; defaults to "belowEditor" when unset. */
 	placement?: WidgetPlacement;
 	/** Accent override for the primary accent slot (the box badge); defaults to the built-in palette when unset. */
-	accentColor?: ThemeColor;
+	accentColor?: AccentColor;
 	/** Filesystem seam for the divergence probe. Defaults to the real one; tests inject a fake. */
 	probeSource?: ProbeSource;
 	/** Run headless — no widget row, ledger/probe/alarm unchanged. See `AuditTrailBoxController`'s own doc. */

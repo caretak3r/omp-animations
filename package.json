@@ -123,7 +123,14 @@
 					"syntaxVariable",
 					"syntaxType",
 					"syntaxString",
-					"syntaxNumber"
+					"syntaxNumber",
+					"okabeOrange",
+					"okabeSkyBlue",
+					"okabeGreen",
+					"okabeYellow",
+					"okabeBlue",
+					"okabeVermillion",
+					"okabePurple"
 				],
 				"default": "default",
 				"env": "OMP_ANIMATIONS_AUDIT_TRAIL_BOX_ACCENT_COLOR"
@@ -159,7 +166,14 @@
 					"syntaxVariable",
 					"syntaxType",
 					"syntaxString",
-					"syntaxNumber"
+					"syntaxNumber",
+					"okabeOrange",
+					"okabeSkyBlue",
+					"okabeGreen",
+					"okabeYellow",
+					"okabeBlue",
+					"okabeVermillion",
+					"okabePurple"
 				],
 				"default": "default",
 				"env": "OMP_ANIMATIONS_BREATHING_BORDER_ACCENT_COLOR"
@@ -195,7 +209,14 @@
 					"syntaxVariable",
 					"syntaxType",
 					"syntaxString",
-					"syntaxNumber"
+					"syntaxNumber",
+					"okabeOrange",
+					"okabeSkyBlue",
+					"okabeGreen",
+					"okabeYellow",
+					"okabeBlue",
+					"okabeVermillion",
+					"okabePurple"
 				],
 				"default": "default",
 				"env": "OMP_ANIMATIONS_CACHE_METER_ACCENT_COLOR"
@@ -231,7 +252,14 @@
 					"syntaxVariable",
 					"syntaxType",
 					"syntaxString",
-					"syntaxNumber"
+					"syntaxNumber",
+					"okabeOrange",
+					"okabeSkyBlue",
+					"okabeGreen",
+					"okabeYellow",
+					"okabeBlue",
+					"okabeVermillion",
+					"okabePurple"
 				],
 				"default": "default",
 				"env": "OMP_ANIMATIONS_CADENCE_EQUALIZER_ACCENT_COLOR"
@@ -267,7 +295,14 @@
 					"syntaxVariable",
 					"syntaxType",
 					"syntaxString",
-					"syntaxNumber"
+					"syntaxNumber",
+					"okabeOrange",
+					"okabeSkyBlue",
+					"okabeGreen",
+					"okabeYellow",
+					"okabeBlue",
+					"okabeVermillion",
+					"okabePurple"
 				],
 				"default": "default",
 				"env": "OMP_ANIMATIONS_PALIMPSEST_ACCENT_COLOR"
@@ -303,7 +338,14 @@
 					"syntaxVariable",
 					"syntaxType",
 					"syntaxString",
-					"syntaxNumber"
+					"syntaxNumber",
+					"okabeOrange",
+					"okabeSkyBlue",
+					"okabeGreen",
+					"okabeYellow",
+					"okabeBlue",
+					"okabeVermillion",
+					"okabePurple"
 				],
 				"default": "default",
 				"env": "OMP_ANIMATIONS_RATE_LIMIT_TIDEPOOL_ACCENT_COLOR"
@@ -339,7 +381,14 @@
 					"syntaxVariable",
 					"syntaxType",
 					"syntaxString",
-					"syntaxNumber"
+					"syntaxNumber",
+					"okabeOrange",
+					"okabeSkyBlue",
+					"okabeGreen",
+					"okabeYellow",
+					"okabeBlue",
+					"okabeVermillion",
+					"okabePurple"
 				],
 				"default": "default",
 				"env": "OMP_ANIMATIONS_REFLECTION_RIPPLE_ACCENT_COLOR"

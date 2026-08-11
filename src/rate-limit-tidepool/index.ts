@@ -3,7 +3,7 @@ import type {
 	ExtensionFactory,
 	WidgetPlacement,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
-import type { ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { AccentColor } from "../appearance";
 import type { MotionSetting } from "../kit";
 import { RateLimitTidepoolController, type TidepoolContext } from "./controller";
 
@@ -50,7 +50,7 @@ export interface RateLimitTidepoolExtensionOptions {
 	/** Widget placement injected by the registrar; defaults to "belowEditor" when unset. */
 	placement?: WidgetPlacement;
 	/** Accent override for the primary accent slot (the water); defaults to the built-in palette when unset. */
-	accentColor?: ThemeColor;
+	accentColor?: AccentColor;
 }
 
 export function createRateLimitTidepoolExtension(options: RateLimitTidepoolExtensionOptions = {}): ExtensionFactory {

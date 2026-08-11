@@ -38,6 +38,7 @@
  */
 import type { SymbolPreset, Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import { formatAge, formatNumber } from "@oh-my-pi/pi-utils";
+import { type AccentColor, accentToThemeColor } from "../appearance";
 import { resolveGlyph } from "../glyph-presets";
 import type { AnimatedWidgetOptions, FrameScheduler, MotionPolicy } from "../kit";
 import { AnimatedWidget } from "../kit";
@@ -74,8 +75,10 @@ export const CACHE_METER_COLORS: CacheMeterColors = {
 };
 
 /** The palette with the accent slot applied. `undefined` keeps the built-in badge color. */
-export function cacheMeterColors(accentColor?: ThemeColor): CacheMeterColors {
-	return accentColor === undefined ? CACHE_METER_COLORS : { ...CACHE_METER_COLORS, badge: accentColor };
+export function cacheMeterColors(accentColor?: AccentColor): CacheMeterColors {
+	return accentColor === undefined
+		? CACHE_METER_COLORS
+		: { ...CACHE_METER_COLORS, badge: accentToThemeColor(accentColor) };
 }
 
 /** Resting badge glyph, resolved for `preset` via `../glyph-presets.ts`. Defaults to `"unicode"` — the original hardcoded value. */
@@ -459,7 +462,7 @@ export interface CacheMeterWidgetOptions extends AnimatedWidgetOptions {
 	/** Same clock the controller/scheduler use — NOT the host's mount-relative elapsed-ms. */
 	clock: CacheMeterClock;
 	/** Accent override for the primary accent slot (the badge); `undefined` keeps the built-in palette. */
-	accentColor?: ThemeColor;
+	accentColor?: AccentColor;
 	/** The host's live symbol preset; `undefined` keeps the `"unicode"` default (see `../glyph-presets.ts`). */
 	glyphPreset?: SymbolPreset;
 }

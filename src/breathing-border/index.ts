@@ -3,7 +3,7 @@ import type {
 	ExtensionFactory,
 	WidgetPlacement,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
-import type { ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { AccentColor } from "../appearance";
 import type { MotionSetting } from "../kit";
 import { type BreathingBorderContext, BreathingBorderController } from "./controller";
 
@@ -49,7 +49,7 @@ export interface BreathingBorderExtensionOptions {
 	/** Widget placement injected by the registrar; defaults to "aboveEditor" when unset. */
 	placement?: WidgetPlacement;
 	/** Accent override for the primary accent slot (the peak brightness); defaults to the built-in palette when unset. */
-	accentColor?: ThemeColor;
+	accentColor?: AccentColor;
 }
 
 export function createBreathingBorderExtension(options: BreathingBorderExtensionOptions = {}): ExtensionFactory {

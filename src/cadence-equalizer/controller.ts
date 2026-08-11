@@ -8,8 +8,8 @@ import type {
 	MessageStartEvent,
 	MessageUpdateEvent,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
-import type { ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import { calculateTokensPerSecond } from "@oh-my-pi/pi-coding-agent/utils/token-rate";
+import type { AccentColor } from "../appearance";
 import type { BackpressureSignal, FrameScheduler, MotionSetting } from "../kit";
 import { AnimationHost, backpressureFromTui, DEFAULT_FRAME_SCHEDULER, MotionPolicy } from "../kit";
 import { CadenceEqualizerState } from "./state";
@@ -107,14 +107,14 @@ export class CadenceEqualizerController {
 	#streaming = false;
 	#mount: Mount | undefined;
 	#widgetOptions: ExtensionWidgetOptions;
-	#accentColor: ThemeColor | undefined;
+	#accentColor: AccentColor | undefined;
 
 	constructor(
 		options: {
 			scheduler?: FrameScheduler;
 			wallClock?: WallClock;
 			placement?: WidgetPlacement;
-			accentColor?: ThemeColor;
+			accentColor?: AccentColor;
 		} = {},
 	) {
 		this.#scheduler = options.scheduler ?? DEFAULT_FRAME_SCHEDULER;

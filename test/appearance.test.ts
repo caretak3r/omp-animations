@@ -19,6 +19,8 @@ import {
 	ACCENT_SETTING_VALUES,
 	accentColorKey,
 	animationsEnvKey,
+	OKABE_ITO_HEX,
+	OKABE_ITO_PALETTE,
 	PLACEMENT_VALUES,
 	placementKey,
 	resolveAnimationAppearance,
@@ -269,6 +271,50 @@ describe("resolveAnimationAppearance", () => {
 			).accentColor,
 		).toBe("warning");
 		for (const value of ["default", undefined, "hotpink"]) {
+			expect(
+				resolveAnimationAppearance("cacheMeter", "aboveEditor", { cacheMeterAccentColor: value }, {}).accentColor,
+			).toBeUndefined();
+		}
+	});
+
+	it("resolves Okabe-Ito colorblind-safe palette values through the existing accentColor path", () => {
+		// Test each Okabe-Ito color resolves correctly via pluginSettings
+		for (const color of OKABE_ITO_PALETTE) {
+			expect(
+				resolveAnimationAppearance("cacheMeter", "aboveEditor", { cacheMeterAccentColor: color }, {}).accentColor,
+			).toBe(color);
+		}
+
+		// Test resolution via env
+		expect(
+			resolveAnimationAppearance(
+				"rateLimitTidepool",
+				"belowEditor",
+				{},
+				{ OMP_ANIMATIONS_RATE_LIMIT_TIDEPOOL_ACCENT_COLOR: "okabeOrange" },
+			).accentColor,
+		).toBe("okabeOrange");
+
+		expect(
+			resolveAnimationAppearance(
+				"breathingBorder",
+				"aboveEditor",
+				{},
+				{ OMP_ANIMATIONS_BREATHING_BORDER_ACCENT_COLOR: "okabeSkyBlue" },
+			).accentColor,
+		).toBe("okabeSkyBlue");
+
+		// Verify hex values are correctly mapped
+		expect(OKABE_ITO_HEX.okabeOrange).toBe("#E69F00");
+		expect(OKABE_ITO_HEX.okabeSkyBlue).toBe("#56B4E9");
+		expect(OKABE_ITO_HEX.okabeGreen).toBe("#009E73");
+		expect(OKABE_ITO_HEX.okabeYellow).toBe("#F0E442");
+		expect(OKABE_ITO_HEX.okabeBlue).toBe("#0072B2");
+		expect(OKABE_ITO_HEX.okabeVermillion).toBe("#D55E00");
+		expect(OKABE_ITO_HEX.okabePurple).toBe("#CC79A7");
+
+		// Verify invalid/unset values still resolve to undefined (byte-identical to existing default)
+		for (const value of ["default", undefined, "hotpink", "notAColor"]) {
 			expect(
 				resolveAnimationAppearance("cacheMeter", "aboveEditor", { cacheMeterAccentColor: value }, {}).accentColor,
 			).toBeUndefined();

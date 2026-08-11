@@ -1,4 +1,5 @@
 import type { Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import { type AccentColor, accentToThemeColor } from "../appearance";
 import type { AnimatedWidgetOptions, MotionPolicy } from "../kit";
 import { AnimatedWidget } from "../kit";
 import { GLOW_THRESHOLD, isEmberHot, regionGlow } from "./spans";
@@ -18,8 +19,10 @@ export interface PalimpsestColors {
 export const PALIMPSEST_COLORS: PalimpsestColors = { underline: "dim", amber: "warning", ember: "error" };
 
 /** Merge an accent override into the ember slot (the only overridable one), or the built-in palette if none is given. Pure — shared by the widget constructor and the controller's static `off`-tier content, so both agree on the resolved accent. */
-export function resolvePalimpsestColors(accentColor: ThemeColor | undefined): PalimpsestColors {
-	return accentColor === undefined ? PALIMPSEST_COLORS : { ...PALIMPSEST_COLORS, ember: accentColor };
+export function resolvePalimpsestColors(accentColor: AccentColor | undefined): PalimpsestColors {
+	return accentColor === undefined
+		? PALIMPSEST_COLORS
+		: { ...PALIMPSEST_COLORS, ember: accentToThemeColor(accentColor) };
 }
 
 /** Rows drawn before the rest collapse out of view — keeps the strip to at most this many lines regardless of how many files are thrashing. */
@@ -91,7 +94,7 @@ export interface PalimpsestWidgetOptions extends AnimatedWidgetOptions {
 	state: PalimpsestWidgetState;
 	theme: PalimpsestTheme;
 	/** Accent override for the primary accent slot (the ember tier); `undefined` keeps the built-in palette. */
-	accentColor?: ThemeColor;
+	accentColor?: AccentColor;
 }
 
 /**

@@ -1,4 +1,5 @@
 import type { SymbolPreset, Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import { type AccentColor, accentToThemeColor } from "../appearance";
 import type { AnimatedWidgetOptions, FrameScheduler, MotionPolicy } from "../kit";
 import { AnimatedWidget } from "../kit";
 import {
@@ -40,8 +41,10 @@ export const BREATHING_BORDER_COLORS: BreathingBorderColors = {
 };
 
 /** The palette with the accent slot applied, or the built-in palette when none is given. */
-export function breathingBorderColors(accentColor: ThemeColor | undefined): BreathingBorderColors {
-	return accentColor === undefined ? BREATHING_BORDER_COLORS : { ...BREATHING_BORDER_COLORS, peak: accentColor };
+export function breathingBorderColors(accentColor: AccentColor | undefined): BreathingBorderColors {
+	return accentColor === undefined
+		? BREATHING_BORDER_COLORS
+		: { ...BREATHING_BORDER_COLORS, peak: accentToThemeColor(accentColor) };
 }
 
 /** Resolve a raw {@link brightnessToken} classification through the configured palette. */
@@ -125,7 +128,7 @@ export interface BreathingBorderWidgetOptions extends AnimatedWidgetOptions {
 	 */
 	onSettled: () => void;
 	/** Accent override for the primary accent slot (the peak brightness); `undefined` keeps the built-in palette. */
-	accentColor?: ThemeColor;
+	accentColor?: AccentColor;
 	/** The host's live symbol preset; `undefined` keeps the `"unicode"` default (see `../glyph-presets.ts`). */
 	glyphPreset?: SymbolPreset;
 }

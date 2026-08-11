@@ -4,7 +4,7 @@ import type {
 	ExtensionFactory,
 	WidgetPlacement,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
-import type { ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { AccentColor } from "../appearance";
 import type { MotionSetting } from "../kit";
 import { type CacheMeterContext, CacheMeterController } from "./controller";
 
@@ -63,7 +63,7 @@ export interface CacheMeterExtensionOptions {
 	/** Widget placement injected by the registrar; defaults to "aboveEditor" when unset. */
 	placement?: WidgetPlacement;
 	/** Accent override for the primary accent slot (the badge); defaults to the built-in palette when unset. */
-	accentColor?: ThemeColor;
+	accentColor?: AccentColor;
 }
 
 export function createCacheMeterExtension(options: CacheMeterExtensionOptions = {}): ExtensionFactory {

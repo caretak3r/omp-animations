@@ -8,8 +8,8 @@ import type {
 	ToolResultEvent,
 	TurnEndEvent,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
-import type { ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import { getDiffStats } from "@oh-my-pi/pi-coding-agent/tools/render-utils";
+import type { AccentColor } from "../appearance";
 import type { BackpressureSignal, FrameScheduler, MotionSetting } from "../kit";
 import { AnimationHost, backpressureFromTui, DEFAULT_FRAME_SCHEDULER, MotionPolicy } from "../kit";
 import { GLOW_THRESHOLD, parseHunkSpans } from "./spans";
@@ -83,7 +83,7 @@ function applyFileTouch(state: PalimpsestState, touch: FileTouch): void {
 function renderOffContent(
 	state: PalimpsestState,
 	theme: PalimpsestTheme,
-	accentColor: ThemeColor | undefined,
+	accentColor: AccentColor | undefined,
 ): string[] {
 	return [...renderPalimpsestRows(state.snapshot(), 0, theme, "subtle", resolvePalimpsestColors(accentColor))];
 }
@@ -151,9 +151,9 @@ export class PalimpsestController {
 	#state = new PalimpsestState();
 	#mount: Mount | undefined;
 	#widgetOptions: ExtensionWidgetOptions;
-	#accentColor: ThemeColor | undefined;
+	#accentColor: AccentColor | undefined;
 
-	constructor(options: { scheduler?: FrameScheduler; placement?: WidgetPlacement; accentColor?: ThemeColor } = {}) {
+	constructor(options: { scheduler?: FrameScheduler; placement?: WidgetPlacement; accentColor?: AccentColor } = {}) {
 		this.#scheduler = options.scheduler ?? DEFAULT_FRAME_SCHEDULER;
 		this.#widgetOptions = { placement: options.placement ?? DEFAULT_PLACEMENT };
 		this.#accentColor = options.accentColor;

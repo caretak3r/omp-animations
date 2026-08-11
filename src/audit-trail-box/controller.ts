@@ -3,7 +3,8 @@ import type {
 	ExtensionWidgetOptions,
 	WidgetPlacement,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
-import type { SymbolPreset, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { SymbolPreset } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { AccentColor } from "../appearance";
 import type { BackpressureSignal, FrameScheduler, MotionSetting } from "../kit";
 import { AnimationHost, backpressureFromTui, DEFAULT_FRAME_SCHEDULER, MotionPolicy } from "../kit";
 import { resolveRenderTier } from "../terminal-capabilities";
@@ -74,7 +75,7 @@ export interface AuditTrailBoxContext {
 export interface AuditTrailBoxControllerOptions {
 	scheduler?: FrameScheduler;
 	placement?: WidgetPlacement;
-	accentColor?: ThemeColor;
+	accentColor?: AccentColor;
 	/** Filesystem seam for the divergence probe. Defaults to the real one. */
 	probeSource?: ProbeSource;
 	/** Minimum gap between probe ticks. Defaults to {@link PROBE_INTERVAL_MS}. */
@@ -166,7 +167,7 @@ export class AuditTrailBoxController {
 	#mount: Mount | undefined;
 	#widgetOptions: ExtensionWidgetOptions;
 	#colors: AuditTrailBoxColors;
-	#accentColor: ThemeColor | undefined;
+	#accentColor: AccentColor | undefined;
 	#statusShown = false;
 	#suppressRow: boolean;
 

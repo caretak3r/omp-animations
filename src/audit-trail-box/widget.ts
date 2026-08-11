@@ -13,6 +13,7 @@
  * no wall-clock reads, no filesystem, no state of its own.
  */
 import type { SymbolPreset, Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import { type AccentColor, accentToThemeColor } from "../appearance";
 import { resolveGlyph } from "../glyph-presets";
 import type { AnimatedWidgetOptions, FrameScheduler, MotionPolicy } from "../kit";
 import { AnimatedWidget } from "../kit";
@@ -57,8 +58,10 @@ export const AUDIT_TRAIL_BOX_COLORS: AuditTrailBoxColors = {
  * controller's status line so an accent override lands on both surfaces from one
  * place; the semantic risk ramp is deliberately not overridable.
  */
-export function auditColors(accentColor?: ThemeColor): AuditTrailBoxColors {
-	return accentColor === undefined ? AUDIT_TRAIL_BOX_COLORS : { ...AUDIT_TRAIL_BOX_COLORS, badge: accentColor };
+export function auditColors(accentColor?: AccentColor): AuditTrailBoxColors {
+	return accentColor === undefined
+		? AUDIT_TRAIL_BOX_COLORS
+		: { ...AUDIT_TRAIL_BOX_COLORS, badge: accentToThemeColor(accentColor) };
 }
 
 /** One width-1 glyph per status, highest risk first, resolved for `preset` via `../glyph-presets.ts`. Defaults to `"unicode"` — the original hardcoded values. */
@@ -301,7 +304,7 @@ export interface AuditTrailBoxWidgetOptions extends AnimatedWidgetOptions {
 	/** Same clock the controller stamps probe ticks with — NOT the host's mount-relative elapsed-ms. */
 	clock: AuditTrailBoxClock;
 	/** Accent override for the primary accent slot (the box badge); `undefined` keeps the built-in palette. */
-	accentColor?: ThemeColor;
+	accentColor?: AccentColor;
 	/** The host's live symbol preset; `undefined` keeps the `"unicode"` default (see `../glyph-presets.ts`). */
 	glyphPreset?: SymbolPreset;
 }

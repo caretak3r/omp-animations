@@ -1,4 +1,5 @@
 import type { SymbolPreset, Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import { type AccentColor, accentToThemeColor } from "../appearance";
 import { resolveGlyph } from "../glyph-presets";
 import type { AnimatedWidgetOptions, FrameScheduler, MotionPolicy } from "../kit";
 import { AnimatedWidget } from "../kit";
@@ -30,8 +31,8 @@ export const TIDEPOOL_COLORS: TidepoolColors = {
 };
 
 /** The palette with the accent slot applied. `undefined` keeps the built-in water color. */
-export function tidepoolColors(accentColor?: ThemeColor): TidepoolColors {
-	return accentColor === undefined ? TIDEPOOL_COLORS : { ...TIDEPOOL_COLORS, water: accentColor };
+export function tidepoolColors(accentColor?: AccentColor): TidepoolColors {
+	return accentColor === undefined ? TIDEPOOL_COLORS : { ...TIDEPOOL_COLORS, water: accentToThemeColor(accentColor) };
 }
 
 /** Filled-water glyph, resolved for `preset` via `../glyph-presets.ts`. Defaults to `"unicode"` — the original hardcoded value. */
@@ -160,7 +161,7 @@ export interface TidepoolWidgetOptions extends AnimatedWidgetOptions {
 	/** Same clock the controller stamps `observedAtMs` with — NOT the host's internal relative elapsed-ms. */
 	clock: TidepoolClock;
 	/** Accent override for the primary accent slot (the water); `undefined` keeps the built-in palette. */
-	accentColor?: ThemeColor;
+	accentColor?: AccentColor;
 	/** The host's live symbol preset; `undefined` keeps the `"unicode"` default (see `../glyph-presets.ts`). */
 	glyphPreset?: SymbolPreset;
 }

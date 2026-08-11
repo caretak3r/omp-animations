@@ -34,6 +34,7 @@
 
 import type { ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
+import type { AccentColor } from "../appearance";
 import {
 	type BorderBrightnessToken,
 	type BreathingBorderColors,
@@ -141,7 +142,7 @@ export interface AnimationsBoxWidgetOptions extends AnimatedWidgetOptions {
 	 */
 	getBorderBrightness: (nowMs: number) => number | undefined;
 	/** Accent override for the border's peak brightness — the existing `breathingBorderAccentColor` setting; `undefined` keeps the breathing-border keeper's built-in palette. */
-	accentColor?: ThemeColor;
+	accentColor?: AccentColor;
 }
 
 export class AnimationsBoxWidget extends AnimatedWidget {

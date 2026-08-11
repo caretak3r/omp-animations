@@ -1,4 +1,5 @@
 import type { SymbolPreset, Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import { type AccentColor, accentToThemeColor } from "../appearance";
 import type { AnimatedWidgetOptions, FrameScheduler, MotionPolicy } from "../kit";
 import { AnimatedWidget } from "../kit";
 import {
@@ -35,8 +36,10 @@ export interface ReflectionRippleColors {
 export const REFLECTION_RIPPLE_COLORS: ReflectionRippleColors = { ring: "accent", calm: "dim" };
 
 /** The palette with the accent slot applied, or the built-in palette when none is given. */
-export function reflectionRippleColors(accentColor: ThemeColor | undefined): ReflectionRippleColors {
-	return accentColor === undefined ? REFLECTION_RIPPLE_COLORS : { ...REFLECTION_RIPPLE_COLORS, ring: accentColor };
+export function reflectionRippleColors(accentColor: AccentColor | undefined): ReflectionRippleColors {
+	return accentColor === undefined
+		? REFLECTION_RIPPLE_COLORS
+		: { ...REFLECTION_RIPPLE_COLORS, ring: accentToThemeColor(accentColor) };
 }
 
 /** Calm-water background glyph: goes fully dark while the breath dim is more than half applied, resting dots otherwise. Pure. */
@@ -126,7 +129,7 @@ export interface ReflectionRippleWidgetOptions extends AnimatedWidgetOptions {
 	 */
 	onSettled: () => void;
 	/** Accent override for the primary accent slot (the ring); `undefined` keeps the built-in palette. */
-	accentColor?: ThemeColor;
+	accentColor?: AccentColor;
 	/** The host's live symbol preset; `undefined` keeps the `"unicode"` default (see `../glyph-presets.ts`). */
 	glyphPreset?: SymbolPreset;
 }

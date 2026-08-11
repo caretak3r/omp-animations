@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import type { ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import type { SegmentSample } from "../src/animations-box/segments";
 import { AnimationsBoxWidget, BOX_BORDER_COLS, BOX_BORDER_ROWS } from "../src/animations-box/widget";
+import type { AccentColor } from "../src/appearance";
 import { BREATHING_BORDER_COLORS } from "../src/breathing-border";
 import { AnimationHost, type FrameScheduler, MotionPolicy } from "../src/kit";
 
@@ -65,7 +65,7 @@ function makeWidget(opts: {
 	motionSetting?: "off" | "subtle" | "full";
 	theme?: { fg: (color: string, text: string) => string };
 	getBorderBrightness?: (now: number) => number | undefined;
-	accentColor?: ThemeColor;
+	accentColor?: AccentColor;
 }): AnimationsBoxWidget {
 	const scheduler = opts.scheduler ?? manualScheduler();
 	const policy = new MotionPolicy(fullEnv, opts.motionSetting ?? "full");

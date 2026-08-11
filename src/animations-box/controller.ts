@@ -78,9 +78,10 @@ import type {
 	TurnEndEvent,
 	TurnStartEvent,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
-import type { SymbolPreset, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { SymbolPreset } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import { getDiffStats } from "@oh-my-pi/pi-coding-agent/tools/render-utils";
 import { calculateTokensPerSecond } from "@oh-my-pi/pi-coding-agent/utils/token-rate";
+import type { AccentColor } from "../appearance";
 import { AuditLedgerState, auditTouchesFromToolResult } from "../audit-trail-box";
 import { BreathingBorderState, breathEnvelope, EXHALE_DURATION_MS, exhaleEnvelope } from "../breathing-border";
 import { CacheMeterState, type CacheRequestSample } from "../cache-meter";
@@ -237,7 +238,7 @@ export interface AnimationsBoxControllerOptions {
 	/** Wire-time initial config, from the registrar's synchronous settings read (`dxi.7`). */
 	initialConfig: AnimationsBoxConfig;
 	/** Accent override for the border's peak brightness — the existing `breathingBorderAccentColor` setting; `undefined` keeps the breathing-border keeper's built-in palette. */
-	accentColor?: ThemeColor;
+	accentColor?: AccentColor;
 }
 
 /** Drives the Animations Box. See the module doc above for why this owns a fresh `CacheMeterState` rather than delegating to `CacheMeterController`. */
@@ -245,7 +246,7 @@ export class AnimationsBoxController {
 	#scheduler: FrameScheduler;
 	#widgetOptions: ExtensionWidgetOptions;
 	#motionSetting: MotionSetting;
-	#accentColor: ThemeColor | undefined;
+	#accentColor: AccentColor | undefined;
 
 	#config: AnimationsBoxConfig;
 	#mount: { host: AnimationHost } | undefined;

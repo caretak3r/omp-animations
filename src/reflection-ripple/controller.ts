@@ -4,7 +4,8 @@ import type {
 	WidgetPlacement,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
 import type { TtsrTriggeredEvent } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
-import type { SymbolPreset, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { SymbolPreset } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { AccentColor } from "../appearance";
 import type { BackpressureSignal, FrameScheduler, MotionSetting } from "../kit";
 import { AnimationHost, backpressureFromTui, DEFAULT_FRAME_SCHEDULER, MotionPolicy } from "../kit";
 import { ReflectionRippleState } from "./state";
@@ -74,9 +75,9 @@ export class ReflectionRippleController {
 	#state = new ReflectionRippleState();
 	#mount: Mount | undefined;
 	#widgetOptions: ExtensionWidgetOptions;
-	#accentColor: ThemeColor | undefined;
+	#accentColor: AccentColor | undefined;
 
-	constructor(options: { scheduler?: FrameScheduler; placement?: WidgetPlacement; accentColor?: ThemeColor } = {}) {
+	constructor(options: { scheduler?: FrameScheduler; placement?: WidgetPlacement; accentColor?: AccentColor } = {}) {
 		this.#scheduler = options.scheduler ?? DEFAULT_FRAME_SCHEDULER;
 		this.#widgetOptions = { placement: options.placement ?? DEFAULT_PLACEMENT };
 		this.#accentColor = options.accentColor;

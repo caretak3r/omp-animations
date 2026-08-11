@@ -1,4 +1,5 @@
 import type { SymbolPreset, Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import { type AccentColor, accentToThemeColor } from "../appearance";
 import type { AnimatedWidgetOptions, MotionPolicy } from "../kit";
 import { AnimatedWidget } from "../kit";
 import { renderSparkline } from "../render-sparkline";
@@ -27,8 +28,10 @@ export type CadenceEqualizerColors = Readonly<Record<RateBucket, ThemeColor>>;
  * Palimpsest's ember-only override; every other bucket keeps its fixed
  * cool-to-warm ramp position. `undefined` keeps the built-in burst color.
  */
-export function cadenceEqualizerColors(accentColor?: ThemeColor): CadenceEqualizerColors {
-	return accentColor === undefined ? BUCKET_THEME_COLOR : { ...BUCKET_THEME_COLOR, burst: accentColor };
+export function cadenceEqualizerColors(accentColor?: AccentColor): CadenceEqualizerColors {
+	return accentColor === undefined
+		? BUCKET_THEME_COLOR
+		: { ...BUCKET_THEME_COLOR, burst: accentToThemeColor(accentColor) };
 }
 
 /** Color a normalized `[0, 1]` band amplitude by projecting it back onto Token Tide's tok/s buckets — reused verbatim so the two cousins share one palette. */
@@ -121,7 +124,7 @@ export interface CadenceEqualizerWidgetOptions extends AnimatedWidgetOptions {
 	/** Wall clock (epoch ms) — distinct from the shared `AnimationHost`'s relative elapsed-ms, mirroring Token Tide. Injectable for tests. */
 	wallClock: { now(): number };
 	/** Accent override for the primary accent slot (the burst bucket); `undefined` keeps the built-in palette. */
-	accentColor?: ThemeColor;
+	accentColor?: AccentColor;
 }
 
 /**

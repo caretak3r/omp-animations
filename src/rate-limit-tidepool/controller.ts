@@ -7,7 +7,8 @@ import type {
 	AfterProviderResponseEvent,
 	MessageStartEvent,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
-import type { SymbolPreset, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { SymbolPreset } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { AccentColor } from "../appearance";
 import type { BackpressureSignal, FrameScheduler, MotionSetting } from "../kit";
 import { AnimationHost, backpressureFromTui, DEFAULT_FRAME_SCHEDULER, MotionPolicy } from "../kit";
 import { RateLimitTidepoolState } from "./state";
@@ -97,11 +98,11 @@ export class RateLimitTidepoolController {
 	#state = new RateLimitTidepoolState();
 	#mount: Mount | undefined;
 	#widgetOptions: ExtensionWidgetOptions;
-	#accentColor: ThemeColor | undefined;
+	#accentColor: AccentColor | undefined;
 	/** The most recent `after_provider_response`'s headers, not yet claimed by an assistant `message_start`. */
 	#pendingHeaders: Readonly<Record<string, string>> | undefined;
 
-	constructor(options: { scheduler?: FrameScheduler; placement?: WidgetPlacement; accentColor?: ThemeColor } = {}) {
+	constructor(options: { scheduler?: FrameScheduler; placement?: WidgetPlacement; accentColor?: AccentColor } = {}) {
 		this.#scheduler = options.scheduler ?? DEFAULT_FRAME_SCHEDULER;
 		this.#widgetOptions = { placement: options.placement ?? DEFAULT_PLACEMENT };
 		this.#accentColor = options.accentColor;

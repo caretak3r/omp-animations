@@ -10,13 +10,14 @@
  * restart-required posture as the enable/tier settings); there is no live re-read.
  */
 import type { WidgetPlacement } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
-import type { SymbolPreset, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { SymbolPreset, Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { RenderTier } from "./terminal-capabilities";
 
 /**
  * Curated accent palette: a deliberate subset of the host's `ThemeColor` union —
  * the vivid tokens the suite's built-in palettes already draw from (the sunrise
  * gradient, the gem tiers, the status trio) — not the full union, most of which
- * is markdown/status-line plumbing that would read as noise in a settings enum.
+ * makes for poor accent choices (invisibles, structural monochromes).
  */
 export const ACCENT_COLOR_VALUES = [
 	"accent",
@@ -32,14 +33,98 @@ export const ACCENT_COLOR_VALUES = [
 	"syntaxNumber",
 ] as const satisfies readonly ThemeColor[];
 
-/** A user-selectable accent color — always a valid `ThemeColor`. */
-export type AccentColor = (typeof ACCENT_COLOR_VALUES)[number];
+/**
+ * Okabe-Ito colorblind-safe palette — deuteranopia/protanopia-distinguishable.
+ * Published reference values from Okabe & Ito (2008), formatted as direct hex strings.
+ */
+export const OKABE_ITO_PALETTE = [
+	"okabeOrange", // #E69F00
+	"okabeSkyBlue", // #56B4E9
+	"okabeGreen", // #009E73
+	"okabeYellow", // #F0E442
+	"okabeBlue", // #0072B2
+	"okabeVermillion", // #D55E00
+	"okabePurple", // #CC79A7
+] as const;
+
+/** Hex color mapping for Okabe-Ito palette values. */
+export const OKABE_ITO_HEX: Record<(typeof OKABE_ITO_PALETTE)[number], string> = {
+	okabeOrange: "#E69F00",
+	okabeSkyBlue: "#56B4E9",
+	okabeGreen: "#009E73",
+	okabeYellow: "#F0E442",
+	okabeBlue: "#0072B2",
+	okabeVermillion: "#D55E00",
+	okabePurple: "#CC79A7",
+};
+
+/** Union of theme colors and Okabe-Ito palette names. */
+export type OkabeItoColor = (typeof OKABE_ITO_PALETTE)[number];
+
+/** A user-selectable accent color — theme colors or Okabe-Ito palette. */
+export type AccentColor = (typeof ACCENT_COLOR_VALUES)[number] | OkabeItoColor;
 
 /** Sentinel enum value meaning "keep the animation's built-in palette". */
 export const ACCENT_DEFAULT = "default";
 
-/** Manifest enum values for every `<id>AccentColor` setting: the sentinel first, then the palette. */
-export const ACCENT_SETTING_VALUES: readonly string[] = [ACCENT_DEFAULT, ...ACCENT_COLOR_VALUES];
+/** Manifest enum values for every `<id>AccentColor` setting: the sentinel first, then both palettes. */
+export const ACCENT_SETTING_VALUES: readonly string[] = [ACCENT_DEFAULT, ...ACCENT_COLOR_VALUES, ...OKABE_ITO_PALETTE];
+
+/** Type guard: is this AccentColor an Okabe-Ito color? */
+export function isOkabeIto(c: AccentColor): c is OkabeItoColor {
+	return (c as string) in OKABE_ITO_HEX;
+}
+
+/**
+ * Render text in an AccentColor: Okabe-Ito colors resolve to truecolor SGR when
+ * the render tier supports it (otherwise fallback to a sensible theme color);
+ * ThemeColor values go straight to theme.fg().
+ */
+export function colorText(color: AccentColor, text: string, theme: Pick<Theme, "fg">, renderTier?: RenderTier): string {
+	if (isOkabeIto(color)) {
+		const hex = OKABE_ITO_HEX[color];
+		// Use truecolor SGR if supported, otherwise fallback to theme color
+		if (renderTier?.colorMode === "truecolor") {
+			// Parse hex to RGB
+			const r = Number.parseInt(hex.slice(1, 3), 16);
+			const g = Number.parseInt(hex.slice(3, 5), 16);
+			const b = Number.parseInt(hex.slice(5, 7), 16);
+			return `\x1b[38;2;${r};${g};${b}m${text}\x1b[0m`;
+		}
+		// Fallback mapping: pick closest semantic theme color
+		const fallback: Record<OkabeItoColor, ThemeColor> = {
+			okabeOrange: "warning",
+			okabeSkyBlue: "accent",
+			okabeGreen: "success",
+			okabeYellow: "warning",
+			okabeBlue: "accent",
+			okabeVermillion: "error",
+			okabePurple: "syntaxKeyword",
+		};
+		return theme.fg(fallback[color], text);
+	}
+	return theme.fg(color as ThemeColor, text);
+}
+
+/**
+ * Convert AccentColor to ThemeColor for widgets that use theme.fg().
+ * Okabe-Ito colors map to semantically similar theme colors.
+ */
+export function accentToThemeColor(color: AccentColor): ThemeColor {
+	if (isOkabeIto(color)) {
+		const fallback: Record<OkabeItoColor, ThemeColor> = {
+			okabeOrange: "warning",
+			okabeSkyBlue: "accent",
+			okabeGreen: "success",
+			okabeYellow: "warning",
+			okabeBlue: "accent",
+			okabeVermillion: "error",
+			okabePurple: "syntaxKeyword",
+		};
+		return fallback[color];
+	}
+	return color as ThemeColor;
+}
 
 /** Manifest enum values for every `<id>Placement` setting — maps 1:1 to `WidgetPlacement`. */
 export const PLACEMENT_VALUES: readonly WidgetPlacement[] = ["aboveEditor", "belowEditor"];
@@ -84,9 +169,10 @@ function resolveEnum<T extends string>(raw: unknown, allowed: readonly T[], fall
 
 /** The `"default"` sentinel, an absent value, and any invalid string all resolve to `undefined` (built-in palette). */
 function resolveAccentColor(raw: unknown): AccentColor | undefined {
-	return typeof raw === "string" && (ACCENT_COLOR_VALUES as readonly string[]).includes(raw)
-		? (raw as AccentColor)
-		: undefined;
+	if (typeof raw !== "string") return undefined;
+	if ((ACCENT_COLOR_VALUES as readonly string[]).includes(raw)) return raw as AccentColor;
+	if ((OKABE_ITO_PALETTE as readonly string[]).includes(raw)) return raw as OkabeItoColor;
+	return undefined;
 }
 
 /**

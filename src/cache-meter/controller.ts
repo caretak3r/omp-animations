@@ -8,7 +8,8 @@ import type {
 	MessageEndEvent,
 	SessionSwitchEvent,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
-import type { SymbolPreset, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { SymbolPreset } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { AccentColor } from "../appearance";
 import type { BackpressureSignal, FrameScheduler, MotionSetting } from "../kit";
 import { AnimationHost, backpressureFromTui, DEFAULT_FRAME_SCHEDULER, MotionPolicy } from "../kit";
 import { CacheMeterState, type CacheRequestSample } from "./state";
@@ -47,7 +48,7 @@ export interface CacheMeterContext {
 export interface CacheMeterControllerOptions {
 	scheduler?: FrameScheduler;
 	placement?: WidgetPlacement;
-	accentColor?: ThemeColor;
+	accentColor?: AccentColor;
 }
 
 type Mount = { mode: "animated"; host: AnimationHost } | { mode: "static" };
@@ -108,7 +109,7 @@ export class CacheMeterController {
 	#state = new CacheMeterState();
 	#mount: Mount | undefined;
 	#widgetOptions: ExtensionWidgetOptions;
-	#accentColor: ThemeColor | undefined;
+	#accentColor: AccentColor | undefined;
 	#colors: CacheMeterColors;
 
 	constructor(options: CacheMeterControllerOptions = {}) {
