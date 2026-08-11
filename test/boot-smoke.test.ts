@@ -105,6 +105,7 @@ describe("boot smoke (loads the plugin, mounts a widget, disposes it)", () => {
 	let liveTimers = 0;
 	let startSpy: ReturnType<typeof spyOn>;
 	let originalIsTTY: boolean | undefined;
+	let originalEnv: Record<string, string | undefined> = {};
 
 	beforeEach(() => {
 		liveTimers = 0;
@@ -118,16 +119,25 @@ describe("boot smoke (loads the plugin, mounts a widget, disposes it)", () => {
 			};
 		});
 		// Every registrar-mounted animation's context adapter hard-gates motion on the
-		// *real* `process.stdout.isTTY` (never the test's fake `ExtensionContext`) — see
-		// e.g. `src/audit-trail-box/index.ts#toAuditContext`. Bun's test runner has
-		// no TTY attached, so without this the plugin always resolves the `off` tier and
-		// the animated-mount assertions below would be checking nothing.
+		// *real* `process.stdout.isTTY` and the *real* `Bun.env` (never the test's fake
+		// `ExtensionContext`) — see e.g. `src/audit-trail-box/index.ts#toAuditContext`.
+		// Bun's test runner has no TTY attached, and NO_COLOR / CI / TERM=dumb in the
+		// invoking shell each force the `off` tier, so without this the animated-mount
+		// assertions below would be checking the shell we ran under, not the code.
 		originalIsTTY = process.stdout.isTTY;
 		process.stdout.isTTY = true;
+		originalEnv = { NO_COLOR: Bun.env.NO_COLOR, CI: Bun.env.CI, TERM: Bun.env.TERM };
+		delete Bun.env.NO_COLOR;
+		delete Bun.env.CI;
+		Bun.env.TERM = "xterm-256color";
 	});
 
 	afterEach(() => {
 		process.stdout.isTTY = originalIsTTY as boolean;
+		for (const [key, value] of Object.entries(originalEnv)) {
+			if (value === undefined) delete Bun.env[key];
+			else Bun.env[key] = value;
+		}
 		startSpy.mockRestore();
 		// Guard against a genuinely leaked real timer failing silently: if the count
 		// never made it back to zero, something in this test (or the code under test)
