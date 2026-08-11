@@ -79,7 +79,7 @@ import {
 	type ToolCategory,
 } from "../tool-constellation";
 import { BOX_SEGMENT_IDS, type BoxSegmentId } from "./settings";
-import type { PhraseSpan, SegmentLine } from "./status-line";
+import type { PhraseSpan, SegmentLine, StatusDot } from "./status-line";
 
 /** The slice of {@link Theme} every segment builder needs — foreground coloring, plus color hex for gradients and bold for flash emphasis where available. */
 export type BoxTheme = Pick<Theme, "fg"> & Partial<Pick<Theme, "getColorHex" | "bold">>;
@@ -100,6 +100,12 @@ const INACTIVE = { active: false as const, variants: [] as const };
 
 /** The shared idle phrase — a lone dim em-dash (D4's *idle* resting shape: nothing yet this session). */
 const IDLE_SPANS: readonly PhraseSpan[] = [{ key: "idle", text: "—", tone: "dim" }];
+
+/** D4's n/a heuristic floor: this many requests with zero cache traffic latches the "no caching" resting shape. */
+const NO_CACHE_REQUEST_FLOOR = 8;
+
+/** D4's *n/a* resting phrase — dim words, no numbers (the metric is structurally absent, not zero). */
+const NO_CACHING_SPANS: readonly PhraseSpan[] = [{ key: "na", text: "no caching on this provider", tone: "dim" }];
 
 /** Priority order derives from `BOX_SEGMENT_IDS` so it can never drift from the settings module's own list. */
 function priorityOf(id: BoxSegmentId): number {
@@ -160,6 +166,26 @@ export function buildCacheMeterSegment(
 			renderCacheMeterRow(snapshot, width, now, theme, "subtle", snapshot.warmth, false, colors, preset),
 		),
 	);
+
+	// D4 — undefined ≠ zero. Enough requests with zero cache traffic in either
+	// direction means the provider structurally lacks prompt caching. The
+	// snapshot counters are monotone within one session-model, so the latch
+	// derives per-frame: once the floor is crossed the shape holds, and a
+	// single later cache hit makes the condition permanently false (un-latch).
+	// Simple-mode variants are untouched — D4 is a detailed-mode distinction.
+	if (
+		snapshot.requestCount >= NO_CACHE_REQUEST_FLOOR &&
+		snapshot.cacheReadTokens === 0 &&
+		snapshot.cacheWriteTokens === 0
+	) {
+		return {
+			id: "cacheMeter",
+			priority,
+			active: true,
+			variants,
+			line: { dot: "idle", label: "cache", accent: colors.badge, spans: NO_CACHING_SPANS },
+		};
+	}
 	return {
 		id: "cacheMeter",
 		priority,
@@ -170,15 +196,17 @@ export function buildCacheMeterSegment(
 			label: "cache",
 			accent: colors.badge,
 			spans: [
-				{ key: "pct", text: `${(snapshot.warmth * 100).toFixed(1)}%` },
+				{
+					key: "pct",
+					text: `${Math.round(snapshot.warmth * 100)}% hit`,
+					gradient: { ratio: snapshot.warmth, direction: "up-good" },
+				},
 				snapshot.savedCost !== undefined
 					? { key: "saved", text: `saved ${formatCost(snapshot.savedCost)}` }
 					: { key: "hits", text: `${snapshot.hitCount}/${snapshot.requestCount}` },
-				{
-					key: "tokens",
-					text: `r ${formatNumber(snapshot.cacheReadTokens)} · w ${formatNumber(snapshot.cacheWriteTokens)} · miss ${formatNumber(snapshot.missTokens)}`,
-					wideOnly: true,
-				},
+				...(snapshot.missTokens > 0
+					? [{ key: "uncached", text: `${formatNumber(snapshot.missTokens)} uncached`, wideOnly: true }]
+					: []),
 			],
 		},
 	};
@@ -386,18 +414,28 @@ export function buildRateLimitTidepoolSegment(
 	const clampedLevel = level <= 0 ? 0 : level >= 1 ? 1 : level;
 	const resetEta = resetEtaLabel(snapshot.resetAtMs, now);
 
-	const spans: PhraseSpan[] = [
-		{ key: "pct", text: `${Math.round(clampedLevel * 100)}%` },
-		{ key: "provider", text: snapshot.provider },
-	];
+	// D6 — alerts persist, no blinking: ≤10% remaining is an act-now alert
+	// (red, bold), ≤20% is notable (amber). The persistent tone replaces the
+	// gradient on the pct span; healthy levels carry the D5 gradient instead
+	// (up-good: the ratio is the *remaining* fraction, high = good).
+	const dot: StatusDot = clampedLevel <= 0.1 ? "alert" : clampedLevel <= 0.2 ? "notable" : "live";
+	const pct: PhraseSpan = {
+		key: "pct",
+		text: `${Math.round(clampedLevel * 100)}% left`,
+		...(dot === "live"
+			? { gradient: { ratio: clampedLevel, direction: "up-good" as const } }
+			: { tone: dot === "alert" ? ("alert" as const) : ("notable" as const) }),
+	};
+	const spans: PhraseSpan[] = [pct];
 	if (resetEta !== "") spans.push({ key: "reset", text: resetEta });
+	spans.push({ key: "provider", text: snapshot.provider });
 
 	return {
 		id: "rateLimitTidepool",
 		priority,
 		active: true,
 		variants,
-		line: { dot: "live", label: "limits", accent: colors.water, spans },
+		line: { dot, label: "limits", accent: colors.water, spans },
 	};
 }
 

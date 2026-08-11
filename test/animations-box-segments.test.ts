@@ -120,10 +120,15 @@ describe("buildCacheMeterSegment — active line", () => {
 		expect(sample.line.accent).toBe("syntaxString");
 	});
 
-	it("pct span is the snapshot's true warmth — never eased, never alerted", () => {
+	it("pct span is '<N>% hit' at the snapshot's true warmth, carrying the D5 up-good gradient", () => {
 		const state = warmedState();
+		const snapshot = state.snapshot();
 		const sample = buildCacheMeterSegment(state, 999, idTheme);
-		expect(sample.line.spans[0]).toEqual({ key: "pct", text: "50.0%" });
+		expect(sample.line.spans[0]).toEqual({
+			key: "pct",
+			text: "50% hit",
+			gradient: { ratio: snapshot.warmth, direction: "up-good" },
+		});
 	});
 
 	it("falls back to a hits span (hit/request counts) when no savings rate is derivable", () => {
@@ -151,15 +156,62 @@ describe("buildCacheMeterSegment — active line", () => {
 		expect(sample.line.spans[1]).toEqual({ key: "saved", text: `saved ${expected}` });
 	});
 
-	it("carries the r/w/miss token triple only as a wide-only tail span", () => {
+	it("carries uncached volume only as a wide-only tail span (D3: the r/w/miss triple is cut)", () => {
 		const state = warmedState();
 		const snapshot = state.snapshot();
 		const sample = buildCacheMeterSegment(state, 0, idTheme);
 		expect(sample.line.spans[2]).toEqual({
-			key: "tokens",
-			text: `r ${snapshot.cacheReadTokens} · w ${snapshot.cacheWriteTokens} · miss ${snapshot.missTokens}`,
+			key: "uncached",
+			text: `${snapshot.missTokens} uncached`,
 			wideOnly: true,
 		});
+	});
+
+	it("omits the uncached tail entirely when every prompt token was cached", () => {
+		const state = new CacheMeterState();
+		state.recordUsage(usageSample("anthropic", "claude", { cacheRead: 600, cacheWrite: 200 }));
+		expect(state.snapshot().missTokens).toBe(0);
+		const sample = buildCacheMeterSegment(state, 0, idTheme);
+		expect(sample.line.spans.some(span => span.key === "uncached")).toBe(false);
+	});
+});
+
+describe("buildCacheMeterSegment — n/a line (D4: undefined ≠ zero)", () => {
+	function uncachedRequests(state: CacheMeterState, count: number): void {
+		for (let i = 0; i < count; i++) {
+			state.recordUsage(usageSample("ollama", "gpt-oss", { input: 100 }));
+		}
+	}
+
+	it("stays on the live phrase below the request floor — too early to call the provider cacheless", () => {
+		const state = new CacheMeterState();
+		uncachedRequests(state, 7);
+		const sample = buildCacheMeterSegment(state, 0, idTheme);
+		expect(sample.line.dot).toBe("live");
+		expect(sample.line.spans[0]?.key).toBe("pct");
+	});
+
+	it("latches the n/a shape at the floor: idle dot, dim words, no numbers — variants (simple mode) untouched", () => {
+		const state = new CacheMeterState();
+		uncachedRequests(state, 8);
+		const sample = buildCacheMeterSegment(state, 0, idTheme);
+		expect(sample.active).toBe(true); // simple mode unchanged — D4 is a detailed-mode distinction
+		expect(sample.variants.length).toBeGreaterThan(0);
+		expect(sample.line).toEqual({
+			dot: "idle",
+			label: "cache",
+			accent: CACHE_METER_COLORS.badge,
+			spans: [{ key: "na", text: "no caching on this provider", tone: "dim" }],
+		});
+	});
+
+	it("a single later cache hit un-latches permanently — the counters are monotone, so the condition can never re-arm", () => {
+		const state = new CacheMeterState();
+		uncachedRequests(state, 8);
+		state.recordUsage(usageSample("ollama", "gpt-oss", { input: 100, cacheRead: 50 }));
+		expect(buildCacheMeterSegment(state, 0, idTheme).line.spans[0]?.key).toBe("pct");
+		uncachedRequests(state, 20); // more uncached traffic afterwards must not re-latch
+		expect(buildCacheMeterSegment(state, 0, idTheme).line.dot).toBe("live");
 	});
 });
 
@@ -385,17 +437,17 @@ describe("buildRateLimitTidepoolSegment — resting line (Decision 5: enabled-bu
 	});
 });
 
-describe("buildRateLimitTidepoolSegment — active line", () => {
-	function pooledState(
-		level = 0.78,
-		resetAtMs: number | undefined = undefined,
-		observedAtMs = 0,
-	): RateLimitTidepoolState {
-		const state = new RateLimitTidepoolState();
-		state.applySample({ provider: "anthropic", family: "anthropic", level, resetAtMs, observedAtMs });
-		return state;
-	}
+function pooledState(
+	level = 0.78,
+	resetAtMs: number | undefined = undefined,
+	observedAtMs = 0,
+): RateLimitTidepoolState {
+	const state = new RateLimitTidepoolState();
+	state.applySample({ provider: "anthropic", family: "anthropic", level, resetAtMs, observedAtMs });
+	return state;
+}
 
+describe("buildRateLimitTidepoolSegment — active line", () => {
 	it("is active once a snapshot lands, with variants matching renderTidepoolRow at the exact 999/30/12 budgets, deduped", () => {
 		const state = pooledState();
 		const sample = buildRateLimitTidepoolSegment(state, 0, idTheme);
@@ -418,37 +470,46 @@ describe("buildRateLimitTidepoolSegment — active line", () => {
 		}
 	});
 
-	it("pct span is the refill-adjusted level as a rounded percentage", () => {
+	it("pct span is '<N>% left' at the refill-adjusted level, carrying the D5 up-good gradient (the ratio is the remaining fraction)", () => {
 		const state = pooledState(0.784);
 		const sample = buildRateLimitTidepoolSegment(state, 0, idTheme);
 		expect(sample.line.dot).toBe("live");
-		expect(sample.line.spans[0]).toEqual({ key: "pct", text: "78%" });
+		expect(sample.line.spans[0]).toEqual({
+			key: "pct",
+			text: "78% left",
+			gradient: { ratio: refillLevel(0.784, 0, 0, undefined), direction: "up-good" },
+		});
 	});
 
 	it("pct span eases toward full as now advances from observedAtMs toward resetAtMs (refillLevel)", () => {
 		const state = pooledState(0.5, 10_000, 0);
 		const sample = buildRateLimitTidepoolSegment(state, 5_000, idTheme);
 		const expectedLevel = refillLevel(0.5, 5_000, 0, 10_000);
-		expect(sample.line.spans[0]).toEqual({ key: "pct", text: `${Math.round(expectedLevel * 100)}%` });
+		expect(sample.line.spans[0]).toEqual({
+			key: "pct",
+			text: `${Math.round(expectedLevel * 100)}% left`,
+			gradient: { ratio: expectedLevel, direction: "up-good" },
+		});
 		expect(Math.round(expectedLevel * 100)).not.toBe(50); // must have actually refilled, not held the raw observed level
 	});
 
-	it("provider span is the bare provider", () => {
-		const state = pooledState();
-		const sample = buildRateLimitTidepoolSegment(state, 0, idTheme);
-		expect(sample.line.spans[1]).toEqual({ key: "provider", text: "anthropic" });
+	it("provider span trails the phrase (spec order: pct · reset · provider)", () => {
+		const noReset = buildRateLimitTidepoolSegment(pooledState(), 0, idTheme);
+		expect(noReset.line.spans[1]).toEqual({ key: "provider", text: "anthropic" });
+		const withReset = buildRateLimitTidepoolSegment(pooledState(0.5, 12 * 60_000, 0), 0, idTheme);
+		expect(withReset.line.spans[2]).toEqual({ key: "provider", text: "anthropic" });
 	});
 
 	it("reset span is 'resets <N>m' for a reset more than a minute out", () => {
 		const state = pooledState(0.5, 12 * 60_000, 0);
 		const sample = buildRateLimitTidepoolSegment(state, 0, idTheme);
-		expect(sample.line.spans[2]).toEqual({ key: "reset", text: "resets 12m" });
+		expect(sample.line.spans[1]).toEqual({ key: "reset", text: "resets 12m" });
 	});
 
 	it("reset span is 'resets <N>s' for a sub-minute reset", () => {
 		const state = pooledState(0.5, 30_000, 0);
 		const sample = buildRateLimitTidepoolSegment(state, 0, idTheme);
-		expect(sample.line.spans[2]).toEqual({ key: "reset", text: "resets 30s" });
+		expect(sample.line.spans[1]).toEqual({ key: "reset", text: "resets 30s" });
 	});
 
 	it("reset span is absent when the binding bucket reported no reset", () => {
@@ -461,7 +522,7 @@ describe("buildRateLimitTidepoolSegment — active line", () => {
 	it("reset span reads 'resets now' once the reset has already passed", () => {
 		const state = pooledState(0.5, 1_000, 0);
 		const sample = buildRateLimitTidepoolSegment(state, 5_000, idTheme);
-		expect(sample.line.spans[2]).toEqual({ key: "reset", text: "resets now" });
+		expect(sample.line.spans[1]).toEqual({ key: "reset", text: "resets now" });
 	});
 
 	it("keeps the water accent, honoring an accent override — the sand alarm color stays fixed regardless", () => {
@@ -470,6 +531,30 @@ describe("buildRateLimitTidepoolSegment — active line", () => {
 		const sample = buildRateLimitTidepoolSegment(state, 0, idTheme, colors);
 		expect(sample.line.accent).toBe("syntaxString");
 		expect(colors.sand).toBe(TIDEPOOL_COLORS.sand);
+	});
+});
+
+describe("buildRateLimitTidepoolSegment — dot escalation (D6: alerts persist, no blinking)", () => {
+	it("≤ 20% remaining escalates to the notable dot with an amber pct tone replacing the gradient", () => {
+		const sample = buildRateLimitTidepoolSegment(pooledState(0.2), 0, idTheme);
+		expect(sample.line.dot).toBe("notable");
+		expect(sample.line.spans[0]).toEqual({ key: "pct", text: "20% left", tone: "notable" });
+	});
+
+	it("≤ 10% remaining escalates to the alert dot with a red pct tone", () => {
+		const sample = buildRateLimitTidepoolSegment(pooledState(0.1), 0, idTheme);
+		expect(sample.line.dot).toBe("alert");
+		expect(sample.line.spans[0]).toEqual({ key: "pct", text: "10% left", tone: "alert" });
+	});
+
+	it("just above the notable threshold stays live with the gradient — escalation replaces the gradient, never stacks", () => {
+		const sample = buildRateLimitTidepoolSegment(pooledState(0.21), 0, idTheme);
+		expect(sample.line.dot).toBe("live");
+		expect(sample.line.spans[0]?.tone).toBeUndefined();
+		expect(sample.line.spans[0]?.gradient).toEqual({
+			ratio: refillLevel(0.21, 0, 0, undefined),
+			direction: "up-good",
+		});
 	});
 });
 
