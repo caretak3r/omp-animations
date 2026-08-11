@@ -220,6 +220,7 @@ export function buildCadenceEqualizerSegment(
 	_now: number,
 	theme: BoxTheme,
 	colors: CadenceEqualizerColors = cadenceEqualizerColors(),
+	preset: SymbolPreset = "unicode",
 ): SegmentSample {
 	const priority = priorityOf("cadenceEqualizer");
 	const bands = state.snapshotBands();
@@ -235,7 +236,7 @@ export function buildCadenceEqualizerSegment(
 
 	const peaks = state.snapshotPeaks();
 	const variants = dedupe([
-		renderEqualizerRow(bands, peaks, theme, colors),
+		renderEqualizerRow(bands, peaks, theme, colors, preset),
 		renderCompactEqualizer(bands, theme, colors),
 		renderEqualizerText(tokensPerSecond),
 	]);
@@ -257,7 +258,7 @@ export function buildCadenceEqualizerSegment(
 			bar: "",
 			primary: cadenceRateLabel(tokensPerSecond),
 			secondary: `peak ${Math.round(peakAmplitude * MAX_REFERENCE_RATE)}`,
-			trailing: renderEqualizerRow(bands, peaks, theme, colors),
+			trailing: renderEqualizerRow(bands, peaks, theme, colors, preset),
 		},
 	};
 }

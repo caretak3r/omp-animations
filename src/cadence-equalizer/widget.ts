@@ -1,6 +1,7 @@
-import type { Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { SymbolPreset, Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import type { AnimatedWidgetOptions, MotionPolicy } from "../kit";
 import { AnimatedWidget } from "../kit";
+import { renderSparkline } from "../render-sparkline";
 import {
 	BUCKET_THEME_COLOR,
 	MAX_REFERENCE_RATE,
@@ -41,24 +42,56 @@ function bandColor(amplitude: number): RateBucket {
  * from a recent high) followed by the live amplitude glyph — separated by a
  * blank spacer column. Deterministic given `bands`/`peaks` alone (no
  * wall-clock reads): a snapshot of state, not phase.
+ *
+ * For `unicode`/`nerd` presets, the trailing trend uses braille sparklines
+ * (2 samples per character, 5 height levels). For `ascii`, the trend uses
+ * the original vertical block ramp (1 sample per character, 9 height levels).
  */
 export function renderEqualizerRow(
 	bands: readonly number[],
 	peaks: readonly number[],
 	theme: CadenceEqualizerTheme,
 	colors: CadenceEqualizerColors = BUCKET_THEME_COLOR,
+	preset: SymbolPreset = "unicode",
 ): string {
-	const parts: string[] = [];
-	for (let i = 0; i < bands.length; i++) {
-		if (i > 0) parts.push(" ");
-		const amplitude = bands[i] ?? 0;
-		const peak = peaks[i] ?? 0;
-		const color = colors[bandColor(amplitude)];
-		const showPeakCap = peak - amplitude >= PEAK_VISIBLE_GAP;
-		parts.push(showPeakCap ? theme.fg(colors.burst, "‾") : theme.fg("dim", " "));
-		parts.push(theme.fg(color, waveGlyph(amplitude)));
+	// The trailing trend column uses either braille sparklines (unicode/nerd)
+	// or the original block glyphs (ascii).
+	if (preset === "ascii") {
+		// ASCII preset: original block-glyph equalizer (1 glyph per band).
+		const parts: string[] = [];
+		for (let i = 0; i < bands.length; i++) {
+			if (i > 0) parts.push(" ");
+			const amplitude = bands[i] ?? 0;
+			const peak = peaks[i] ?? 0;
+			const color = colors[bandColor(amplitude)];
+			const showPeakCap = peak - amplitude >= PEAK_VISIBLE_GAP;
+			parts.push(showPeakCap ? theme.fg(colors.burst, "‾") : theme.fg("dim", " "));
+			parts.push(theme.fg(color, waveGlyph(amplitude)));
+		}
+		return parts.join("");
 	}
-	return parts.join("");
+
+	// Unicode/nerd preset: braille sparkline (2 samples per character, no peak caps).
+	// The sparkline width is roughly half the band count (each braille char encodes 2 samples).
+	const sparkline = renderSparkline(bands, Math.ceil(bands.length / 2) + 2, 1.0);
+	// Color the sparkline uniformly by the current dominant color (the hottest active band).
+	let dominantColor: ThemeColor = colors.idle;
+	for (const amplitude of bands) {
+		const color = colors[bandColor(amplitude)];
+		// Warming priority: idle < low < medium < high < burst.
+		if (color === colors.burst) {
+			dominantColor = colors.burst;
+			break;
+		}
+		if (color === colors.high && dominantColor !== colors.burst) {
+			dominantColor = colors.high;
+		} else if (color === colors.medium && dominantColor !== colors.burst && dominantColor !== colors.high) {
+			dominantColor = colors.medium;
+		} else if (color === colors.low && dominantColor === colors.idle) {
+			dominantColor = colors.low;
+		}
+	}
+	return theme.fg(dominantColor, sparkline);
 }
 
 /**

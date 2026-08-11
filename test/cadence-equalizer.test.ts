@@ -221,21 +221,21 @@ describe("cadence equalizer rendering (pure)", () => {
 	it("renders one amplitude glyph plus a peak-cap column per band", () => {
 		const bands = [1, 0, 0, 0, 0];
 		const peaks = [1, 0, 0, 0, 0];
-		const row = renderEqualizerRow(bands, peaks, idTheme);
+		const row = renderEqualizerRow(bands, peaks, idTheme, undefined, "ascii");
 		expect(row).toContain(waveGlyph(1));
 	});
 
 	it("shows a peak cap only once the band has decayed meaningfully below its held peak", () => {
 		// The peak cap is colored with BUCKET_THEME_COLOR.burst ("warning"), so absence/presence
 		// of "warning:‾" tracks whether the cap glyph itself rendered.
-		const noCap = renderEqualizerRow([0.5], [0.5], taggedTheme);
+		const noCap = renderEqualizerRow([0.5], [0.5], taggedTheme, undefined, "ascii");
 		expect(noCap).not.toContain("warning:‾");
-		const withCap = renderEqualizerRow([0.3], [0.9], taggedTheme);
+		const withCap = renderEqualizerRow([0.3], [0.9], taggedTheme, undefined, "ascii");
 		expect(withCap).toContain("warning:‾");
 	});
 
 	it("colors each band by its amplitude bucket, matching Token Tide's projected palette", () => {
-		const row = renderEqualizerRow([1], [1], taggedTheme);
+		const row = renderEqualizerRow([1], [1], taggedTheme, undefined, "ascii");
 		// amplitude 1 * MAX_REFERENCE_RATE sits in the burst bucket, themed "warning".
 		expect(row).toContain(`${waveGlyph(1)}`);
 		expect(row).toMatch(/warning:.$/);

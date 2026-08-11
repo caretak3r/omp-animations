@@ -382,6 +382,8 @@ export class AnimationsBoxController {
 				this.#sampleCadenceRate(now),
 				now,
 				theme,
+				undefined,
+				this.#glyphPreset,
 			),
 			buildAuditTrailBoxSegment(this.#auditTrailState, now, theme, undefined, this.#glyphPreset),
 			buildRateLimitTidepoolSegment(this.#tidepoolState, now, theme, undefined, this.#glyphPreset),
