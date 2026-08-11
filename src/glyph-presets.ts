@@ -29,6 +29,13 @@ export type GlyphKey =
 	| "box.reflect"
 	| "box.bar.filled"
 	| "box.bar.empty"
+	| "box.bar.eighths.1"
+	| "box.bar.eighths.2"
+	| "box.bar.eighths.3"
+	| "box.bar.eighths.4"
+	| "box.bar.eighths.5"
+	| "box.bar.eighths.6"
+	| "box.bar.eighths.7"
 	| "cacheMeter.badge"
 	| "cacheMeter.badgePulse"
 	| "cacheMeter.invalidation"
@@ -73,6 +80,13 @@ const UNICODE_GLYPHS: Record<GlyphKey, string> = {
 	"box.reflect": "○",
 	"box.bar.filled": "█",
 	"box.bar.empty": "░",
+	"box.bar.eighths.1": "▏",
+	"box.bar.eighths.2": "▎",
+	"box.bar.eighths.3": "▍",
+	"box.bar.eighths.4": "▌",
+	"box.bar.eighths.5": "▋",
+	"box.bar.eighths.6": "▊",
+	"box.bar.eighths.7": "▉",
 	"cacheMeter.badge": "▤",
 	"cacheMeter.badgePulse": "▥",
 	"cacheMeter.invalidation": "⊘",
@@ -135,6 +149,13 @@ const ASCII_GLYPHS: Record<GlyphKey, string> = {
 	"box.reflect": "o",
 	"box.bar.filled": "#",
 	"box.bar.empty": "-",
+	"box.bar.eighths.1": "-",
+	"box.bar.eighths.2": "-",
+	"box.bar.eighths.3": "-",
+	"box.bar.eighths.4": "-",
+	"box.bar.eighths.5": "-",
+	"box.bar.eighths.6": "-",
+	"box.bar.eighths.7": "-",
 	"cacheMeter.badge": "#",
 	"cacheMeter.badgePulse": "*",
 	"cacheMeter.invalidation": "x",
