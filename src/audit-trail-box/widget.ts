@@ -16,6 +16,8 @@ import type { SymbolPreset, Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/
 import { resolveGlyph } from "../glyph-presets";
 import type { AnimatedWidgetOptions, FrameScheduler, MotionPolicy } from "../kit";
 import { AnimatedWidget } from "../kit";
+import { hyperlinkPath } from "../osc8-hyperlink";
+import type { RenderTier } from "../terminal-capabilities";
 import type { AuditSnapshot, LedgerMetrics, PathStatus } from "./state";
 import { SIGNAL_FAMILIES, STATUS_RISK_ORDER } from "./state";
 
@@ -215,6 +217,8 @@ export interface AuditPanelOptions {
 	readonly colors?: AuditTrailBoxColors;
 	/** The host's live symbol preset (see `../glyph-presets.ts`). Defaults to `"unicode"`. */
 	readonly preset?: SymbolPreset;
+	/** Terminal program for hyperlink support. When provided, absolute paths become clickable OSC-8 hyperlinks. */
+	readonly program?: RenderTier["program"];
 }
 
 /**
@@ -244,7 +248,10 @@ export function renderAuditPanel(
 	const lines: string[] = [heading];
 	for (const record of snapshot.paths.slice(0, maxRows)) {
 		const glyph = theme.fg(colors[record.status], glyphs[record.status]);
-		const path = theme.fg(colors[record.status], padRight(elidePath(record.path, pathWidth), pathWidth));
+		const displayPath = padRight(elidePath(record.path, pathWidth), pathWidth);
+		const coloredPath = theme.fg(colors[record.status], displayPath);
+		// Wrap absolute paths with OSC-8 file:// hyperlinks when terminal supports it
+		const path = options.program ? hyperlinkPath(coloredPath, record.path, options.program) : coloredPath;
 		// Canonical family order, not the set's insertion order — the same path must
 		// render identically whichever signal happened to fire for it first.
 		const fired = SIGNAL_FAMILIES.filter(family => record.families.has(family));

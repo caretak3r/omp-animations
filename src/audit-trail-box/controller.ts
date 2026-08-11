@@ -6,6 +6,7 @@ import type {
 import type { SymbolPreset, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import type { BackpressureSignal, FrameScheduler, MotionSetting } from "../kit";
 import { AnimationHost, backpressureFromTui, DEFAULT_FRAME_SCHEDULER, MotionPolicy } from "../kit";
+import { resolveRenderTier } from "../terminal-capabilities";
 import { createFileProbeSource, DiskProbe, type ProbeSource } from "./probe";
 import { buildRemedyPlan, type RemedyOptions, type RemedyPlan } from "./remedy";
 import { AuditLedgerState, type AuditSnapshot, type TouchObservation } from "./state";
@@ -19,6 +20,10 @@ import {
 	renderAuditOffText,
 	renderAuditPanel,
 } from "./widget";
+
+// Resolve terminal program once for hyperlink support in panel rendering.
+// Tests can override via OMP_ANIMATIONS_FORCE_TIER env var if needed.
+const TERMINAL_PROGRAM = resolveRenderTier().program;
 
 export const WIDGET_KEY = "audit-trail-box";
 /** Footer status key. Distinct from {@link WIDGET_KEY} so clearing one never clears the other. */
@@ -266,6 +271,7 @@ export class AuditTrailBoxController {
 		return renderAuditPanel(this.#state.snapshot(), ctx.theme, {
 			colors: this.#colors,
 			preset: ctx.glyphPreset,
+			program: TERMINAL_PROGRAM,
 			...options,
 		});
 	}

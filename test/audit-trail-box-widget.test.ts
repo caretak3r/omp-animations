@@ -522,3 +522,116 @@ describe("audit trail box widget lifecycle", () => {
 		widget.dispose();
 	});
 });
+
+describe("renderAuditPanel — OSC-8 hyperlink wrapping", () => {
+	it("wraps absolute paths with file:// hyperlinks when program is provided", () => {
+		const state = new AuditLedgerState();
+		state.noteRead("/Users/dev/project/src/main.ts", { hash: "h1" });
+		const snapshot = state.snapshot();
+		const lines = renderAuditPanel(snapshot, idTheme, { program: "kitty" });
+
+		// Find the line with the path (should be line 1, after the heading)
+		const pathLine = lines[1];
+		expect(pathLine).toBeDefined();
+		// Should contain OSC-8 escape sequences
+		expect(pathLine).toContain("\x1b]8;;file:///Users/dev/project/src/main.ts\x1b\\");
+		// Should have closing OSC-8
+		expect(pathLine).toContain("\x1b]8;;\x1b\\");
+	});
+
+	it("does not wrap paths when program is not provided", () => {
+		const state = new AuditLedgerState();
+		state.noteRead("/Users/dev/project/src/main.ts", { hash: "h1" });
+		const snapshot = state.snapshot();
+		const lines = renderAuditPanel(snapshot, idTheme);
+
+		const pathLine = lines[1];
+		expect(pathLine).toBeDefined();
+		// Should NOT contain OSC-8 escape sequences
+		expect(pathLine).not.toContain("\x1b]8;;");
+	});
+
+	it("does not wrap paths for unsupported terminal", () => {
+		const state = new AuditLedgerState();
+		state.noteRead("/Users/dev/project/src/main.ts", { hash: "h1" });
+		const snapshot = state.snapshot();
+		const lines = renderAuditPanel(snapshot, idTheme, { program: "other" });
+
+		const pathLine = lines[1];
+		expect(pathLine).toBeDefined();
+		// Should NOT contain OSC-8 escape sequences
+		expect(pathLine).not.toContain("\x1b]8;;");
+	});
+
+	it("preserves color wrapping around hyperlinks", () => {
+		const state = new AuditLedgerState();
+		state.noteRead("/Users/dev/project/src/main.ts", { hash: "h1" });
+		const snapshot = state.snapshot();
+		const lines = renderAuditPanel(snapshot, taggedTheme, { program: "kitty" });
+
+		const pathLine = lines[1];
+		expect(pathLine).toBeDefined();
+		// Should have both color tagging and hyperlink escapes
+		// The color should wrap the display text before hyperlink wrapping
+		expect(pathLine).toContain("success:"); // fresh status uses success color
+		expect(pathLine).toContain("\x1b]8;;file:///Users/dev/project/src/main.ts\x1b\\");
+	});
+
+	it("hyperlink escapes do not affect visible width calculation", () => {
+		const state = new AuditLedgerState();
+		state.noteRead("/Users/dev/project/src/main.ts", { hash: "h1" });
+		const snapshot = state.snapshot();
+
+		// Render without hyperlinks
+		const linesPlain = renderAuditPanel(snapshot, idTheme);
+		// Render with hyperlinks
+		const linesHyperlinked = renderAuditPanel(snapshot, idTheme, { program: "kitty" });
+
+		// Both should have same number of lines
+		expect(linesHyperlinked.length).toBe(linesPlain.length);
+
+		// The hyperlinked version has more bytes but same structure
+		const plainPathLine = linesPlain[1] ?? "";
+		const hyperlinkedPathLine = linesHyperlinked[1] ?? "";
+
+		// Hyperlinked version should be longer in byte length
+		expect(hyperlinkedPathLine.length).toBeGreaterThan(plainPathLine.length);
+
+		// But the visible content structure should be the same
+		// (both have glyph, path, and detail sections separated by spaces)
+		// Hyperlinked version will have escapes embedded, but should contain same visible text
+		expect(hyperlinkedPathLine).toContain("main.ts");
+	});
+
+	it("handles elided paths correctly", () => {
+		const longPath = "/Users/dev/very/long/project/path/that/exceeds/width/src/main.ts";
+		const state = new AuditLedgerState();
+		state.noteRead(longPath, { hash: "h1" });
+		const snapshot = state.snapshot();
+		const lines = renderAuditPanel(snapshot, idTheme, { program: "kitty", pathWidth: 30 });
+
+		const pathLine = lines[1];
+		expect(pathLine).toBeDefined();
+		// Should contain the FULL path in the file:// URI, not the elided version
+		expect(pathLine).toContain(`file://${longPath}`);
+		// The display text will be elided (shown with …)
+		expect(pathLine).toContain("…");
+	});
+
+	it("works with multiple paths in one panel", () => {
+		const state = new AuditLedgerState();
+		state.noteRead("/Users/dev/project/src/a.ts", { hash: "h1" });
+		state.noteWrite("/Users/dev/project/src/b.ts", 0, { hash: "h2" });
+		state.noteRead("/Users/dev/project/src/c.ts", { hash: "h3" });
+		const snapshot = state.snapshot();
+		const lines = renderAuditPanel(snapshot, idTheme, { program: "kitty" });
+
+		// Should have heading + 3 paths + metrics = 5 lines
+		expect(lines.length).toBe(5);
+
+		// Each path line should have its own hyperlink
+		expect(lines[1]).toContain("file:///Users/dev/project/src");
+		expect(lines[2]).toContain("file:///Users/dev/project/src");
+		expect(lines[3]).toContain("file:///Users/dev/project/src");
+	});
+});
