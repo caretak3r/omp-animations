@@ -53,7 +53,7 @@ import {
 // a deep import, not a reinvented constant, since editing that barrel is a
 // keeper-directory change out of this bead's scope (see `dxi.4`'s report).
 import { MAX_REFERENCE_RATE } from "../cadence-equalizer/scale";
-import { resolveGlyph } from "../glyph-presets";
+import { type GlyphKey, resolveGlyph } from "../glyph-presets";
 import {
 	GLOW_THRESHOLD,
 	PALIMPSEST_COLORS,
@@ -151,6 +151,14 @@ function formatCost(amountUsd: number): string {
  * `controller.ts`'s module doc) — so it always draws the snapshot's true
  * current `warmth`, unalerted.
  */
+/** Cache Meter segment metadata for legend. */
+export const CACHE_METER_SEGMENT = {
+	id: "cacheMeter" as const,
+	label: "cache",
+	description: "Prompt cache hit rate and cost savings",
+	glyphKey: "cacheMeter.badge" as const,
+} satisfies { id: BoxSegmentId; label: string; description: string; glyphKey: GlyphKey };
+
 export function buildCacheMeterSegment(
 	state: CacheMeterState,
 	now: number,
@@ -202,7 +210,6 @@ export function buildCacheMeterSegment(
 		},
 	};
 }
-
 /** Same idle convention as the keeper's own `renderEqualizerText` ("--" when nothing is streaming), without that renderer's `eq ` row prefix — this is a column value, not a standalone row. Padded for tabular alignment (oh-my-pi-jj7.9). */
 function cadenceRateLabel(tokensPerSecond: number | null): string {
 	if (tokensPerSecond === null || !Number.isFinite(tokensPerSecond) || tokensPerSecond <= 0) {
@@ -227,6 +234,14 @@ function cadenceRateLabel(tokensPerSecond: number | null): string {
  * are exactly zero, so the same call already renders the correct dim resting
  * strip, reusing the exported renderer instead of inventing new text.
  */
+/** Cadence Equalizer segment metadata for legend. */
+export const CADENCE_EQUALIZER_SEGMENT = {
+	id: "cadenceEqualizer" as const,
+	label: "cadence",
+	description: "Token streaming rate and response cadence",
+	glyphKey: "box.bar.filled" as const,
+} satisfies { id: BoxSegmentId; label: string; description: string; glyphKey: GlyphKey };
+
 export function buildCadenceEqualizerSegment(
 	state: CadenceEqualizerState,
 	hasStreamed: boolean,
@@ -290,6 +305,14 @@ export function buildCadenceEqualizerSegment(
  * doc), so the glyph here always draws the plain poisoned/badge color,
  * unpulsed.
  */
+/** Audit Trail segment metadata for legend. */
+export const AUDIT_TRAIL_SEGMENT = {
+	id: "auditTrailBox" as const,
+	label: "audit",
+	description: "File touch ledger and edit history",
+	glyphKey: "auditTrail.badge" as const,
+} satisfies { id: BoxSegmentId; label: string; description: string; glyphKey: GlyphKey };
+
 export function buildAuditTrailBoxSegment(
 	state: AuditLedgerState,
 	now: number,
@@ -387,6 +410,14 @@ function resetEtaLabel(resetAtMs: number | undefined, now: number): string {
  * badge, matching Plan 017 Decision 1's table row (same precedent as `box.files`/
  * `box.reflect` below) — now preset-aware instead of a bare hardcoded `"◗"`.
  */
+/** Rate-Limit Tidepool segment metadata for legend. */
+export const RATE_LIMIT_TIDEPOOL_SEGMENT = {
+	id: "rateLimitTidepool" as const,
+	label: "limits",
+	description: "API rate limits and request capacity",
+	glyphKey: "rateLimitTidepool.water" as const,
+} satisfies { id: BoxSegmentId; label: string; description: string; glyphKey: GlyphKey };
+
 export function buildRateLimitTidepoolSegment(
 	state: RateLimitTidepoolState,
 	now: number,
@@ -464,6 +495,14 @@ function dominantCategory(counts: ReadonlyMap<ToolCategory, number>): ToolCatego
  * every other segment, there is no single accent slot to override here, so
  * this builder takes no `colors` parameter.
  */
+/** Tool Constellation segment metadata for legend. */
+export const TOOL_CONSTELLATION_SEGMENT = {
+	id: "toolConstellation" as const,
+	label: "tools",
+	description: "Tool call frequency by category",
+	glyphKey: "toolConstellation.star.0" as const,
+} satisfies { id: BoxSegmentId; label: string; description: string; glyphKey: GlyphKey };
+
 export function buildToolConstellationSegment(
 	state: ConstellationState,
 	_now: number,
@@ -549,6 +588,14 @@ function compareVisibleRows(a: PalimpsestRow, b: PalimpsestRow): number {
  * matching Plan 017 Decision 5's detailed-mode mock, now preset-aware instead of a bare
  * hardcoded `"▓"`.
  */
+/** Palimpsest segment metadata for legend. */
+export const PALIMPSEST_SEGMENT = {
+	id: "palimpsest" as const,
+	label: "files",
+	description: "Most-edited files and overlap patterns",
+	glyphKey: "box.files" as const,
+} satisfies { id: BoxSegmentId; label: string; description: string; glyphKey: GlyphKey };
+
 export function buildPalimpsestSegment(
 	state: PalimpsestState,
 	_now: number,
@@ -617,6 +664,14 @@ export function buildPalimpsestSegment(
  * literal, matching Plan 017 Decision 1's table row (same precedent as `box.files`/
  * `box.limits` above), now preset-aware instead of a bare hardcoded `"○"`.
  */
+/** Reflection Ripple segment metadata for legend. */
+export const REFLECTION_RIPPLE_SEGMENT = {
+	id: "reflectionRipple" as const,
+	label: "reflect",
+	description: "Active reflection triggers and rules",
+	glyphKey: "reflectionRipple.ring.0" as const,
+} satisfies { id: BoxSegmentId; label: string; description: string; glyphKey: GlyphKey };
+
 export function buildReflectionRippleSegment(
 	state: ReflectionRippleState,
 	now: number,
@@ -663,3 +718,14 @@ export function buildReflectionRippleSegment(
 		},
 	};
 }
+
+/** All segment metadata in priority order for legend rendering. */
+export const SEGMENT_REGISTRY = [
+	CACHE_METER_SEGMENT,
+	CADENCE_EQUALIZER_SEGMENT,
+	AUDIT_TRAIL_SEGMENT,
+	RATE_LIMIT_TIDEPOOL_SEGMENT,
+	TOOL_CONSTELLATION_SEGMENT,
+	PALIMPSEST_SEGMENT,
+	REFLECTION_RIPPLE_SEGMENT,
+] as const;

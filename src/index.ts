@@ -14,6 +14,7 @@
 // of this package's copy rather than shipped unregistered.
 
 export * from "./animations-box/doctor";
+export * from "./animations-box/legend";
 export * from "./appearance";
 export { createAuditTrailBoxExtension } from "./audit-trail-box";
 export { createBreathingBorderExtension } from "./breathing-border";
