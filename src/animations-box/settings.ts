@@ -34,6 +34,23 @@ export const BOX_SEGMENT_IDS = [
 
 export type BoxSegmentId = (typeof BOX_SEGMENT_IDS)[number];
 
+/**
+ * Box-scope default visibility (Plan 018 D7): cadence and reflect leave the
+ * box by default. Both stay in {@link BOX_SEGMENT_IDS} — rows mode and the
+ * per-animation enable booleans are untouched — but the box only composes
+ * them when an explicit per-animation `true` opts the cut row back in. These
+ * defaults are code, not settings keys (no box-only subset key).
+ */
+export const BOX_SEGMENT_DEFAULT_VISIBLE: Readonly<Record<BoxSegmentId, boolean>> = {
+	cacheMeter: true,
+	cadenceEqualizer: false,
+	auditTrailBox: true,
+	rateLimitTidepool: true,
+	toolConstellation: true,
+	palimpsest: true,
+	reflectionRipple: false,
+};
+
 /** Breathing Border's own animation id. Not a {@link BoxSegmentId} — its row is replaced by the box's own border chrome (Decision 2), not a composed segment — but its existing per-animation enable boolean still gates whether that chrome breathes. */
 const BREATHING_BORDER_ID = "breathingBorder";
 
@@ -69,6 +86,13 @@ export interface AnimationsBoxConfig {
 	 * key.
 	 */
 	enabled: Readonly<Record<BoxSegmentId, boolean>>;
+	/**
+	 * Per-segment box composition (D7): an explicit per-animation boolean wins
+	 * (`true` opts a cut row back in, `false` hides as always); with no
+	 * explicit setting, {@link BOX_SEGMENT_DEFAULT_VISIBLE} decides. Rows mode
+	 * never reads this — standalone rows gate on `enabled` alone.
+	 */
+	visible: Readonly<Record<BoxSegmentId, boolean>>;
 	/**
 	 * Whether the box's own border chrome breathes (Decision 2) — the SAME
 	 * `breathingBorder` enable boolean that gates its standalone row in `rows`
@@ -119,12 +143,17 @@ function resolveBoolean(raw: unknown, fallback: boolean): boolean {
  */
 export function resolveAnimationsBoxConfig(raw: Record<string, unknown>): AnimationsBoxConfig {
 	const enabled = {} as Record<BoxSegmentId, boolean>;
-	for (const id of BOX_SEGMENT_IDS) enabled[id] = resolveBoolean(raw[id], true);
+	const visible = {} as Record<BoxSegmentId, boolean>;
+	for (const id of BOX_SEGMENT_IDS) {
+		enabled[id] = resolveBoolean(raw[id], true);
+		visible[id] = raw[id] !== undefined ? enabled[id] : BOX_SEGMENT_DEFAULT_VISIBLE[id];
+	}
 	return {
 		display: resolveEnum(raw[BOX_SETTING_KEYS.display], BOX_DISPLAY_VALUES, BOX_DEFAULTS.display),
 		detail: resolveEnum(raw[BOX_SETTING_KEYS.detail], BOX_DETAIL_VALUES, BOX_DEFAULTS.detail),
 		placement: resolveEnum(raw[BOX_SETTING_KEYS.placement], BOX_PLACEMENT_VALUES, BOX_DEFAULTS.placement),
 		enabled,
+		visible,
 		breathingBorder: resolveBoolean(raw[BREATHING_BORDER_ID], true),
 	};
 }
@@ -158,13 +187,14 @@ export function resolveAnimationsBoxConfigFromSources(
 }
 
 /**
- * Whether `id`'s segment is enabled under `config` — its own per-animation
- * boolean, same as would gate its standalone row. This only answers "would
- * this segment show if the box itself is showing"; callers additionally gate
- * on `config.display` (the box is entirely absent in `"rows"` mode).
+ * Whether `id`'s segment composes into the box under `config` (D7): an
+ * explicit per-animation boolean wins, otherwise the box-scope default
+ * visibility cuts cadence and reflect. This only answers "would this segment
+ * show if the box itself is showing"; callers additionally gate on
+ * `config.display` (the box is entirely absent in `"rows"` mode).
  */
-export function segmentActive(config: AnimationsBoxConfig, id: BoxSegmentId): boolean {
-	return config.enabled[id];
+export function segmentVisible(config: AnimationsBoxConfig, id: BoxSegmentId): boolean {
+	return config.visible[id];
 }
 
 export { PLUGIN_NAME };

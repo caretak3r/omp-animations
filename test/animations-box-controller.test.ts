@@ -287,7 +287,7 @@ describe("AnimationsBoxController — mount lifecycle", () => {
 		expect(controller.config).toBe(config);
 	});
 
-	it("captures ctx.glyphPreset once at mount and threads it into a rendered segment's glyph — not just the config field", () => {
+	it("captures ctx.glyphPreset once at mount and threads it into the rendered dot glyphs — not just the config field", () => {
 		const scheduler = manualScheduler();
 		const { ctx, calls } = recordingContext({ glyphPreset: "ascii" });
 		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
@@ -296,8 +296,9 @@ describe("AnimationsBoxController — mount lifecycle", () => {
 
 		controller.onMessageEnd(messageEnd({ input: 400, cacheRead: 600, cacheWrite: 200 }), ctx);
 		const rows = widget.renderFrame(69).join("\n");
-		expect(rows).toContain(resolveGlyph("cacheMeter.badge", "ascii"));
-		expect(rows).not.toContain(resolveGlyph("cacheMeter.badge", "unicode"));
+		expect(rows).toContain(resolveGlyph("box.dot.live", "ascii")); // cache went live under the ascii preset
+		expect(rows).not.toContain(resolveGlyph("box.dot.live", "unicode"));
+		expect(rows).not.toContain(resolveGlyph("box.dot.idle", "unicode"));
 		widget.dispose();
 	});
 });
@@ -416,7 +417,7 @@ describe("AnimationsBoxController — cadence equalizer state wiring", () => {
 		const { ctx, calls } = recordingContext();
 		const controller = new AnimationsBoxController({
 			scheduler: manualScheduler(),
-			initialConfig: resolveAnimationsBoxConfig({}),
+			initialConfig: resolveAnimationsBoxConfig({ cadenceEqualizer: true }),
 		});
 		controller.mount(ctx);
 		const widget = buildWidget(calls[0] as SetWidgetCall);
@@ -428,7 +429,10 @@ describe("AnimationsBoxController — cadence equalizer state wiring", () => {
 	it("onMessageStart latches hasStreamed and surfaces the sampled rate, flipping the segment to its active row", () => {
 		const scheduler = manualScheduler();
 		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		const controller = new AnimationsBoxController({
+			scheduler,
+			initialConfig: resolveAnimationsBoxConfig({ cadenceEqualizer: true }),
+		});
 		controller.mount(ctx);
 		const widget = buildWidget(calls[0] as SetWidgetCall);
 
@@ -442,7 +446,10 @@ describe("AnimationsBoxController — cadence equalizer state wiring", () => {
 	it("onMessageUpdate keeps the tracked message's usage current mid-stream", () => {
 		const scheduler = manualScheduler();
 		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		const controller = new AnimationsBoxController({
+			scheduler,
+			initialConfig: resolveAnimationsBoxConfig({ cadenceEqualizer: true }),
+		});
 		controller.mount(ctx);
 		const widget = buildWidget(calls[0] as SetWidgetCall);
 
@@ -457,7 +464,7 @@ describe("AnimationsBoxController — cadence equalizer state wiring", () => {
 		const { ctx, calls } = recordingContext();
 		const controller = new AnimationsBoxController({
 			scheduler: manualScheduler(),
-			initialConfig: resolveAnimationsBoxConfig({}),
+			initialConfig: resolveAnimationsBoxConfig({ cadenceEqualizer: true }),
 		});
 		controller.mount(ctx);
 		const widget = buildWidget(calls[0] as SetWidgetCall);
@@ -471,7 +478,10 @@ describe("AnimationsBoxController — cadence equalizer state wiring", () => {
 	it("onFrame samples the live rate and steps the EMA bands through the #onTick seam", () => {
 		const scheduler = manualScheduler();
 		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		const controller = new AnimationsBoxController({
+			scheduler,
+			initialConfig: resolveAnimationsBoxConfig({ cadenceEqualizer: true }),
+		});
 		controller.mount(ctx);
 		const widget = buildWidget(calls[0] as SetWidgetCall);
 
@@ -486,7 +496,10 @@ describe("AnimationsBoxController — cadence equalizer state wiring", () => {
 	it("onMessageEnd clears the tracked message (rate settles to idle) but never reverts the segment to resting — hasStreamed latches permanently", () => {
 		const scheduler = manualScheduler();
 		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		const controller = new AnimationsBoxController({
+			scheduler,
+			initialConfig: resolveAnimationsBoxConfig({ cadenceEqualizer: true }),
+		});
 		controller.mount(ctx);
 		const widget = buildWidget(calls[0] as SetWidgetCall);
 
@@ -501,7 +514,10 @@ describe("AnimationsBoxController — cadence equalizer state wiring", () => {
 	it("ignores every event when hasUI is false", () => {
 		const scheduler = manualScheduler();
 		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		const controller = new AnimationsBoxController({
+			scheduler,
+			initialConfig: resolveAnimationsBoxConfig({ cadenceEqualizer: true }),
+		});
 		controller.mount(ctx);
 		const widget = buildWidget(calls[0] as SetWidgetCall);
 
@@ -646,7 +662,7 @@ describe("AnimationsBoxController — rate-limit tidepool state wiring", () => {
 		expect(limitsRow).toBeDefined();
 		expect(limitsRow).toContain("78%");
 		expect(limitsRow).toContain("anthropic");
-		expect(limitsRow).toContain("resets  12m");
+		expect(limitsRow).toContain("resets 12m");
 		widget.dispose();
 	});
 
@@ -848,21 +864,19 @@ describe("AnimationsBoxController — palimpsest state wiring", () => {
 
 describe("AnimationsBoxController — reflection ripple state wiring", () => {
 	const SETTLE_MS = Math.max(RIPPLE_DURATION_MS, DIM_DURATION_MS);
-	// The resting row's own detail.trailing is "" (like every other segment's), but
-	// reflect's ACTIVE detail.trailing is ALSO always the fixed "—" (it has no fifth
-	// column of data — see segments.ts), so the generic "not.toContain('—     ')"
-	// idiom the other wiring blocks use would false-positive on that trailing column.
-	// This substring instead pins the RESTING row specifically: "reflect" padded to
-	// its 8-col label cell, one join space, the empty 12-col bar cell (reflect has no
-	// bounded metric — see segments.ts), one join space, then primary="—" — a pattern
-	// only the resting row produces.
-	const RESTING_REFLECT_ROW = `reflect${" ".repeat(15)}—`;
+	// Pins the RESTING status line specifically: "reflect" fills its 7-col label
+	// gutter exactly, then the two-space gap, then the shared idle phrase "—"
+	// (IDLE_SPANS — see segments.ts). The active line puts rule names there
+	// instead, so this substring only ever matches the resting row. Reflect is
+	// cut from the box by default (D7), so every test here opts it back in with
+	// an explicit per-animation true.
+	const RESTING_REFLECT_ROW = "reflect  —";
 
 	it("the mounted widget starts on the resting row before any ttsr_triggered event — the COMMON state, not a startup gap", () => {
 		const { ctx, calls } = recordingContext();
 		const controller = new AnimationsBoxController({
 			scheduler: manualScheduler(),
-			initialConfig: resolveAnimationsBoxConfig({}),
+			initialConfig: resolveAnimationsBoxConfig({ reflectionRipple: true }),
 		});
 		controller.mount(ctx);
 		const widget = buildWidget(calls[0] as SetWidgetCall);
@@ -874,7 +888,10 @@ describe("AnimationsBoxController — reflection ripple state wiring", () => {
 	it("onTtsrTriggered flips the segment active, and settling via the #onTick seam reverts it to resting", () => {
 		const scheduler = manualScheduler();
 		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		const controller = new AnimationsBoxController({
+			scheduler,
+			initialConfig: resolveAnimationsBoxConfig({ reflectionRipple: true }),
+		});
 		controller.mount(ctx);
 		const widget = buildWidget(calls[0] as SetWidgetCall);
 
@@ -894,7 +911,10 @@ describe("AnimationsBoxController — reflection ripple state wiring", () => {
 	it("ignores ttsr_triggered when hasUI is false", () => {
 		const scheduler = manualScheduler();
 		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		const controller = new AnimationsBoxController({
+			scheduler,
+			initialConfig: resolveAnimationsBoxConfig({ reflectionRipple: true }),
+		});
 		controller.mount(ctx);
 		const widget = buildWidget(calls[0] as SetWidgetCall);
 
@@ -922,7 +942,10 @@ describe("AnimationsBoxController — reflection ripple state wiring", () => {
 	it("MANDATORY acceptance: a ripple triggered before the box widget mounts settles at the correct wall-clock phase, not mount-relative (Plan 017 Decision 4)", () => {
 		const scheduler = manualScheduler();
 		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		const controller = new AnimationsBoxController({
+			scheduler,
+			initialConfig: resolveAnimationsBoxConfig({ reflectionRipple: true }),
+		});
 
 		// Trigger BEFORE mount() — onTtsrTriggered only needs ctx.hasUI, not a live
 		// mount, and stamps the trigger off the scheduler regardless.
@@ -948,8 +971,8 @@ describe("AnimationsBoxController — reflection ripple state wiring", () => {
 	});
 });
 
-describe("AnimationsBoxController — detailed-mode row order (ordering hazard)", () => {
-	it("pins all 7 rows in BOX_SEGMENT_IDS priority order regardless of activation order", () => {
+describe("AnimationsBoxController — detailed-mode row order and the D7 default cut", () => {
+	it("composes the five default-visible rows in BOX_SEGMENT_IDS priority order regardless of activation order", () => {
 		const scheduler = manualScheduler();
 		const { ctx, calls } = recordingContext();
 		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
@@ -958,6 +981,33 @@ describe("AnimationsBoxController — detailed-mode row order (ordering hazard)"
 
 		// Activate segments in an order deliberately scrambled from priority order,
 		// to prove the row order comes from BOX_SEGMENT_IDS, not activation order.
+		controller.onTtsrTriggered(ttsrTriggered(["rule"]), ctx);
+		controller.onToolCall(toolCall("read"), ctx);
+		controller.onMessageStart(assistantMessageStart({ output: 10, duration: 1_000 }), ctx);
+
+		// D7's default cut: cadence and reflect are absent even though both just
+		// received events — only the five default rows compose.
+		const expectedLabels = ["cache", "audit", "limits", "tools", "files"];
+		const frame = widget.renderFrame(69);
+		expect(frame).toHaveLength(expectedLabels.length + 2); // 2 border rows + one per visible segment
+		for (let i = 0; i < expectedLabels.length; i++) {
+			expect(frame[i + 1]).toContain(expectedLabels[i] as string);
+		}
+		expect(frame.join("\n")).not.toContain("cadence");
+		expect(frame.join("\n")).not.toContain("reflect");
+		widget.dispose();
+	});
+
+	it("explicit per-animation true opts both cut rows back in, restoring all 7 rows in priority order", () => {
+		const scheduler = manualScheduler();
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({
+			scheduler,
+			initialConfig: resolveAnimationsBoxConfig({ cadenceEqualizer: true, reflectionRipple: true }),
+		});
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall);
+
 		controller.onTtsrTriggered(ttsrTriggered(["rule"]), ctx);
 		controller.onToolCall(toolCall("read"), ctx);
 		controller.onMessageStart(assistantMessageStart({ output: 10, duration: 1_000 }), ctx);

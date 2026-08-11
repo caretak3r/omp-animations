@@ -107,7 +107,7 @@ import {
 	buildToolConstellationSegment,
 	type SegmentSample,
 } from "./segments";
-import { type AnimationsBoxConfig, segmentActive } from "./settings";
+import { type AnimationsBoxConfig, segmentVisible } from "./settings";
 import { AnimationsBoxWidget } from "./widget";
 
 /** Namespaced per the native-vs-plugin key-collision memory — never a keeper's own `WIDGET_KEY` (only 2 of 8 even export theirs). */
@@ -393,7 +393,7 @@ export class AnimationsBoxController {
 			buildPalimpsestSegment(this.#palimpsestState, now, theme, undefined, this.#glyphPreset),
 			buildReflectionRippleSegment(this.#reflectionRippleState, now, theme, undefined, this.#glyphPreset),
 		];
-		return all.filter(s => segmentActive(this.#config, s.id));
+		return all.filter(s => segmentVisible(this.#config, s.id));
 	}
 
 	/**

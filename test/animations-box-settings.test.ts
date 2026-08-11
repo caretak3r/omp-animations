@@ -2,12 +2,13 @@ import { describe, expect, it } from "bun:test";
 import {
 	BOX_DEFAULTS,
 	BOX_MIGRATED_ANIMATION_IDS,
+	BOX_SEGMENT_DEFAULT_VISIBLE,
 	BOX_SEGMENT_IDS,
 	BOX_SETTING_ENV,
 	BOX_SETTING_KEYS,
 	resolveAnimationsBoxConfig,
 	resolveAnimationsBoxConfigFromSources,
-	segmentActive,
+	segmentVisible,
 } from "../src/animations-box/settings";
 import { animationsEnvKey } from "../src/appearance";
 import { ANIMATIONS } from "../src/registrar";
@@ -41,6 +42,7 @@ describe("resolveAnimationsBoxConfig — defaults and validation", () => {
 		expect(config.detail).toBe(BOX_DEFAULTS.detail);
 		expect(config.placement).toBe(BOX_DEFAULTS.placement);
 		for (const id of BOX_SEGMENT_IDS) expect(config.enabled[id]).toBe(true);
+		for (const id of BOX_SEGMENT_IDS) expect(config.visible[id]).toBe(BOX_SEGMENT_DEFAULT_VISIBLE[id]);
 	});
 
 	it("accepts each valid display/detail/placement value", () => {
@@ -132,15 +134,44 @@ describe("resolveAnimationsBoxConfigFromSources — stored > env > default prece
 	});
 });
 
-describe("segmentActive — reads the resolved per-segment enable boolean", () => {
-	it("mirrors config.enabled[id] exactly", () => {
-		const config = resolveAnimationsBoxConfig({ cacheMeter: false, palimpsest: true });
-		expect(segmentActive(config, "cacheMeter")).toBe(false);
-		expect(segmentActive(config, "palimpsest")).toBe(true);
+describe("segment visibility — D7's box-scope default cut", () => {
+	it("BOX_SEGMENT_DEFAULT_VISIBLE cuts exactly cadenceEqualizer and reflectionRipple", () => {
+		const cut = BOX_SEGMENT_IDS.filter(id => !BOX_SEGMENT_DEFAULT_VISIBLE[id]);
+		expect(cut).toEqual(["cadenceEqualizer", "reflectionRipple"]);
+	});
+
+	it("a cut segment stays enabled by default — rows mode and the per-animation boolean are untouched", () => {
+		const config = resolveAnimationsBoxConfig({});
+		expect(config.enabled.cadenceEqualizer).toBe(true);
+		expect(segmentVisible(config, "cadenceEqualizer")).toBe(false);
+		expect(config.enabled.reflectionRipple).toBe(true);
+		expect(segmentVisible(config, "reflectionRipple")).toBe(false);
+	});
+
+	it("an explicit per-animation true opts a cut row back in, boolean or string form", () => {
+		expect(segmentVisible(resolveAnimationsBoxConfig({ cadenceEqualizer: true }), "cadenceEqualizer")).toBe(true);
+		expect(segmentVisible(resolveAnimationsBoxConfig({ reflectionRipple: "true" }), "reflectionRipple")).toBe(true);
+	});
+
+	it("an explicit false still hides a default-visible segment", () => {
+		const config = resolveAnimationsBoxConfig({ cacheMeter: false });
+		expect(segmentVisible(config, "cacheMeter")).toBe(false);
+		expect(config.enabled.cacheMeter).toBe(false);
+	});
+
+	it("the opt-back-in reads the SAME key/env pair as the enable boolean, stored > env", () => {
+		const fromEnv = resolveAnimationsBoxConfigFromSources({}, { [animationsEnvKey("cadenceEqualizer")]: "true" });
+		expect(segmentVisible(fromEnv, "cadenceEqualizer")).toBe(true);
+
+		const stored = resolveAnimationsBoxConfigFromSources(
+			{ reflectionRipple: false },
+			{ [animationsEnvKey("reflectionRipple")]: "true" },
+		);
+		expect(segmentVisible(stored, "reflectionRipple")).toBe(false); // stored false wins over env true
 	});
 
 	it("is independent of display — callers gate box presence on display separately", () => {
 		const config = resolveAnimationsBoxConfig({ [BOX_SETTING_KEYS.display]: "rows", cacheMeter: true });
-		expect(segmentActive(config, "cacheMeter")).toBe(true);
+		expect(segmentVisible(config, "cacheMeter")).toBe(true);
 	});
 });
