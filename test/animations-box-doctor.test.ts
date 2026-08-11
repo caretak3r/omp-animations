@@ -11,7 +11,9 @@ describe("formatDoctorReport", () => {
 			syncOutput: true,
 		};
 		const report = formatDoctorReport(tier, false);
-		expect(report).toBe("Ghostty detected — truecolor — sync-output: yes — graphics: yes");
+		expect(report).toBe(
+			"Ghostty detected — truecolor — sync-output: yes — graphics: yes\ndetail-grammar: status-lines",
+		);
 	});
 
 	test("Kitty with full capabilities", () => {
@@ -22,7 +24,9 @@ describe("formatDoctorReport", () => {
 			syncOutput: true,
 		};
 		const report = formatDoctorReport(tier, false);
-		expect(report).toBe("Kitty detected — truecolor — sync-output: yes — graphics: yes");
+		expect(report).toBe(
+			"Kitty detected — truecolor — sync-output: yes — graphics: yes\ndetail-grammar: status-lines",
+		);
 	});
 
 	test("iTerm2 with full capabilities", () => {
@@ -33,7 +37,9 @@ describe("formatDoctorReport", () => {
 			syncOutput: true,
 		};
 		const report = formatDoctorReport(tier, false);
-		expect(report).toBe("iTerm2 detected — truecolor — sync-output: yes — graphics: yes");
+		expect(report).toBe(
+			"iTerm2 detected — truecolor — sync-output: yes — graphics: yes\ndetail-grammar: status-lines",
+		);
 	});
 
 	test("WezTerm with full capabilities", () => {
@@ -44,7 +50,9 @@ describe("formatDoctorReport", () => {
 			syncOutput: true,
 		};
 		const report = formatDoctorReport(tier, false);
-		expect(report).toBe("WezTerm detected — truecolor — sync-output: yes — graphics: yes");
+		expect(report).toBe(
+			"WezTerm detected — truecolor — sync-output: yes — graphics: yes\ndetail-grammar: status-lines",
+		);
 	});
 
 	test("Other/unknown terminal with degraded capabilities", () => {
@@ -55,7 +63,9 @@ describe("formatDoctorReport", () => {
 			syncOutput: false,
 		};
 		const report = formatDoctorReport(tier, false);
-		expect(report).toBe("Unknown terminal detected — 256-color — sync-output: no — graphics: no");
+		expect(report).toBe(
+			"Unknown terminal detected — 256-color — sync-output: no — graphics: no\ndetail-grammar: status-lines",
+		);
 	});
 
 	test("Basic terminal with minimal capabilities", () => {
@@ -66,7 +76,9 @@ describe("formatDoctorReport", () => {
 			syncOutput: false,
 		};
 		const report = formatDoctorReport(tier, false);
-		expect(report).toBe("Unknown terminal detected — basic (16-color) — sync-output: no — graphics: no");
+		expect(report).toBe(
+			"Unknown terminal detected — basic (16-color) — sync-output: no — graphics: no\ndetail-grammar: status-lines",
+		);
 	});
 
 	test("Override active notice appended", () => {
@@ -78,7 +90,7 @@ describe("formatDoctorReport", () => {
 		};
 		const report = formatDoctorReport(tier, true);
 		expect(report).toBe(
-			"Ghostty detected — truecolor — sync-output: yes — graphics: yes\n(OMP_ANIMATIONS_FORCE_TIER override active)",
+			"Ghostty detected — truecolor — sync-output: yes — graphics: yes\ndetail-grammar: status-lines\n(OMP_ANIMATIONS_FORCE_TIER override active)",
 		);
 	});
 
@@ -90,7 +102,9 @@ describe("formatDoctorReport", () => {
 			syncOutput: true,
 		};
 		const report = formatDoctorReport(tier, false);
-		expect(report).toBe("Kitty detected — 256-color — sync-output: yes — graphics: yes");
+		expect(report).toBe(
+			"Kitty detected — 256-color — sync-output: yes — graphics: yes\ndetail-grammar: status-lines",
+		);
 	});
 
 	test("Mixed capabilities (graphics but no sync)", () => {
@@ -101,7 +115,9 @@ describe("formatDoctorReport", () => {
 			syncOutput: false,
 		};
 		const report = formatDoctorReport(tier, false);
-		expect(report).toBe("WezTerm detected — truecolor — sync-output: no — graphics: yes");
+		expect(report).toBe(
+			"WezTerm detected — truecolor — sync-output: no — graphics: yes\ndetail-grammar: status-lines",
+		);
 	});
 });
 
@@ -131,7 +147,9 @@ describe("animationsDoctor", () => {
 			COLORTERM: "truecolor",
 		};
 		const report = animationsDoctor(env);
-		expect(report).toBe("Ghostty detected — truecolor — sync-output: yes — graphics: yes");
+		expect(report).toBe(
+			"Ghostty detected — truecolor — sync-output: yes — graphics: yes\ndetail-grammar: status-lines",
+		);
 	});
 
 	test("Kitty detection from TERM_PROGRAM", () => {
@@ -140,7 +158,9 @@ describe("animationsDoctor", () => {
 			COLORTERM: "truecolor",
 		};
 		const report = animationsDoctor(env);
-		expect(report).toBe("Kitty detected — truecolor — sync-output: yes — graphics: yes");
+		expect(report).toBe(
+			"Kitty detected — truecolor — sync-output: yes — graphics: yes\ndetail-grammar: status-lines",
+		);
 	});
 
 	test("iTerm2 detection from TERM_PROGRAM", () => {
@@ -149,7 +169,9 @@ describe("animationsDoctor", () => {
 			COLORTERM: "truecolor",
 		};
 		const report = animationsDoctor(env);
-		expect(report).toBe("iTerm2 detected — truecolor — sync-output: yes — graphics: yes");
+		expect(report).toBe(
+			"iTerm2 detected — truecolor — sync-output: yes — graphics: yes\ndetail-grammar: status-lines",
+		);
 	});
 
 	test("WezTerm detection from TERM_PROGRAM", () => {
@@ -158,7 +180,9 @@ describe("animationsDoctor", () => {
 			COLORTERM: "truecolor",
 		};
 		const report = animationsDoctor(env);
-		expect(report).toBe("WezTerm detected — truecolor — sync-output: yes — graphics: yes");
+		expect(report).toBe(
+			"WezTerm detected — truecolor — sync-output: yes — graphics: yes\ndetail-grammar: status-lines",
+		);
 	});
 
 	test("Override active when OMP_ANIMATIONS_FORCE_TIER is set", () => {
@@ -174,7 +198,9 @@ describe("animationsDoctor", () => {
 		};
 		const report = animationsDoctor(env);
 		expect(report).toContain("(OMP_ANIMATIONS_FORCE_TIER override active)");
-		expect(report).toContain("Kitty detected — 256-color — sync-output: no — graphics: no");
+		expect(report).toContain(
+			"Kitty detected — 256-color — sync-output: no — graphics: no\ndetail-grammar: status-lines",
+		);
 	});
 
 	test("Fallback to other terminal when TERM_PROGRAM unknown", () => {
@@ -182,7 +208,9 @@ describe("animationsDoctor", () => {
 			TERM: "xterm-256color",
 		};
 		const report = animationsDoctor(env);
-		expect(report).toBe("Unknown terminal detected — 256-color — sync-output: no — graphics: no");
+		expect(report).toBe(
+			"Unknown terminal detected — 256-color — sync-output: no — graphics: no\ndetail-grammar: status-lines",
+		);
 	});
 
 	test("Basic terminal fallback", () => {
@@ -190,6 +218,8 @@ describe("animationsDoctor", () => {
 			TERM: "xterm",
 		};
 		const report = animationsDoctor(env);
-		expect(report).toBe("Unknown terminal detected — basic (16-color) — sync-output: no — graphics: no");
+		expect(report).toBe(
+			"Unknown terminal detected — basic (16-color) — sync-output: no — graphics: no\ndetail-grammar: status-lines",
+		);
 	});
 });

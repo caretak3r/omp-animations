@@ -140,7 +140,8 @@ const LABEL_COLS = 7;
 /** Minimum spaces between the phrase body and a right-aligned wide tail. */
 const MIN_TAIL_GAP = 3;
 
-const DOT_GLYPH_KEY: Record<StatusDot, GlyphKey> = {
+/** D2's dot → glyph-key mapping — shared with the legend overlay (D8), which documents the same four-dot vocabulary the renderer draws. */
+export const DOT_GLYPH_KEY: Record<StatusDot, GlyphKey> = {
 	idle: "box.dot.idle",
 	live: "box.dot.live",
 	notable: "box.dot.notable",

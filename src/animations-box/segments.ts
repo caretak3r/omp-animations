@@ -47,7 +47,6 @@ import {
 // a deep import, not a reinvented constant, since editing that barrel is a
 // keeper-directory change out of this bead's scope (see `dxi.4`'s report).
 import { MAX_REFERENCE_RATE } from "../cadence-equalizer/scale";
-import type { GlyphKey } from "../glyph-presets";
 import {
 	GLOW_THRESHOLD,
 	PALIMPSEST_COLORS,
@@ -137,8 +136,7 @@ export const CACHE_METER_SEGMENT = {
 	id: "cacheMeter" as const,
 	label: "cache",
 	description: "Prompt cache hit rate and cost savings",
-	glyphKey: "cacheMeter.badge" as const,
-} satisfies { id: BoxSegmentId; label: string; description: string; glyphKey: GlyphKey };
+} satisfies { id: BoxSegmentId; label: string; description: string };
 
 export function buildCacheMeterSegment(
 	state: CacheMeterState,
@@ -230,8 +228,7 @@ export const CADENCE_EQUALIZER_SEGMENT = {
 	id: "cadenceEqualizer" as const,
 	label: "cadence",
 	description: "Token streaming rate and response cadence",
-	glyphKey: "box.bar.filled" as const,
-} satisfies { id: BoxSegmentId; label: string; description: string; glyphKey: GlyphKey };
+} satisfies { id: BoxSegmentId; label: string; description: string };
 
 export function buildCadenceEqualizerSegment(
 	state: CadenceEqualizerState,
@@ -297,8 +294,7 @@ export const AUDIT_TRAIL_SEGMENT = {
 	id: "auditTrailBox" as const,
 	label: "audit",
 	description: "File touch ledger and edit history",
-	glyphKey: "auditTrail.badge" as const,
-} satisfies { id: BoxSegmentId; label: string; description: string; glyphKey: GlyphKey };
+} satisfies { id: BoxSegmentId; label: string; description: string };
 
 export function buildAuditTrailBoxSegment(
 	state: AuditLedgerState,
@@ -386,8 +382,7 @@ export const RATE_LIMIT_TIDEPOOL_SEGMENT = {
 	id: "rateLimitTidepool" as const,
 	label: "limits",
 	description: "API rate limits and request capacity",
-	glyphKey: "rateLimitTidepool.water" as const,
-} satisfies { id: BoxSegmentId; label: string; description: string; glyphKey: GlyphKey };
+} satisfies { id: BoxSegmentId; label: string; description: string };
 
 export function buildRateLimitTidepoolSegment(
 	state: RateLimitTidepoolState,
@@ -470,8 +465,7 @@ export const TOOL_CONSTELLATION_SEGMENT = {
 	id: "toolConstellation" as const,
 	label: "tools",
 	description: "Tool call frequency by category",
-	glyphKey: "toolConstellation.star.0" as const,
-} satisfies { id: BoxSegmentId; label: string; description: string; glyphKey: GlyphKey };
+} satisfies { id: BoxSegmentId; label: string; description: string };
 
 export function buildToolConstellationSegment(
 	state: ConstellationState,
@@ -554,8 +548,7 @@ export const PALIMPSEST_SEGMENT = {
 	id: "palimpsest" as const,
 	label: "files",
 	description: "Most-edited files and overlap patterns",
-	glyphKey: "box.files" as const,
-} satisfies { id: BoxSegmentId; label: string; description: string; glyphKey: GlyphKey };
+} satisfies { id: BoxSegmentId; label: string; description: string };
 
 export function buildPalimpsestSegment(
 	state: PalimpsestState,
@@ -618,8 +611,7 @@ export const REFLECTION_RIPPLE_SEGMENT = {
 	id: "reflectionRipple" as const,
 	label: "reflect",
 	description: "Active reflection triggers and rules",
-	glyphKey: "reflectionRipple.ring.0" as const,
-} satisfies { id: BoxSegmentId; label: string; description: string; glyphKey: GlyphKey };
+} satisfies { id: BoxSegmentId; label: string; description: string };
 
 export function buildReflectionRippleSegment(
 	state: ReflectionRippleState,

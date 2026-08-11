@@ -34,6 +34,7 @@ export function formatDoctorReport(tier: RenderTier, overrideActive = false): st
 
 	const lines: string[] = [];
 	lines.push(`${programName} detected — ${colorModeText} — sync-output: ${syncText} — graphics: ${graphicsText}`);
+	lines.push("detail-grammar: status-lines");
 
 	if (overrideActive) {
 		lines.push("(OMP_ANIMATIONS_FORCE_TIER override active)");

@@ -1,12 +1,14 @@
 /**
- * Animations Box — full-box golden frames, height stability, and the
- * degradation ladder (Plan 017 Decision 5). Per-builder text/column
- * assertions already live in `animations-box-segments.test.ts`; per-mode
- * geometry/border assertions already live in `animations-box-widget.test.ts`.
- * This file is the composition-level contract: literal rendered frames at
- * the maintainer's real pane width (69), narrow (45), and wide (120), driven
- * through the real controller pipeline end to end, plus the invariants that
- * make the fixed-height design actually hold.
+ * Animations Box — full-box golden frames, status-line fixture goldens,
+ * height stability, and the degradation ladder (Plan 017 Decision 5 +
+ * Plan 018 status lines). Per-builder span/variant assertions live in
+ * `animations-box-segments.test.ts`; per-mode geometry/border assertions
+ * live in `animations-box-widget.test.ts`. This file is the
+ * composition-level contract: literal rendered frames at the maintainer's
+ * real pane width (69), narrow (45), and wide (120), driven through the
+ * real controller pipeline end to end; the §3 grammar forms (n/a, idle,
+ * notable, alert, change-flash) as rendered-line goldens; plus the
+ * invariants that make the fixed-height design actually hold.
  */
 import { describe, expect, it } from "bun:test";
 import type {
@@ -33,13 +35,21 @@ import {
 	type SegmentSample,
 } from "../src/animations-box/segments";
 import {
+	BOX_SEGMENT_DEFAULT_VISIBLE,
 	BOX_SEGMENT_IDS,
 	type BoxDetail,
 	type BoxSegmentId,
 	resolveAnimationsBoxConfig,
 } from "../src/animations-box/settings";
+import {
+	FlashTracker,
+	FULL_FLASH_BOLD_MS,
+	FULL_FLASH_MS,
+	renderStatusLine,
+	type StatusLineContext,
+} from "../src/animations-box/status-line";
 import { AnimationsBoxWidget, BOX_BORDER_COLS, BOX_BORDER_ROWS } from "../src/animations-box/widget";
-import { AuditLedgerState } from "../src/audit-trail-box";
+import { AuditLedgerState, POISON_STREAK_TICKS } from "../src/audit-trail-box";
 import { CacheMeterState } from "../src/cache-meter";
 import { CadenceEqualizerState } from "../src/cadence-equalizer";
 import { AnimationHost, composeSegments, type FrameScheduler, MotionPolicy, segment } from "../src/kit";
@@ -305,66 +315,60 @@ function makeWidget(samples: readonly SegmentSample[], detail: BoxDetail): Anima
 // ---------------------------------------------------------------------------
 
 describe("AnimationsBoxController + AnimationsBoxWidget — full-box golden frames (Decision 5)", () => {
-	it("detailed mode: exact golden frames at width 69 (real pane), 45 (narrow), 120 (wide) — 7 enabled, 5 active", () => {
+	it("detailed mode: exact golden frames at width 69 (real pane), 45 (narrow), 120 (wide) — the D7 default five rows, 4 active + files idle", () => {
 		const widget = driveFullBox("detailed");
 
 		expect(widget.renderFrame(69)).toEqual([
 			"╭───────────────────────────────────────────────────────────────────╮",
-			"│ ▤      cache    [█████░░░░░]  50.0%   1/1          r 600 · w 200… │",
-			"│ ▃▁▁    cadence               100 t/s  peak  55     ⣀⡀⠀            │",
-			"│ ▣      audit                 1✎\uFE0E       widget.ts    reads 1 · wri… │",
-			"│ ◗      limits   [███████▊░░]  78%     anthropic    resets  12m    │",
-			"│ ⛏\uFE0E      tools                 2 calls  read         ⛏\uFE0E1 read · ✎\uFE0E1 … │",
-			"│ ▓      files                 —                                    │",
-			"│ ○      reflect               —                                    │",
+			"│ ●  cache    50% hit · 1/1                            400 uncached │",
+			"│ ◐  audit    1 read · 1 write · 1 edited                 widget.ts │",
+			"│ ●  limits   78% left · resets 12m · anthropic                     │",
+			"│ ●  tools    2 calls — read (1) · write (1)                        │",
+			"│ ○  files    —                                                     │",
 			"╰───────────────────────────────────────────────────────────────────╯",
 		]);
 
 		expect(widget.renderFrame(45)).toEqual([
 			"╭───────────────────────────────────────────╮",
-			"│ ▤      cache    [█████░░░░░]  50.0%   1/… │",
-			"│ ▃▁▁    cadence               100 t/s  pe… │",
-			"│ ▣      audit                 1✎\uFE0E       wi… │",
-			"│ ◗      limits   [███████▊░░]  78%     an… │",
-			"│ ⛏\uFE0E      tools                 2 calls  re… │",
-			"│ ▓      files                 —          … │",
-			"│ ○      reflect               —          … │",
+			"│ ●  cache    50% hit · 1/1    400 uncached │",
+			"│ ◐  audit    1 read · 1 write · 1 edited   │",
+			"│ ●  limits   78% left · resets 12m         │",
+			"│ ●  tools    2 calls                       │",
+			"│ ○  files    —                             │",
 			"╰───────────────────────────────────────────╯",
 		]);
 
 		expect(widget.renderFrame(120)).toEqual([
 			"╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
-			"│ ▤      cache    [█████░░░░░]  50.0%   1/1          r 600 · w 200 · miss 400                                          │",
-			"│ ▃▁▁    cadence               100 t/s  peak  55     ⣀⡀⠀                                                               │",
-			"│ ▣      audit                 1✎\uFE0E       widget.ts    reads 1 · writes 1 · amp  1.0×                                    │",
-			"│ ◗      limits   [███████▊░░]  78%     anthropic    resets  12m                                                       │",
-			"│ ⛏\uFE0E      tools                 2 calls  read         ⛏\uFE0E1 read · ✎\uFE0E1 write                                                │",
-			"│ ▓      files                 —                                                                                       │",
-			"│ ○      reflect               —                                                                                       │",
+			"│ ●  cache    50% hit · 1/1                                                                               400 uncached │",
+			"│ ◐  audit    1 read · 1 write · 1 edited                                                                    widget.ts │",
+			"│ ●  limits   78% left · resets 12m · anthropic                                                                        │",
+			"│ ●  tools    2 calls — read (1) · write (1)                                                                           │",
+			"│ ○  files    —                                                                                                        │",
 			"╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
 		]);
 
 		widget.dispose();
 	});
 
-	it("simple mode: exact golden frames at width 69 (real pane), 45 (narrow), 120 (wide) — 7 enabled, 5 active", () => {
+	it("simple mode: exact golden frames at width 69 (real pane), 45 (narrow), 120 (wide) — D7-visible segments only, cadence and reflect cut", () => {
 		const widget = driveFullBox("simple");
 
 		expect(widget.renderFrame(69)).toEqual([
 			"╭───────────────────────────────────────────────────────────────────╮",
-			"│ ▤ 50.0% · ⣀⡀⠀ · ▣ 1✎\uFE0E r/w 1/1 ×1.0 ↻0% · 78% · ⛏\uFE0E 1 · ✎\uFE0E 1           │",
+			"│ ▤ H 50.0% (1/1) ▅ R 600 W 200 M 400 · ▣ 1✎\uFE0E · 78% · ⛏\uFE0E 1 · ✎\uFE0E 1      │",
 			"╰───────────────────────────────────────────────────────────────────╯",
 		]);
 
 		expect(widget.renderFrame(45)).toEqual([
 			"╭───────────────────────────────────────────╮",
-			"│ ▤ 50.0% · ⣀⡀⠀ · ▣ 1✎\uFE0E · 78% · ⛏\uFE0E 1 · ✎\uFE0E 1    │",
+			"│ ▤ 50.0% · ▣ 1✎\uFE0E · 78% · ⛏\uFE0E 1 · ✎\uFE0E 1          │",
 			"╰───────────────────────────────────────────╯",
 		]);
 
 		expect(widget.renderFrame(120)).toEqual([
 			"╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
-			"│ ▤ HIT 50.0% (1/1) ▅ READ 600 WRITE 200 MISS 400 · ⣀⡀⠀ · ▣ 1✎\uFE0E r/w 1/1 ×1.0 ↻0% · ≈≈≈≈≈≈≈≈∘∘ 78% anthropic · ⛏\uFE0E 1 · ✎\uFE0E 1 │",
+			"│ ▤ HIT 50.0% (1/1) ▅ READ 600 WRITE 200 MISS 400 · ▣ 1✎\uFE0E r/w 1/1 ×1.0 ↻0% · ≈≈≈≈≈≈≈≈∘∘ 78% anthropic · ⛏\uFE0E 1 · ✎\uFE0E 1       │",
 			"╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
 		]);
 
@@ -383,7 +387,117 @@ describe("AnimationsBoxController + AnimationsBoxWidget — full-box golden fram
 });
 
 // ---------------------------------------------------------------------------
-// 2. Height stability
+// 2. Status-line fixture goldens (Plan 018 §3 forms)
+// ---------------------------------------------------------------------------
+
+/** The spec's own 78-col inner width — §3's fixture lines are pinned verbatim at it. */
+const SPEC_INNER = 78;
+
+/** Hermetic renderer context — explicit tier fields so goldens hold under any local terminal. */
+function lineCtx(overrides: Partial<StatusLineContext> = {}): StatusLineContext {
+	return {
+		theme: idTheme,
+		preset: "unicode",
+		colorMode: "basic",
+		program: "other",
+		segmentId: "test",
+		now: 0,
+		flashTier: "off",
+		...overrides,
+	};
+}
+
+describe("renderStatusLine — §3 fixture goldens at the spec's 78-col inner width (Plan 018)", () => {
+	it("n/a form (D4): a provider that never caches latches to the idle dot and dim prose — no numbers", () => {
+		const state = new CacheMeterState();
+		for (let i = 0; i < 8; i++) {
+			state.recordUsage({
+				provider: "ollama",
+				model: "gpt-oss",
+				usage: { input: 100, output: 10, cacheRead: 0, cacheWrite: 0, totalTokens: 110 },
+			});
+		}
+		const { line } = buildCacheMeterSegment(state, 0, idTheme);
+		expect(renderStatusLine(line, SPEC_INNER, lineCtx())).toBe("○  cache    no caching on this provider");
+	});
+
+	it("idle form: an untouched segment renders the lone dim em-dash under the idle dot", () => {
+		const { line } = buildPalimpsestSegment(new PalimpsestState(), 0, idTheme);
+		expect(renderStatusLine(line, SPEC_INNER, lineCtx())).toBe("○  files    —");
+	});
+
+	it("notable form: an agent-edited file escalates to the half dot and appends the dirty span, wide tail right-aligned", () => {
+		const state = new AuditLedgerState();
+		state.noteRead("/repo/src/widget.ts");
+		state.noteWrite("/repo/src/widget.ts", 0);
+		const { line } = buildAuditTrailBoxSegment(state, 0, idTheme);
+		expect(line.dot).toBe("notable");
+		expect(renderStatusLine(line, SPEC_INNER, lineCtx())).toBe(
+			"◐  audit    1 read · 1 write · 1 edited                              widget.ts",
+		);
+	});
+
+	it("alert form: an on-disk divergence escalates to the alert dot with the poisoned span, wide tail intact", () => {
+		const state = new AuditLedgerState();
+		state.noteRead("/repo/src/read.log", { hash: "h1" });
+		const reading = { path: "/repo/src/read.log", hash: "h2", reachable: true };
+		for (let tick = 0; tick < POISON_STREAK_TICKS; tick++) state.noteProbe([reading], 10_000 + tick * 1000);
+		const { line } = buildAuditTrailBoxSegment(state, 20_000, idTheme);
+		expect(line.dot).toBe("alert");
+		expect(renderStatusLine(line, SPEC_INNER, lineCtx({ now: 20_000 }))).toBe(
+			"●  audit    1 read · 0 writes · 1 changed on disk                     read.log",
+		);
+	});
+});
+
+describe("renderStatusLine + FlashTracker — change-flash frame goldens (D6: flash decays and stops)", () => {
+	// Tagging double: `fg` and `bold` leave visible markers so the goldens pin
+	// exactly which spans sit in which flash phase at each instant.
+	const tagTheme = {
+		fg: (color: string, text: string) => `<${color}:${text}>`,
+		bold: (text: string) => `«${text}»`,
+	};
+
+	it("a changed span walks bold+accent → accent → rest across one full-tier decay; the first observation never flashes", () => {
+		const tracker = new FlashTracker();
+		const state = new CacheMeterState();
+		const ctxAt = (now: number) =>
+			lineCtx({ theme: tagTheme, segmentId: "cacheMeter", flashTier: "full", flash: tracker, now });
+
+		state.recordUsage({
+			provider: "anthropic",
+			model: "claude",
+			usage: { input: 400, output: 10, cacheRead: 600, cacheWrite: 200, totalTokens: 1210 },
+		});
+		// Baseline frame: first observation of every span key — no flash (D6),
+		// pct resting at its bucketed gradient tone.
+		expect(renderStatusLine(buildCacheMeterSegment(state, 0, tagTheme).line, SPEC_INNER, ctxAt(0))).toBe(
+			"<accent:●>  cache    <success:50% hit> · 1/1                                         400 uncached",
+		);
+
+		// A second usage moves pct and hits — both spans enter the bold+accent phase...
+		state.recordUsage({
+			provider: "anthropic",
+			model: "claude",
+			usage: { input: 0, output: 10, cacheRead: 1000, cacheWrite: 0, totalTokens: 1010 },
+		});
+		const changed = buildCacheMeterSegment(state, 5000, tagTheme).line;
+		expect(renderStatusLine(changed, SPEC_INNER, ctxAt(5000))).toBe(
+			"<accent:●>  cache    «<accent:75% hit>» · «<accent:2/2>»                                         400 uncached",
+		);
+		// ...decay to accent alone...
+		expect(renderStatusLine(changed, SPEC_INNER, ctxAt(5000 + FULL_FLASH_BOLD_MS))).toBe(
+			"<accent:●>  cache    <accent:75% hit> · <accent:2/2>                                         400 uncached",
+		);
+		// ...and come fully to rest — gradient tone back, no residue (no blinking).
+		expect(renderStatusLine(changed, SPEC_INNER, ctxAt(5000 + FULL_FLASH_MS))).toBe(
+			"<accent:●>  cache    <success:75% hit> · 2/2                                         400 uncached",
+		);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// 3. Height stability
 // ---------------------------------------------------------------------------
 
 describe("AnimationsBoxWidget — height stability under runtime activation (Decision 5)", () => {
@@ -426,11 +540,20 @@ describe("AnimationsBoxController — config-driven height changes (Decision 5)"
 		return mountedWidget(rawConfig).renderFrame(width).length;
 	}
 
-	it("disabling one segment in config.enabled shortens detailed-mode height by exactly 1, and never touches simple mode's fixed height", () => {
+	it("disabling a default-visible segment shortens detailed-mode height by exactly 1; a default-hidden one only adds when explicitly opted back in — and simple mode never moves (D7)", () => {
 		const baselineDetailed = frameLength({ animationsBoxDetail: "detailed" });
 		const baselineSimple = frameLength({ animationsBoxDetail: "simple" });
+		expect(baselineDetailed).toBe(
+			BOX_BORDER_ROWS + BOX_SEGMENT_IDS.filter(id => BOX_SEGMENT_DEFAULT_VISIBLE[id]).length,
+		);
 		for (const id of BOX_SEGMENT_IDS) {
-			expect(frameLength({ animationsBoxDetail: "detailed", [id]: false })).toBe(baselineDetailed - 1);
+			const visibleByDefault = BOX_SEGMENT_DEFAULT_VISIBLE[id];
+			expect(frameLength({ animationsBoxDetail: "detailed", [id]: false })).toBe(
+				visibleByDefault ? baselineDetailed - 1 : baselineDetailed,
+			);
+			expect(frameLength({ animationsBoxDetail: "detailed", [id]: true })).toBe(
+				visibleByDefault ? baselineDetailed : baselineDetailed + 1,
+			);
 			expect(frameLength({ animationsBoxDetail: "simple", [id]: false })).toBe(baselineSimple);
 		}
 	});
@@ -446,7 +569,7 @@ describe("AnimationsBoxController — config-driven height changes (Decision 5)"
 });
 
 // ---------------------------------------------------------------------------
-// 3. Degradation ladder (simple mode, everything active)
+// 4. Degradation ladder (simple mode, everything active)
 // ---------------------------------------------------------------------------
 
 describe("kit composeSegments — degradation ladder at 45/69/120 in simple mode, everything active (Decision 5)", () => {
