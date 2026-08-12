@@ -92,6 +92,49 @@
 				"default": "belowEditor",
 				"env": "OMP_ANIMATIONS_BOX_PLACEMENT"
 			},
+			"agentTree": {
+				"type": "boolean",
+				"description": "Mount Agent Tree when a subagent exists.",
+				"default": false,
+				"env": "OMP_ANIMATIONS_AGENT_TREE"
+			},
+			"agentTreePlacement": {
+				"type": "enum",
+				"description": "Which side of the editor Agent Tree mounts on. Applied at wire time (restart to change).",
+				"values": [
+					"aboveEditor",
+					"belowEditor"
+				],
+				"default": "belowEditor",
+				"env": "OMP_ANIMATIONS_AGENT_TREE_PLACEMENT"
+			},
+			"agentTreeAccentColor": {
+				"type": "enum",
+				"description": "Agent Tree's primary accent. 'default' keeps the built-in color. Applied at wire time (restart to change).",
+				"values": [
+					"default",
+					"accent",
+					"success",
+					"warning",
+					"error",
+					"muted",
+					"syntaxKeyword",
+					"syntaxFunction",
+					"syntaxVariable",
+					"syntaxType",
+					"syntaxString",
+					"syntaxNumber",
+					"okabeOrange",
+					"okabeSkyBlue",
+					"okabeGreen",
+					"okabeYellow",
+					"okabeBlue",
+					"okabeVermillion",
+					"okabePurple"
+				],
+				"default": "default",
+				"env": "OMP_ANIMATIONS_AGENT_TREE_ACCENT_COLOR"
+			},
 			"auditTrailBox": {
 				"type": "boolean",
 				"description": "Mount Audit Trail Box.",

@@ -175,15 +175,15 @@ the manifest, which 018 no longer touches after its S4). Re-scopes the retired p
 | 005 | DONE — see `plans/PROGRESS.md` |
 | 006 | STOPPED-escape-hatch (no-go: paint-batching win measured negligible) — see `plans/PROGRESS.md` |
 | 007 | DONE — see `plans/PROGRESS.md` (executed `007-cut-status-bar-duplicators.md`; the maintainer's fixed retain-10/cut-6 list applied; `007-native-default-posture.md` superseded — its on-by-default trio is entirely inside the cut set) |
-| 008 | TODO — preset-aware glyphs (retained set) |
+| 008 | DONE — preset-aware glyph routing is shipped and covered by preset-parameterized tests |
 | 009 | RESOLVED by 017 — the spike's `setStatus`-vs-`setWidget` question was answered by maintainer directive (2026-08-06): a dedicated box |
 | 010 | SUPERSEDED by 017 — box mode suppresses standalone rows; enabled-but-idle segments render dim resting rows |
-| 011 | TODO — Diff Bloom git-backed work-effort meter |
-| 012 | TODO — Agent Fleet live legend (name+status confirmed; activity needs frame poll) |
-| 013 | TODO (measure-first spike) — Memory Crystals → retrieval |
-| 014 | TODO — Session Bonsai labeled branches (subagent label dropped) |
-| 015 | DONE — executed + reviewed (advisor `execute`, 2026-07-17); worktree `/tmp/wt-015`, branch `advisor/015-goal-horizon-generic-budget` @ `e6c9c04`, gate 825/0/3638; awaiting maintainer merge |
-| 016 | TODO — Prompt Charge between-turn signals (thinking + context; approval deferred) |
-| 017 | IMPLEMENTED — all 8 beads done + reviewed 2026-08-07 (gates 906/0/2858 at `e797f14`; sandbox evidence in PROGRESS.md); awaiting maintainer live acceptance |
-| 018 | IN PROGRESS — S1–S4 landed on `main` (`dfbee03`..`8257d58`); S5 (goldens + legend + doctor, sole goldens owner) open |
-| 019 | TODO — Agent Tree widget (plan written 2026-08-10, feasibility-verified against installed dist/types) |
+| 011 | RETIRED — Diff Bloom is outside the current 9-animation keep-set |
+| 012 | RESCOPED by 019 — Agent Fleet is outside the keep-set; Agent Tree implements the live registry tree |
+| 013 | RETIRED — Memory Crystals is outside the current 9-animation keep-set |
+| 014 | RETIRED — Session Bonsai is outside the current 9-animation keep-set |
+| 015 | RETIRED — Goal Horizon is outside the current 9-animation keep-set |
+| 016 | RETIRED — Prompt Charge is outside the current 9-animation keep-set |
+| 017 | DONE — Animations Box shipped; live acceptance completed before the status-line redesign |
+| 018 | DONE — Status-Lines redesign verified at 1204 pass / 0 fail before Plan 019 |
+| 019 | DONE — Agent Tree implemented and field-tested with parallel and nested live subagents (2026-08-12); final gate 1220 pass / 0 fail |

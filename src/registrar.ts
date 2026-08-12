@@ -13,7 +13,7 @@
  * so the zero-leak contract holds. Resolution precedence: an injected `settings` record
  * (the host's or a test's resolved plugin settings) > the stored plugin settings
  * (`readPluginSettingsSync`, a synchronous mirror of the runtime store) > the manifest
- * `env` fallbacks > defaults (every registered animation enabled, tier `full`).
+ * `env` fallbacks > per-animation defaults (tier `full`).
  *
  * `readPluginSettings`/`env` stay on `MountContext` as a generic seam for any animation
  * that self-resolves richer settings beyond the shared enable+tier map — none of this
@@ -38,6 +38,7 @@ import type {
 import { getPluginSettings } from "@oh-my-pi/pi-coding-agent/extensibility/plugins/loader";
 import type { SymbolPreset } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import { CONFIG_DIR_NAME, getPluginsLockfile } from "@oh-my-pi/pi-utils";
+import { createAgentTreeExtension } from "./agent-tree";
 import { type AnimationsBoxContext, AnimationsBoxController } from "./animations-box/controller";
 import {
 	type AnimationsBoxConfig,
@@ -88,16 +89,18 @@ export interface AnimationEntry {
 	title: string;
 	/** Placement used when no `<id>Placement` setting/env is present — the animation's historical hardcoded side. */
 	defaultPlacement: WidgetPlacement;
+	/** Enablement used when neither a stored setting nor an env fallback exists. Defaults to `true`. */
+	defaultEnabled?: boolean;
 	/** Wire the animation onto `api`. Called only when the animation is enabled. */
 	mount: (api: ExtensionAPI, ctx: MountContext) => void;
 }
 
 /**
- * The config-driven registry of this package's shipped animations: audit-trail-box,
- * breathing-border, cache-meter, cadence-equalizer, palimpsest, rate-limit-tidepool,
- * reflection-ripple, and tool-constellation — a curated keep-set chosen from the larger
- * oh-my-pi-animations suite. Every other animation's source was deliberately left out of
- * this package's copy rather than shipped here unregistered.
+ * The config-driven registry of this package's shipped animations: agent-tree,
+ * audit-trail-box, breathing-border, cache-meter, cadence-equalizer, palimpsest,
+ * rate-limit-tidepool, reflection-ripple, and tool-constellation — a curated keep-set
+ * chosen from the larger oh-my-pi-animations suite. Every other animation's source was
+ * deliberately left out of this package's copy rather than shipped here unregistered.
  *
  * Every shipped animation threads the resolved `<id>Placement`/`<id>AccentColor`
  * appearance record (see `appearance.ts`) straight through its factory.
@@ -108,6 +111,13 @@ export interface AnimationEntry {
  * other entry, but the factory itself ignores it.
  */
 export const ANIMATIONS: readonly AnimationEntry[] = [
+	{
+		id: "agentTree",
+		title: "Agent Tree",
+		defaultPlacement: "belowEditor",
+		defaultEnabled: false,
+		mount: (api, c) => createAgentTreeExtension({ motionSetting: c.tier, ...c.appearance.agentTree })(api),
+	},
 	{
 		id: "auditTrailBox",
 		title: "Audit Trail Box",
@@ -187,7 +197,7 @@ function resolveBoolean(raw: unknown, fallback: boolean): boolean {
 
 /**
  * Resolve the enable map + tier from a flat plugin-settings record and env fallbacks.
- * Precedence per key: stored setting > env fallback > default (enabled / tier `full`).
+ * Precedence per key: stored setting > env fallback > the entry's default / tier `full`.
  * A stored `false` disables (nullish coalescing only falls through on null/undefined).
  * Also resolves each animation's `<id>Placement`/`<id>AccentColor` appearance settings
  * with the same precedence, plus `glyphPreset` — one shared value (the host exposes a
@@ -205,7 +215,7 @@ export function resolveAnimationsConfig(
 	for (const animation of ANIMATIONS) {
 		const stored = pluginSettings[animation.id];
 		const fromEnv = env[animationsEnvKey(animation.id)];
-		enabled[animation.id] = resolveBoolean(stored ?? fromEnv, true);
+		enabled[animation.id] = resolveBoolean(stored ?? fromEnv, animation.defaultEnabled ?? true);
 		appearance[animation.id] = resolveAnimationAppearance(
 			animation.id,
 			animation.defaultPlacement,

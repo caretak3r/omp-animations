@@ -336,7 +336,7 @@ describe("resolveAnimationAppearance", () => {
 });
 
 describe("resolveAnimationsConfig appearance", () => {
-	it("resolves the documented 5-below/3-above split (auditTrailBox, cadenceEqualizer, palimpsest, rateLimitTidepool, toolConstellation belowEditor; breathingBorder, cacheMeter, reflectionRipple aboveEditor)", () => {
+	it("resolves the documented 6-below/3-above placement split", () => {
 		const config = resolveAnimationsConfig({}, {});
 		for (const entry of ANIMATIONS) {
 			expect(config.appearance[entry.id]).toEqual({
@@ -346,6 +346,7 @@ describe("resolveAnimationsConfig appearance", () => {
 			});
 		}
 		expect(ANIMATIONS.filter(entry => entry.defaultPlacement === "belowEditor").map(entry => entry.id)).toEqual([
+			"agentTree",
 			"auditTrailBox",
 			"cadenceEqualizer",
 			"palimpsest",

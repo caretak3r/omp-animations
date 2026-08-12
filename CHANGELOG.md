@@ -5,10 +5,10 @@ All notable changes to `@oh-my-pi/animations` are documented here.
 ## [Unreleased]
 
 ### Changed
-- **T6 — Curated to the 8-animation keep-set.** Reduced the registrar and the
-  shipped animation set to eight animations: Audit Trail Box, Breathing
-  Border, Cache Meter, Cadence Equalizer, Palimpsest, Rate-Limit Tidepool,
-  Reflection Ripple, and Tool Constellation. Every other animation described
+- **T6 — Curated to the 9-animation keep-set.** Reduced the registrar and the
+  shipped animation set to nine animations: Agent Tree, Audit Trail Box,
+  Breathing Border, Cache Meter, Cadence Equalizer, Palimpsest, Rate-Limit
+  Tidepool, Reflection Ripple, and Tool Constellation. Every other animation
   below (the rest of Wave 1 and Wave 2, plus the later additions) is no
   longer part of this package; its source is not in this repository. Pruned
   `package.json#omp.settings`, `src/index.ts`, and `src/registrar.ts` to
@@ -19,7 +19,7 @@ All notable changes to `@oh-my-pi/animations` are documented here.
 - Vendored Cadence Equalizer's own copy of the tok/s bucket classification
   and color-ramp module it used to share with Token Tide, since Token Tide is
   no longer part of this package.
-- Reworked the test suite for the 8-animation keep-set: removed assertions
+- Reworked the test suite for the 9-animation keep-set: removed assertions
   and fixtures for excluded animations, and derived expected counts from
   `ANIMATIONS` itself instead of hardcoding them.
 - Adapted to stock oh-my-pi API surface: dropped core edits are read defensively so the
@@ -27,6 +27,9 @@ All notable changes to `@oh-my-pi/animations` are documented here.
   gracefully (`renderUnderPressure` backpressure; Context Weather compaction forecast).
 
 ### Added
+- **Plan 019 — Agent Tree.** Added an opt-in live tree for Main and its
+  reachable subagents. The widget shows status, model, activity, and task
+  context. It uses the shared motion, appearance, and backpressure systems.
 - **T1 — Scaffold.** Initial standalone single-package repo: Bun/TypeScript project,
   `biome` + `tsgo` tooling matching oh-my-pi conventions, npm dependencies on
   `@oh-my-pi/pi-coding-agent`/`pi-tui`/`pi-utils` (`^16`), and the asset type shim.
@@ -45,5 +48,5 @@ All notable changes to `@oh-my-pi/animations` are documented here.
   only enabled animations, with zero subscriptions left for disabled ones.
 
 ### Validation
-- `bun check` green; `bun test` 688 pass / 0 fail / 2322 expect() calls across 18 files
-  (the current 8-animation keep-set).
+- `bun run fix && bun check && bun test` green; 1220 pass / 0 fail /
+  3940 `expect()` calls across 37 files (the current 9-animation keep-set).

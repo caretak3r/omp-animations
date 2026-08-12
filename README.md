@@ -1,14 +1,19 @@
 # @oh-my-pi/animations
 
-`@oh-my-pi/animations` is one [oh-my-pi](https://omp.sh) plugin. It shows
-eight live signals from the current agent session in the terminal UI, as one
-consolidated [Animations Box](#the-animations-box) by default, or as eight
-separate ambient widgets. The plugin is built on a vendored `pi-animation`
-kit (`src/kit/`). Every widget respects a shared motion tier and turns itself
-off on a non-TTY terminal, under `NO_COLOR`, in CI, or when the terminal
-falls behind on rendering.
+`@oh-my-pi/animations` is one [oh-my-pi](https://omp.sh) plugin. It offers
+nine live signals from the current agent session in the terminal UI. Eight
+signals can share one consolidated [Animations Box](#the-animations-box).
+All nine signals can use separate ambient widgets. The plugin uses a vendored
+`pi-animation` kit (`src/kit/`). Every widget respects a shared motion tier.
+Each widget turns off on a non-TTY terminal, under `NO_COLOR`, in CI, or when
+the terminal falls behind on rendering.
 
 ## The animations
+
+**Agent Tree.** Shows Main and its reachable subagents as a live tree. Each
+row includes status, model, current activity, and the first user task when
+space permits. The widget stays hidden until a subagent exists. It is disabled
+by default and stays separate from the Animations Box.
 
 **Audit Trail Box.** Shows which files the agent still trusts. It marks every
 file the agent has touched as FRESH, DIRTY, POISONED, REDUNDANT, or COLD. Run
@@ -66,10 +71,10 @@ The `display` setting picks how the plugin shows its signals:
   behavior.
 - `both` — rows and the box together. Use this to compare the two.
 
-Each animation's own enable setting (`auditTrailBox`, `cacheMeter`, and so
-on) still decides whether that signal shows. In `rows` mode, the setting
-controls the row. In `box` mode, it controls the row inside the box. In
-`both` mode, it controls both.
+Each animation's enable setting (`agentTree`, `auditTrailBox`, `cacheMeter`,
+and more) decides whether that signal shows. Agent Tree always uses a separate
+row. In `box` mode, the other enable settings control rows inside the box.
+In `both` mode, those settings control the separate rows and the box rows.
 
 Two more settings shape the box:
 
@@ -80,13 +85,13 @@ Two more settings shape the box:
 - `animationsBoxPlacement` — which side of the editor the box mounts on:
   `aboveEditor` or `belowEditor` (default).
 
-Each animation's own `Placement` setting (for example
-`cacheMeterPlacement`) applies only in `rows` mode; in `box` mode, the box
-picks placement for every signal it holds. Each animation's own
-`AccentColor` setting still colors its signal inside the box. Breathing
-Border has no row of its own inside the box — its motion becomes the box's
-border, and its `breathingBorderAccentColor` setting colors the border's
-peak brightness.
+Each box-managed animation's own `Placement` setting (for example
+`cacheMeterPlacement`) applies only in `rows` mode. In `box` mode, the box
+picks placement for every signal that it holds. Agent Tree is independent
+of the box, so `agentTreePlacement` applies in all display modes. Each
+animation's own `AccentColor` setting still colors its signal inside the
+box. Breathing Border has no row of its own inside the box. Its motion
+becomes the box border, and `breathingBorderAccentColor` colors the border.
 
 Audit Trail Box is a special case. Its footer alert — the line that warns
 you when a file you trust may be stale — stays active in `box` mode even
@@ -114,11 +119,12 @@ scripted or CI setups):
 - `animations` — the shared motion tier for every animation: `off`, `subtle`,
   or `full`. The default is `subtle`. The environment fallback is
   `OMP_ANIMATIONS`.
-- One boolean setting per animation — `auditTrailBox`, `breathingBorder`,
-  `cacheMeter`, `cadenceEqualizer`, `palimpsest`, `rateLimitTidepool`,
-  `reflectionRipple`, and `toolConstellation`. Each default is `true`. Each
-  environment fallback follows the pattern `OMP_ANIMATIONS_<ID>` (for example
-  `OMP_ANIMATIONS_TOOL_CONSTELLATION`).
+- One boolean setting per animation — `agentTree`, `auditTrailBox`,
+  `breathingBorder`, `cacheMeter`, `cadenceEqualizer`, `palimpsest`,
+  `rateLimitTidepool`, `reflectionRipple`, and `toolConstellation`.
+  `agentTree` defaults to `false`; each other setting defaults to `true`.
+  Each environment fallback follows the pattern `OMP_ANIMATIONS_<ID>` (for
+  example, `OMP_ANIMATIONS_AGENT_TREE`).
 - Three settings for [the Animations Box](#the-animations-box): `display`
   (`rows` / `box` / `both`, default `box`, environment fallback
   `OMP_ANIMATIONS_DISPLAY`), `animationsBoxDetail` (`simple` / `detailed`,

@@ -21,17 +21,21 @@ describe("BOX_SEGMENT_IDS / BOX_MIGRATED_ANIMATION_IDS — derived from the regi
 		expect(new Set(BOX_SEGMENT_IDS).size).toBe(BOX_SEGMENT_IDS.length);
 	});
 
-	it("excludes breathingBorder — its row becomes the box's own border chrome, not a segment", () => {
+	it("excludes breathingBorder and Agent Tree from box segments", () => {
 		expect(BOX_SEGMENT_IDS).not.toContain("breathingBorder");
+		expect(BOX_SEGMENT_IDS).not.toContain("agentTree");
 	});
 
-	it("is exactly the registrar's animations minus breathingBorder (there is no context segment — see Decision 1)", () => {
-		expect(ALL_ANIMATION_IDS.length - 1).toBe(BOX_SEGMENT_IDS.length);
+	it("is exactly the registrar set minus breathingBorder and Agent Tree", () => {
+		const expected = ALL_ANIMATION_IDS.filter(id => id !== "breathingBorder" && id !== "agentTree");
+		expect(expected.sort()).toEqual([...BOX_SEGMENT_IDS].sort());
+		expect(BOX_SEGMENT_IDS).toHaveLength(expected.length);
 	});
 
-	it("BOX_MIGRATED_ANIMATION_IDS is exactly the segment ids plus breathingBorder — the whole registrar set", () => {
-		expect(new Set(BOX_MIGRATED_ANIMATION_IDS)).toEqual(new Set(ALL_ANIMATION_IDS));
-		expect(BOX_MIGRATED_ANIMATION_IDS.length).toBe(ALL_ANIMATION_IDS.length);
+	it("migrates the complete registrar set except the independent Agent Tree row", () => {
+		const expected = ALL_ANIMATION_IDS.filter(id => id !== "agentTree");
+		expect(expected.sort()).toEqual([...BOX_MIGRATED_ANIMATION_IDS].sort());
+		expect(BOX_MIGRATED_ANIMATION_IDS).toHaveLength(expected.length);
 	});
 });
 
