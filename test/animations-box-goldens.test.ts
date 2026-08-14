@@ -35,7 +35,8 @@ import {
 	type SegmentSample,
 } from "../src/animations-box/segments";
 import {
-	BOX_SEGMENT_DEFAULT_VISIBLE,
+	BOX_OPTIONAL_STATUS_SEGMENT_IDS,
+	BOX_REQUIRED_SEGMENT_IDS,
 	BOX_SEGMENT_IDS,
 	type BoxDetail,
 	type BoxSegmentId,
@@ -236,20 +237,20 @@ function driveFullBox(detail: BoxDetail): AnimationsBoxWidget {
 	return widget;
 }
 
-/** One fresh, idle `*State` per segment, in `BOX_SEGMENT_IDS` order — every segment resting. */
+/** One fresh, idle `*State` per segment, in grouped priority order — every segment resting. */
 function restingSamples(): SegmentSample[] {
 	return [
 		buildCacheMeterSegment(new CacheMeterState(), 0, idTheme),
-		buildCadenceEqualizerSegment(new CadenceEqualizerState(), false, null, 0, idTheme),
 		buildAuditTrailBoxSegment(new AuditLedgerState(), 0, idTheme),
 		buildRateLimitTidepoolSegment(new RateLimitTidepoolState(), 0, idTheme),
 		buildToolConstellationSegment(new ConstellationState(), 0, idTheme),
 		buildPalimpsestSegment(new PalimpsestState(), 0, idTheme),
+		buildCadenceEqualizerSegment(new CadenceEqualizerState(), false, null, 0, idTheme),
 		buildReflectionRippleSegment(new ReflectionRippleState(), 0, idTheme),
 	];
 }
 
-/** One warmed, active `*State` per segment, in `BOX_SEGMENT_IDS` order — every segment active at once. */
+/** One warmed, active `*State` per segment, in grouped priority order — every segment active at once. */
 function activeSamples(): SegmentSample[] {
 	const cacheMeterState = new CacheMeterState();
 	cacheMeterState.recordUsage({
@@ -284,11 +285,11 @@ function activeSamples(): SegmentSample[] {
 
 	return [
 		buildCacheMeterSegment(cacheMeterState, 0, idTheme),
-		buildCadenceEqualizerSegment(new CadenceEqualizerState(), true, 100, 0, idTheme),
 		buildAuditTrailBoxSegment(auditState, 0, idTheme),
 		buildRateLimitTidepoolSegment(tidepoolState, 0, idTheme),
 		buildToolConstellationSegment(constellationState, 0, idTheme),
 		buildPalimpsestSegment(palimpsestState, 0, idTheme),
+		buildCadenceEqualizerSegment(new CadenceEqualizerState(), true, 100, 0, idTheme),
 		buildReflectionRippleSegment(reflectionRippleState, 0, idTheme),
 	];
 }
@@ -297,6 +298,10 @@ function makeWidget(samples: readonly SegmentSample[], detail: BoxDetail): Anima
 	const scheduler = manualScheduler();
 	const policy = new MotionPolicy(fullEnv, "full");
 	const host = new AnimationHost({ policy, scheduler });
+	const groups = {
+		required: samples.slice(0, BOX_REQUIRED_SEGMENT_IDS.length),
+		optional: samples.slice(BOX_REQUIRED_SEGMENT_IDS.length),
+	};
 	return new AnimationsBoxWidget({
 		tui: noopTui,
 		host,
@@ -304,7 +309,7 @@ function makeWidget(samples: readonly SegmentSample[], detail: BoxDetail): Anima
 		theme: idTheme,
 		clock: scheduler,
 		onTick: () => {},
-		buildSamples: () => samples,
+		buildSampleGroups: () => groups,
 		getDetail: () => detail,
 		getBorderBrightness: () => undefined,
 	});
@@ -315,13 +320,13 @@ function makeWidget(samples: readonly SegmentSample[], detail: BoxDetail): Anima
 // ---------------------------------------------------------------------------
 
 describe("AnimationsBoxController + AnimationsBoxWidget — full-box golden frames (Decision 5)", () => {
-	it("detailed mode: exact golden frames at width 69 (real pane), 45 (narrow), 120 (wide) — the D7 default five rows, 4 active + files idle", () => {
+	it("detailed mode: exact golden frames at width 69 (real pane), 45 (narrow), and 120 (wide) — five required rows", () => {
 		const widget = driveFullBox("detailed");
 
 		expect(widget.renderFrame(69)).toEqual([
 			"╭───────────────────────────────────────────────────────────────────╮",
-			"│ ●  cache    50% hit · 1/1                            400 uncached │",
-			"│ ◐  audit    1 read · 1 write · 1 edited                 widget.ts │",
+			`${"│ ●  cache    50% hit · 1/1   400 uncached".padEnd(68)}│`,
+			`${"│ ◐  audit    1 read · 1 write · 1 edited   widget.ts".padEnd(68)}│`,
 			"│ ●  limits   78% left · resets 12m · anthropic                     │",
 			"│ ●  tools    2 calls — read (1) · write (1)                        │",
 			"│ ○  files    —                                                     │",
@@ -330,7 +335,7 @@ describe("AnimationsBoxController + AnimationsBoxWidget — full-box golden fram
 
 		expect(widget.renderFrame(45)).toEqual([
 			"╭───────────────────────────────────────────╮",
-			"│ ●  cache    50% hit · 1/1    400 uncached │",
+			`${"│ ●  cache    50% hit · 1/1   400 uncached".padEnd(44)}│`,
 			"│ ◐  audit    1 read · 1 write · 1 edited   │",
 			"│ ●  limits   78% left · resets 12m         │",
 			"│ ●  tools    2 calls                       │",
@@ -340,8 +345,8 @@ describe("AnimationsBoxController + AnimationsBoxWidget — full-box golden fram
 
 		expect(widget.renderFrame(120)).toEqual([
 			"╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
-			"│ ●  cache    50% hit · 1/1                                                                               400 uncached │",
-			"│ ◐  audit    1 read · 1 write · 1 edited                                                                    widget.ts │",
+			`${"│ ●  cache    50% hit · 1/1   400 uncached".padEnd(119)}│`,
+			`${"│ ◐  audit    1 read · 1 write · 1 edited   widget.ts".padEnd(119)}│`,
 			"│ ●  limits   78% left · resets 12m · anthropic                                                                        │",
 			"│ ●  tools    2 calls — read (1) · write (1)                                                                           │",
 			"│ ○  files    —                                                                                                        │",
@@ -351,7 +356,7 @@ describe("AnimationsBoxController + AnimationsBoxWidget — full-box golden fram
 		widget.dispose();
 	});
 
-	it("simple mode: exact golden frames at width 69 (real pane), 45 (narrow), 120 (wide) — D7-visible segments only, cadence and reflect cut", () => {
+	it("simple mode: exact golden frames at width 69 (real pane), 45 (narrow), and 120 (wide) — required segments only", () => {
 		const widget = driveFullBox("simple");
 
 		expect(widget.renderFrame(69)).toEqual([
@@ -426,18 +431,16 @@ describe("renderStatusLine — §3 fixture goldens at the spec's 78-col inner wi
 		expect(renderStatusLine(line, SPEC_INNER, lineCtx())).toBe("○  files    —");
 	});
 
-	it("notable form: an agent-edited file escalates to the half dot and appends the dirty span, wide tail right-aligned", () => {
+	it("notable form: an agent-edited file escalates to the half dot and keeps the wide tail beside the indicators", () => {
 		const state = new AuditLedgerState();
 		state.noteRead("/repo/src/widget.ts");
 		state.noteWrite("/repo/src/widget.ts", 0);
 		const { line } = buildAuditTrailBoxSegment(state, 0, idTheme);
 		expect(line.dot).toBe("notable");
-		expect(renderStatusLine(line, SPEC_INNER, lineCtx())).toBe(
-			"◐  audit    1 read · 1 write · 1 edited                              widget.ts",
-		);
+		expect(renderStatusLine(line, SPEC_INNER, lineCtx())).toBe("◐  audit    1 read · 1 write · 1 edited   widget.ts");
 	});
 
-	it("alert form: an on-disk divergence escalates to the alert dot with the poisoned span, wide tail intact", () => {
+	it("alert form: an on-disk divergence escalates to the alert dot with the poisoned span beside it", () => {
 		const state = new AuditLedgerState();
 		state.noteRead("/repo/src/read.log", { hash: "h1" });
 		const reading = { path: "/repo/src/read.log", hash: "h2", reachable: true };
@@ -445,7 +448,7 @@ describe("renderStatusLine — §3 fixture goldens at the spec's 78-col inner wi
 		const { line } = buildAuditTrailBoxSegment(state, 20_000, idTheme);
 		expect(line.dot).toBe("alert");
 		expect(renderStatusLine(line, SPEC_INNER, lineCtx({ now: 20_000 }))).toBe(
-			"●  audit    1 read · 0 writes · 1 changed on disk                     read.log",
+			"●  audit    1 read · 0 writes · 1 changed on disk   read.log",
 		);
 	});
 });
@@ -472,7 +475,7 @@ describe("renderStatusLine + FlashTracker — change-flash frame goldens (D6: fl
 		// Baseline frame: first observation of every span key — no flash (D6),
 		// pct resting at its bucketed gradient tone.
 		expect(renderStatusLine(buildCacheMeterSegment(state, 0, tagTheme).line, SPEC_INNER, ctxAt(0))).toBe(
-			"<accent:●>  cache    <success:50% hit> · 1/1                                         400 uncached",
+			"<accent:●>  cache    <success:50% hit> · 1/1   400 uncached",
 		);
 
 		// A second usage moves pct and hits — both spans enter the bold+accent phase...
@@ -483,15 +486,15 @@ describe("renderStatusLine + FlashTracker — change-flash frame goldens (D6: fl
 		});
 		const changed = buildCacheMeterSegment(state, 5000, tagTheme).line;
 		expect(renderStatusLine(changed, SPEC_INNER, ctxAt(5000))).toBe(
-			"<accent:●>  cache    «<accent:75% hit>» · «<accent:2/2>»                                         400 uncached",
+			"<accent:●>  cache    «<accent:75% hit>» · «<accent:2/2>»   400 uncached",
 		);
 		// ...decay to accent alone...
 		expect(renderStatusLine(changed, SPEC_INNER, ctxAt(5000 + FULL_FLASH_BOLD_MS))).toBe(
-			"<accent:●>  cache    <accent:75% hit> · <accent:2/2>                                         400 uncached",
+			"<accent:●>  cache    <accent:75% hit> · <accent:2/2>   400 uncached",
 		);
 		// ...and come fully to rest — gradient tone back, no residue (no blinking).
 		expect(renderStatusLine(changed, SPEC_INNER, ctxAt(5000 + FULL_FLASH_MS))).toBe(
-			"<accent:●>  cache    <success:75% hit> · 2/2                                         400 uncached",
+			"<accent:●>  cache    <success:75% hit> · 2/2   400 uncached",
 		);
 	});
 });
@@ -519,7 +522,7 @@ describe("AnimationsBoxWidget — height stability under runtime activation (Dec
 		}
 	});
 
-	it("all 7 segments active at once still matches the all-resting row count, in either detail mode", () => {
+	it("all required and optional segments active still matches the all-resting row count in either detail mode", () => {
 		for (const detail of ["detailed", "simple"] as const) {
 			const restingCount = makeWidget(restingSamples(), detail).render(69).length;
 			const activeCount = makeWidget(activeSamples(), detail).render(69).length;
@@ -527,9 +530,9 @@ describe("AnimationsBoxWidget — height stability under runtime activation (Dec
 		}
 	});
 
-	it("detailed-mode height is BOX_BORDER_ROWS + one row per enabled segment; simple mode is always BOX_BORDER_ROWS + 1", () => {
+	it("detailed mode includes one separator between the segment groups; simple mode remains one composed row", () => {
 		expect(makeWidget(restingSamples(), "detailed").render(69)).toHaveLength(
-			BOX_BORDER_ROWS + BOX_SEGMENT_IDS.length,
+			BOX_BORDER_ROWS + BOX_SEGMENT_IDS.length + 1,
 		);
 		expect(makeWidget(restingSamples(), "simple").render(69)).toHaveLength(BOX_BORDER_ROWS + 1);
 	});
@@ -540,22 +543,29 @@ describe("AnimationsBoxController — config-driven height changes (Decision 5)"
 		return mountedWidget(rawConfig).renderFrame(width).length;
 	}
 
-	it("disabling a default-visible segment shortens detailed-mode height by exactly 1; a default-hidden one only adds when explicitly opted back in — and simple mode never moves (D7)", () => {
+	it("keeps required-summary height fixed and adds one shared separator for visible optional status rows", () => {
 		const baselineDetailed = frameLength({ animationsBoxDetail: "detailed" });
 		const baselineSimple = frameLength({ animationsBoxDetail: "simple" });
-		expect(baselineDetailed).toBe(
-			BOX_BORDER_ROWS + BOX_SEGMENT_IDS.filter(id => BOX_SEGMENT_DEFAULT_VISIBLE[id]).length,
-		);
-		for (const id of BOX_SEGMENT_IDS) {
-			const visibleByDefault = BOX_SEGMENT_DEFAULT_VISIBLE[id];
-			expect(frameLength({ animationsBoxDetail: "detailed", [id]: false })).toBe(
-				visibleByDefault ? baselineDetailed - 1 : baselineDetailed,
-			);
-			expect(frameLength({ animationsBoxDetail: "detailed", [id]: true })).toBe(
-				visibleByDefault ? baselineDetailed : baselineDetailed + 1,
-			);
-			expect(frameLength({ animationsBoxDetail: "simple", [id]: false })).toBe(baselineSimple);
+		expect(baselineDetailed).toBe(BOX_BORDER_ROWS + BOX_REQUIRED_SEGMENT_IDS.length);
+
+		for (const id of BOX_REQUIRED_SEGMENT_IDS) {
+			expect(frameLength({ animationsBoxDetail: "detailed", [id]: false })).toBe(baselineDetailed);
+			expect(frameLength({ animationsBoxDetail: "detailed", [id]: true })).toBe(baselineDetailed);
 		}
+		for (const id of BOX_OPTIONAL_STATUS_SEGMENT_IDS) {
+			expect(frameLength({ animationsBoxDetail: "detailed", [id]: false })).toBe(baselineDetailed);
+			expect(frameLength({ animationsBoxDetail: "detailed", [id]: true })).toBe(baselineDetailed + 2);
+			expect(frameLength({ animationsBoxDetail: "simple", [id]: false })).toBe(baselineSimple);
+			expect(frameLength({ animationsBoxDetail: "simple", [id]: true })).toBe(baselineSimple);
+		}
+		expect(frameLength({ animationsBoxDetail: "detailed", agentBonsai: true })).toBe(baselineDetailed);
+		expect(
+			frameLength({
+				animationsBoxDetail: "detailed",
+				cadenceEqualizer: true,
+				reflectionRipple: true,
+			}),
+		).toBe(baselineDetailed + 3);
 	});
 
 	it("breathingBorder: false changes height not at all, in either detail mode — the border chrome remains, just uncolored", () => {

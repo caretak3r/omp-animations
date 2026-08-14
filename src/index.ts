@@ -7,13 +7,10 @@
 // internal names (state/widget/controller classes), so a full star re-export
 // would be ambiguous; import those from their module path when needed.
 //
-// This package ships a curated animation keep-set: agent-tree, audit-trail-box,
-// breathing-border, cache-meter, cadence-equalizer, palimpsest,
-// rate-limit-tidepool, reflection-ripple, and tool-constellation. Every other
-// animation from the broader oh-my-pi-animations suite was deliberately left
-// out of this package's copy rather than shipped unregistered.
+// This package ships one consolidated Audit Box with Agent Bonsai plus the
+// audit, border, cache, cadence, file, rate-limit, reflection, and tool signals.
 
-export { createAgentTreeExtension } from "./agent-tree";
+export * from "./agent-bonsai";
 export * from "./animations-box/doctor";
 export * from "./animations-box/legend";
 export * from "./appearance";

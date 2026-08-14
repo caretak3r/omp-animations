@@ -112,6 +112,13 @@ export abstract class AnimatedWidget implements Component {
 		this.#lastWidth = undefined;
 	}
 
+	/** Invalidate cached rows and request one scoped repaint for externally-mutated state. */
+	requestRender(): void {
+		if (this.#disposed) return;
+		this.markDirty();
+		this.#tui.requestComponentRender(this);
+	}
+
 	/** Lifecycle teardown: unsubscribe from the frame clock AND the policy. Idempotent. */
 	dispose(): void {
 		if (this.#disposed) return;

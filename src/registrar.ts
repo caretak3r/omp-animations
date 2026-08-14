@@ -20,12 +20,10 @@
  * package's shipped animations currently use it.
  *
  * A second setting, `display` (`rows` · `box` · `both`, default `box`), governs whether
- * each animation still mounts its own standalone row or the consolidated Animations Box
- * (`./animations-box`) owns it instead — see `resolveAnimationsBoxConfigFromSources` and
- * Plan 017 for the full contract. `display: "box"` suppresses the standalone row of every
- * id in `BOX_MIGRATED_ANIMATION_IDS`, with one exception: Audit Trail Box's row is
- * suppressed but its own controller stays mounted headless, because its probe-fed
- * `setStatus` alarm is the sole POISONED surface in box mode (Plan 017 Decision 6).
+ * each animation mounts a standalone row or the consolidated Audit Box owns it.
+ * Whenever the Box is present, Audit Trail runs as a headless ledger/probe/remedy
+ * service and shares its authoritative state with the Box's required `audit` row.
+ * It never mounts a duplicate row or footer status.
  */
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
@@ -38,7 +36,7 @@ import type {
 import { getPluginSettings } from "@oh-my-pi/pi-coding-agent/extensibility/plugins/loader";
 import type { SymbolPreset } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import { CONFIG_DIR_NAME, getPluginsLockfile } from "@oh-my-pi/pi-utils";
-import { createAgentTreeExtension } from "./agent-tree";
+import { AgentBonsaiController } from "./agent-bonsai";
 import { type AnimationsBoxContext, AnimationsBoxController } from "./animations-box/controller";
 import {
 	type AnimationsBoxConfig,
@@ -46,7 +44,7 @@ import {
 	resolveAnimationsBoxConfigFromSources,
 } from "./animations-box/settings";
 import { type AnimationAppearance, animationsEnvKey, resolveAnimationAppearance } from "./appearance";
-import { createAuditTrailBoxExtension } from "./audit-trail-box";
+import { AuditLedgerState, createAuditTrailBoxExtension } from "./audit-trail-box";
 import { createBreathingBorderExtension } from "./breathing-border";
 import { createCacheMeterExtension } from "./cache-meter";
 import { createCadenceEqualizerExtension } from "./cadence-equalizer";
@@ -79,6 +77,8 @@ export interface MountContext {
 	readPluginSettings: PluginSettingsReader;
 	/** Env source for manifest env-var fallbacks. */
 	env: Record<string, string | undefined>;
+	/** Authoritative Audit Trail state shared by its service and the Audit Box. */
+	auditTrailState: AuditLedgerState;
 }
 
 /** A single mountable animation: its settings id, label, and how to wire it. */
@@ -96,11 +96,10 @@ export interface AnimationEntry {
 }
 
 /**
- * The config-driven registry of this package's shipped animations: agent-tree,
- * audit-trail-box, breathing-border, cache-meter, cadence-equalizer, palimpsest,
- * rate-limit-tidepool, reflection-ripple, and tool-constellation — a curated keep-set
- * chosen from the larger oh-my-pi-animations suite. Every other animation's source was
- * deliberately left out of this package's copy rather than shipped here unregistered.
+ * The config-driven registry of this package's shipped animations:
+ * audit-trail-box, breathing-border, cache-meter, cadence-equalizer,
+ * palimpsest, rate-limit-tidepool, reflection-ripple, and tool-constellation.
+ * Agent Bonsai is an Audit Box group rather than an independent animation.
  *
  * Every shipped animation threads the resolved `<id>Placement`/`<id>AccentColor`
  * appearance record (see `appearance.ts`) straight through its factory.
@@ -112,17 +111,15 @@ export interface AnimationEntry {
  */
 export const ANIMATIONS: readonly AnimationEntry[] = [
 	{
-		id: "agentTree",
-		title: "Agent Tree",
-		defaultPlacement: "belowEditor",
-		defaultEnabled: false,
-		mount: (api, c) => createAgentTreeExtension({ motionSetting: c.tier, ...c.appearance.agentTree })(api),
-	},
-	{
 		id: "auditTrailBox",
 		title: "Audit Trail Box",
 		defaultPlacement: "belowEditor",
-		mount: (api, c) => createAuditTrailBoxExtension({ motionSetting: c.tier, ...c.appearance.auditTrailBox })(api),
+		mount: (api, c) =>
+			createAuditTrailBoxExtension({
+				motionSetting: c.tier,
+				...c.appearance.auditTrailBox,
+				state: c.auditTrailState,
+			})(api),
 	},
 	{
 		id: "breathingBorder",
@@ -301,9 +298,9 @@ export interface AnimationsPluginOptions {
 }
 
 /**
- * Build the single config-driven registrar extension. Synchronously mounts exactly the
- * enabled animations and nothing for the disabled ones, then — per `display` — the
- * Animations Box instead of, or alongside, their rows.
+ * Build the single config-driven registrar extension. Synchronously mounts
+ * standalone rows according to `display`, then mounts the consolidated Audit
+ * Box with one shared Audit ledger and one Agent Bonsai observer.
  */
 export function createAnimationsPlugin(options: AnimationsPluginOptions = {}): ExtensionFactory {
 	const env = options.env ?? Bun.env;
@@ -312,40 +309,38 @@ export function createAnimationsPlugin(options: AnimationsPluginOptions = {}): E
 	const config = resolveAnimationsConfig(settings, env, glyphPreset);
 	const boxConfig = resolveAnimationsBoxConfigFromSources(settings, env);
 	const readPluginSettings = options.readPluginSettings ?? ((cwd: string) => getPluginSettings(PLUGIN_NAME, cwd));
-
 	return api => {
+		const auditTrailState = new AuditLedgerState();
+		const boxMounted = boxConfig.display === "box" || boxConfig.display === "both";
+		let boxController: AnimationsBoxController | undefined;
+		const requestBoxRender = (): void => boxController?.requestRender();
+		const agentBonsai =
+			boxMounted && boxConfig.optional.agentBonsai
+				? new AgentBonsaiController({ onChange: requestBoxRender, cwd: options.cwd })
+				: undefined;
 		const mountContext: MountContext = {
 			tier: config.tier,
 			appearance: config.appearance,
 			readPluginSettings,
 			env,
+			auditTrailState,
 		};
+		if (boxMounted) {
+			createAuditTrailBoxExtension({
+				motionSetting: config.tier,
+				...config.appearance.auditTrailBox,
+				state: auditTrailState,
+				headless: true,
+				onChange: requestBoxRender,
+			})(api);
+		}
 		for (const animation of ANIMATIONS) {
+			if (animation.id === "auditTrailBox" && boxMounted) continue;
 			if (!config.enabled[animation.id]) continue;
-			if (boxConfig.display === "box" && BOX_MIGRATED_ANIMATION_IDS.includes(animation.id)) {
-				// The box owns this animation's row now (Plan 017 Decision 3). Audit Trail
-				// Box is the one exception (Decision 6): its `setStatus` alarm is fed by a
-				// probe no other surface runs, so its own controller stays mounted headless
-				// — row suppressed, ledger/probe/alarm/`/audit-trail` command all still live.
-				if (animation.id === "auditTrailBox") {
-					createAuditTrailBoxExtension({
-						motionSetting: config.tier,
-						...config.appearance.auditTrailBox,
-						suppressRow: true,
-					})(api);
-				}
-				continue;
-			}
+			if (boxConfig.display === "box" && BOX_MIGRATED_ANIMATION_IDS.includes(animation.id)) continue;
 			animation.mount(api, mountContext);
 		}
-		if (boxConfig.display === "box" || boxConfig.display === "both") {
-			mountAnimationsBox(api, boxConfig, config);
-		}
-		// Set last: `setLabel` is last-write-wins on the shared extension, so the
-		// registrar's own label must win over any mounted animation's own setLabel call
-		// (historically Context Weather did this internally; it is unregistered as of
-		// Plan 007, but the ordering guard is kept in case a future animation does the
-		// same).
+		if (boxMounted) boxController = mountAnimationsBox(api, boxConfig, config, auditTrailState, agentBonsai);
 		api.setLabel("oh-my-pi animations");
 	};
 }
@@ -369,35 +364,69 @@ function toAnimationsBoxContext(ctx: ExtensionContext): AnimationsBoxContext {
  * `ExtensionContext` structurally to whichever `Pick<AnimationsBoxContext, ...>` that
  * controller method needs, with no per-event adapter (the two share field names).
  */
-function mountAnimationsBox(api: ExtensionAPI, boxConfig: AnimationsBoxConfig, config: AnimationsConfig): void {
+function mountAnimationsBox(
+	api: ExtensionAPI,
+	boxConfig: AnimationsBoxConfig,
+	config: AnimationsConfig,
+	auditTrailState: AuditLedgerState,
+	agentBonsai: AgentBonsaiController | undefined,
+): AnimationsBoxController {
 	const controller = new AnimationsBoxController({
 		placement: boxConfig.placement,
 		motionSetting: config.tier,
 		initialConfig: boxConfig,
 		accentColor: config.appearance.breathingBorder.accentColor,
+		auditTrailState,
+		agentBonsai,
 		// glyphPreset is NOT threaded through `AnimationsBoxControllerOptions` here (unlike
 		// accentColor) — it isn't resolvable at this synchronous wire-time call. Instead
 		// `toAnimationsBoxContext` reads the live `ctx.ui.theme.getSymbolPreset()` fresh on
 		// `session_start`, and `AnimationsBoxController.mount` captures it once from there.
 	});
 
-	api.on("session_start", (_event, ctx) => controller.mount(toAnimationsBoxContext(ctx)));
+	api.on("session_start", (_event, ctx) => {
+		agentBonsai?.mount();
+		agentBonsai?.noteMainModel(ctx.model?.id);
+		controller.mount(toAnimationsBoxContext(ctx));
+	});
 	api.on("message_start", (event, ctx) => controller.onMessageStart(event, ctx));
 	api.on("message_update", (event, ctx) => controller.onMessageUpdate(event, ctx));
 	api.on("message_end", (event, ctx) => controller.onMessageEnd(event, ctx));
 	api.on("after_provider_response", (event, ctx) => controller.onAfterProviderResponse(event, ctx));
 	api.on("tool_call", (event, ctx) => controller.onToolCall(event, ctx));
 	api.on("tool_result", (event, ctx) => controller.onToolResult(event, ctx));
-	api.on("turn_start", (event, ctx) => controller.onTurnStart(event, ctx));
+	api.on("turn_start", (event, ctx) => {
+		agentBonsai?.noteMainModel(ctx.model?.id);
+		controller.onTurnStart(event, ctx);
+	});
 	api.on("turn_end", (event, ctx) => controller.onTurnEnd(event, ctx));
-	api.on("agent_start", (event, ctx) => controller.onAgentStart(event, ctx));
-	api.on("agent_end", (event, ctx) => controller.onAgentEnd(event, ctx));
+	// The Bonsai prunes settled subagents per user request, not per provider turn:
+	// a `task` result is consumed by the turn right after it lands, so pruning
+	// there would erase the row the moment it became worth reading.
+	api.on("agent_start", (event, ctx) => {
+		agentBonsai?.onAgentStart();
+		controller.onAgentStart(event, ctx);
+	});
+	api.on("agent_end", (event, ctx) => {
+		agentBonsai?.onAgentEnd(event.willContinue === true);
+		controller.onAgentEnd(event, ctx);
+	});
+	api.on("tool_execution_update", event => agentBonsai?.onToolExecutionUpdate(event));
+	api.on("tool_execution_end", event => agentBonsai?.onToolExecutionEnd(event));
 	api.on("session_compact", (_event, ctx) => controller.onSessionCompact(ctx));
 	api.on("auto_compaction_start", (event, ctx) => controller.onAutoCompactionStart(event, ctx));
 	api.on("auto_compaction_end", (_event, ctx) => controller.onAutoCompactionEnd(ctx));
 	api.on("ttsr_triggered", (event, ctx) => controller.onTtsrTriggered(event, ctx));
-	api.on("session_switch", (event, ctx) => controller.onSessionSwitch(event, ctx));
-	api.on("session_shutdown", (_event, ctx) => controller.dispose(toAnimationsBoxContext(ctx)));
+	api.on("session_switch", (event, ctx) => {
+		agentBonsai?.mount();
+		agentBonsai?.noteMainModel(ctx.model?.id);
+		controller.onSessionSwitch(event, ctx);
+	});
+	api.on("session_shutdown", (_event, ctx) => {
+		agentBonsai?.dispose();
+		controller.dispose(toAnimationsBoxContext(ctx));
+	});
+	return controller;
 }
 
 export default createAnimationsPlugin();

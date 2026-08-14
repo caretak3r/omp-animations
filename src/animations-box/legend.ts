@@ -1,16 +1,14 @@
 /**
  * Animations Box — legend overlay.
  *
- * On-demand explainer for detailed mode's status-line grammar (Plan 018 D8):
- * D2's four-row semantic dot table, then one line per DEFAULT-VISIBLE segment
- * with its label and description. Both halves derive from live sources — the
- * renderer's own {@link DOT_GLYPH_KEY} and {@link SEGMENT_REGISTRY} filtered
- * through the D7 visibility map — never a hand-duplicated list.
+ * On-demand explainer for detailed mode's status-line grammar: the fixed
+ * semantic-dot table, required summaries in canonical order, then optional
+ * animations in deterministic toggle order. The two composition groups come
+ * from the same registries as the controller and remain visually distinct.
  */
 import type { SymbolPreset } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import { resolveGlyph } from "../glyph-presets";
-import { SEGMENT_REGISTRY } from "./segments";
-import { BOX_SEGMENT_DEFAULT_VISIBLE } from "./settings";
+import { OPTIONAL_SEGMENT_REGISTRY, REQUIRED_SEGMENT_REGISTRY } from "./segments";
 import { DOT_GLYPH_KEY, type StatusDot } from "./status-line";
 
 /** D2's fixed dot vocabulary in escalation order, with the legend's one-line meanings. */
@@ -22,16 +20,12 @@ const DOT_MEANINGS: readonly { readonly dot: StatusDot; readonly meaning: string
 ];
 
 /**
- * Render the legend: the four dot rows, a blank separator, then one
- * `label — description` line per default-visible segment in priority order.
- *
- * @param preset - Symbol preset to resolve the dot glyphs with
- * @returns Array of legend lines
+ * Render the legend: dot vocabulary, required summaries, then optional
+ * animations. Blank lines mirror the composition boundaries.
  */
 export function renderLegend(preset: SymbolPreset = "unicode"): readonly string[] {
 	const dots = DOT_MEANINGS.map(({ dot, meaning }) => `${resolveGlyph(DOT_GLYPH_KEY[dot], preset)} ${meaning}`);
-	const rows = SEGMENT_REGISTRY.filter(segment => BOX_SEGMENT_DEFAULT_VISIBLE[segment.id]).map(
-		segment => `${segment.label} — ${segment.description}`,
-	);
-	return [...dots, "", ...rows];
+	const required = REQUIRED_SEGMENT_REGISTRY.map(segment => `${segment.label} — ${segment.description}`);
+	const optional = OPTIONAL_SEGMENT_REGISTRY.map(segment => `${segment.label} — ${segment.description}`);
+	return [...dots, "", ...required, "", ...optional];
 }

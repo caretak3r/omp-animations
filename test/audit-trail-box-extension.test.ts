@@ -9,7 +9,6 @@ import {
 	bashReadTarget,
 	createAuditTrailBoxExtension,
 	resolveTrackedPath,
-	STATUS_KEY,
 	WIDGET_KEY,
 } from "../src/audit-trail-box";
 import { hashContent, type ProbeObservation, type ProbeSource } from "../src/audit-trail-box/probe";
@@ -445,16 +444,37 @@ describe("audit trail box extension — wiring", () => {
 		expect(lastNote(visible.notes).message).toContain("0 paths");
 	});
 
-	it("clears both surfaces on session shutdown", () => {
+	it("headless mode owns the ledger, notifies its consumer, and mounts no widget or footer status", async () => {
+		let changes = 0;
+		const mounted = mountExtension({
+			headless: true,
+			probeSource: fakeDisk({ "/repo/a.ts": "v1" }),
+			onChange: () => changes++,
+		});
+		const recorded = recordingContext();
+
+		mounted.emit("tool_result", wholeFileRead("/repo/a.ts", "v1"), recorded.ctx);
+		mounted.emit("tool_result", wholeFileRead("/repo/a.ts", "v1"), recorded.ctx);
+		for (const content of ["v2", "v3", "v4"]) {
+			mounted.emit("tool_result", toolResult("write", { path: "a.ts", content }), recorded.ctx);
+		}
+		await mounted.command.handler("", recorded.ctx as ExtensionCommandContext);
+
+		expect(changes).toBeGreaterThan(0);
+		expect(recorded.widgets).toEqual([]);
+		expect(recorded.statuses).toEqual([]);
+		expect(lastNote(recorded.notes).message).toContain("/repo/a.ts");
+	});
+
+	it("clears its standalone widget on session shutdown", () => {
 		const mounted = mountExtension({ probeSource: fakeDisk() });
-		const { ctx, widgets, statuses } = recordingContext();
+		const { ctx, widgets } = recordingContext();
 
 		mounted.emit("tool_result", wholeFileRead("/repo/a.ts", "alpha"), ctx);
 		expect(widgets.some(entry => entry.key === WIDGET_KEY)).toBe(true);
 
 		mounted.emit("session_shutdown", {}, ctx);
 		expect(widgets.at(-1)).toEqual({ key: WIDGET_KEY, content: undefined });
-		expect(statuses.at(-1)).toEqual({ key: STATUS_KEY, text: undefined });
 	});
 });
 

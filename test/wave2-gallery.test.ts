@@ -174,7 +174,6 @@ function mountGallery(): MountedGallery {
 		const ctx: AuditTrailBoxContext = {
 			...base,
 			setWidget: widget("audit-trail-box"),
-			setStatus: () => {},
 		};
 		const controller = new AuditTrailBoxController();
 		controller.noteRead("a.ts", {}, ctx);

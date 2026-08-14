@@ -50,7 +50,7 @@ export interface PhraseSpan {
 	 * (so a plain list already drops right-to-left — the spec's default).
 	 */
 	readonly priority?: number;
-	/** Right-aligned wide-width tail — the FIRST thing dropped when the line doesn't fit. */
+	/** Wide-width trailing span — the FIRST thing dropped when the line doesn't fit. */
 	readonly wideOnly?: boolean;
 	/** Separator rendered BEFORE this span (ignored for the first span). Default `" · "`. */
 	readonly sep?: string;
@@ -220,8 +220,8 @@ function phraseWidth(spans: readonly PhraseSpan[]): number {
  * Render one status line to exactly ≤ `inner` visible columns.
  *
  * Layout: `dot␣␣label··␣␣phrase`, phrase = body spans joined by their
- * separators plus an optional right-aligned wide tail. Width degradation
- * (spec §3): the wide tail drops first, then body spans by
+ * separators plus an optional wide-width tail kept beside the final body
+ * indicator. Width degradation (spec §3): the wide tail drops first, then body spans by
  * {@link PhraseSpan.priority} (default: rightmost-first); a final lone span
  * hard-truncates as the safety net. Observes the FULL span list into
  * `ctx.flash` (drops don't reset flash state) before any narrowing.
@@ -242,11 +242,11 @@ export function renderStatusLine(line: SegmentLine, inner: number, ctx: StatusLi
 
 	// Wide tail survives only when NOTHING else has to give (dropped first).
 	const tailWidth = phraseWidth(tail);
-	const keepTail =
-		tail.length > 0 && phraseWidth(body) + (body.length > 0 ? MIN_TAIL_GAP : 0) + tailWidth <= available;
+	const tailGap = body.length > 0 ? MIN_TAIL_GAP : 0;
+	const keepTail = tail.length > 0 && phraseWidth(body) + tailGap + tailWidth <= available;
 
 	const kept = [...body];
-	const bodyBudget = keepTail ? available - MIN_TAIL_GAP - tailWidth : available;
+	const bodyBudget = keepTail ? available - tailGap - tailWidth : available;
 	while (kept.length > 1 && phraseWidth(kept) > bodyBudget) {
 		let dropIndex = 0;
 		for (let i = 1; i < kept.length; i++) {
@@ -270,7 +270,7 @@ export function renderStatusLine(line: SegmentLine, inner: number, ctx: StatusLi
 
 	if (!keepTail) return prefix + phrase;
 
-	const pad = " ".repeat(Math.max(MIN_TAIL_GAP, available - plainWidth - tailWidth));
+	const pad = " ".repeat(tailGap);
 	let tailPhrase = "";
 	for (let i = 0; i < tail.length; i++) {
 		const span = tail[i] as PhraseSpan;

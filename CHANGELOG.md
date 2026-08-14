@@ -5,31 +5,47 @@ All notable changes to `@oh-my-pi/animations` are documented here.
 ## [Unreleased]
 
 ### Changed
-- **T6 — Curated to the 9-animation keep-set.** Reduced the registrar and the
-  shipped animation set to nine animations: Agent Tree, Audit Trail Box,
-  Breathing Border, Cache Meter, Cadence Equalizer, Palimpsest, Rate-Limit
-  Tidepool, Reflection Ripple, and Tool Constellation. Every other animation
-  below (the rest of Wave 1 and Wave 2, plus the later additions) is no
-  longer part of this package; its source is not in this repository. Pruned
-  `package.json#omp.settings`, `src/index.ts`, and `src/registrar.ts` to
-  match, and registered the four keepers whose factories predate the
-  per-animation placement/accent settings (`breathingBorder`,
-  `cadenceEqualizer`, `reflectionRipple`, `toolConstellation`) at the
-  placement their widgets already hardcode.
+- **T6 — Curated to eight standalone animations plus Agent Bonsai.** Reduced
+  the registrar to Audit Trail Box, Breathing Border, Cache Meter, Cadence
+  Equalizer, Palimpsest, Rate-Limit Tidepool, Reflection Ripple, and Tool
+  Constellation. Agent Bonsai is now a Box-owned group, not a ninth standalone
+  animation. Every excluded animation below is absent from this repository.
+  Pruned `package.json#omp.settings`, `src/index.ts`, and `src/registrar.ts`
+  to match.
+- Grouped the Audit Box into five fixed summaries (`cache`, `audit`, `limits`,
+  `tools`, `files`) and independently toggleable optional animations. Cadence
+  and Reflection now render after one conditional blank separator.
+- Consolidated Audit Trail into the Box. One headless service now owns the
+  ledger, disk probe, and remedy command. Probe alarms render in the Box's
+  `audit` summary; the duplicate standalone row and footer status are absent.
 - Vendored Cadence Equalizer's own copy of the tok/s bucket classification
   and color-ramp module it used to share with Token Tide, since Token Tide is
   no longer part of this package.
-- Reworked the test suite for the 9-animation keep-set: removed assertions
-  and fixtures for excluded animations, and derived expected counts from
-  `ANIMATIONS` itself instead of hardcoding them.
+- Reworked the test suite for the curated set. Removed assertions and fixtures
+  for excluded animations and derived expected counts from `ANIMATIONS`.
 - Adapted to stock oh-my-pi API surface: dropped core edits are read defensively so the
   plugin builds against `@oh-my-pi/pi-coding-agent@16` / `pi-tui@16` and degrades
   gracefully (`renderUnderPressure` backpressure; Context Weather compaction forecast).
 
 ### Added
-- **Plan 019 — Agent Tree.** Added an opt-in live tree for Main and its
-  reachable subagents. The widget shows status, model, activity, and task
-  context. It uses the shared motion, appearance, and backpressure systems.
+- **Agent Bonsai.** Replaced Agent Tree with a Box-owned `agents` group.
+  Rows show stable cohort IDs, semantic lifecycle states, model, highlighted
+  activity, task context, and an active-skill link with the loaded skill list.
+  The group and separator stay hidden while only Main exists.
+  - Rows come from the `task` tool's streamed progress, which is the only
+    subagent data a plugin can read. The in-process `AgentRegistry` singleton
+    belongs to the host bundle, so a plugin always gets an empty second copy.
+  - Settled rows are pruned per user request, not per provider turn. An
+    `agent_end` event with `willContinue` keeps the rows. A backgrounded task
+    keeps its running row until its async state leaves `running`.
+  - Loaded skill names accumulate across updates, because the host caps
+    `recentTools` at five entries. The plugin resolves each `skill://` name to
+    a `SKILL.md` path with a memoized lookup over the known skill roots.
+  - The skill chip emits its own OSC 8 hyperlink. The host's `uriHyperlink`
+    gate reads a `Settings` singleton from the host bundle's module graph,
+    which a plugin can never initialize, so it strips every link. The plugin
+    gate uses `PI_NO_HYPERLINKS`, `PI_FORCE_HYPERLINKS`, `NO_COLOR`, the TTY
+    state, and the terminal's reported capability instead.
 - **T1 — Scaffold.** Initial standalone single-package repo: Bun/TypeScript project,
   `biome` + `tsgo` tooling matching oh-my-pi conventions, npm dependencies on
   `@oh-my-pi/pi-coding-agent`/`pi-tui`/`pi-utils` (`^16`), and the asset type shim.
@@ -47,6 +63,10 @@ All notable changes to `@oh-my-pi/animations` are documented here.
   `package.json#omp`): a per-animation enable map + shared `animations` tier that mounts
   only enabled animations, with zero subscriptions left for disabled ones.
 
+### Fixed
+- Kept wide cache and audit details beside their row indicators instead of
+  pushing uncached-token counts and filenames to the far box edge.
+
 ### Validation
-- `bun run fix && bun check && bun test` green; 1220 pass / 0 fail /
-  3940 `expect()` calls across 37 files (the current 9-animation keep-set).
+- `bun run fix && bun check && bun test` green; 1200 pass / 0 fail across
+  37 files.

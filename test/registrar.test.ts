@@ -30,11 +30,6 @@ function makeApi(): { api: ExtensionAPI; events: string[]; labels: string[]; com
 			commands.push(name);
 		},
 		logger: { error() {}, warn() {}, debug() {}, info() {} },
-		pi: {
-			AgentRegistry: {
-				global: () => ({ list: () => [], onChange: () => () => {} }),
-			},
-		},
 	} as unknown as ExtensionAPI;
 	return { api, events, labels, commands };
 }
@@ -130,9 +125,9 @@ describe("animations registrar", () => {
 	});
 
 	it("the excluded animations are not in the registrar's mounted set and register no listeners", () => {
-		// This package ships a curated 9-animation keep-set; the other animation source
-		// dirs from the broader oh-my-pi-animations suite were deliberately left out of
-		// the copy entirely (see package.json's description and this file's own imports).
+		// This package ships eight standalone animations; the other animation source
+		// dirs from the broader oh-my-pi-animations suite were deliberately left out
+		// of the copy entirely (see package.json's description and this file's imports).
 		// They are not merely unregistered; their source does not exist in this repo.
 		const excludedIds = [
 			"agentFleet",
@@ -155,7 +150,6 @@ describe("animations registrar", () => {
 		for (const id of excludedIds) expect(ALL_IDS).not.toContain(id);
 		expect(ALL_IDS.slice().sort()).toEqual(
 			[
-				"agentTree",
 				"auditTrailBox",
 				"breathingBorder",
 				"cacheMeter",
@@ -184,10 +178,8 @@ function mountRaw(settings: Record<string, unknown>): { events: string[]; labels
 }
 
 describe("display modes (Animations Box integration, Plan 017)", () => {
-	// Agent Tree intentionally stays independent of the consolidated box. Every other
-	// shipped animation remains in the box migration set.
-	it("BOX_MIGRATED_ANIMATION_IDS is the shipped set except Agent Tree", () => {
-		expect(BOX_MIGRATED_ANIMATION_IDS.slice().sort()).toEqual(ALL_IDS.filter(id => id !== "agentTree").sort());
+	it("BOX_MIGRATED_ANIMATION_IDS contains every standalone animation", () => {
+		expect(BOX_MIGRATED_ANIMATION_IDS.slice().sort()).toEqual(ALL_IDS.slice().sort());
 	});
 
 	it("`display` defaults to 'box' when entirely unstored — mountRaw, not mount(), unmasks the real default", () => {
@@ -200,40 +192,26 @@ describe("display modes (Animations Box integration, Plan 017)", () => {
 		expect(unstored).not.toEqual(rows);
 	});
 
-	it("box mode: every migrated animation but Audit Trail Box contributes zero subscriptions", () => {
-		// The box's own solo event surface — nothing enabled, `display: "box"` alone still
-		// mounts it (mounting is unconditional on `display`, never per-segment).
-		const boxOwnEvents = mountRaw({ display: "box", ...only() })
-			.events.slice()
-			.sort();
-		// Audit Trail Box's own rows-mode solo subscriptions — unaffected by `suppressRow`,
-		// which only changes whether its row widget is drawn, never what it subscribes to.
-		const auditRowsSolo = mount(only("auditTrailBox")).events.slice().sort();
-		const agentTreeSolo = mount(only("agentTree")).events.slice().sort();
-
-		const boxAllEnabled = mountRaw({ display: "box", ...only(...ALL_IDS) });
-		expect(boxAllEnabled.events.slice().sort()).toEqual([...boxOwnEvents, ...auditRowsSolo, ...agentTreeSolo].sort());
-
-		// The row is gone (no `/cache`: Cache Meter's own factory never runs), but Audit
-		// Trail Box's command survives — proof its standalone controller stayed mounted.
+	it("box mode mounts only the Box and its headless Audit service", () => {
+		// Agent Bonsai is a Box-owned observer, not another animation subscription.
+		const boxOwn = mountRaw({ display: "box", agentBonsai: false, ...only() });
+		const boxAllEnabled = mountRaw({ display: "box", agentBonsai: false, ...only(...ALL_IDS) });
+		expect(boxAllEnabled.events.slice().sort()).toEqual(boxOwn.events.slice().sort());
 		expect(boxAllEnabled.commands).toEqual(["audit-trail"]);
 	});
 
-	it("both mode: every row mounts unsuppressed, alongside the box", () => {
-		const boxOwnEvents = mountRaw({ display: "box", ...only() })
-			.events.slice()
-			.sort();
-		const rowsAllEnabled = mount(only(...ALL_IDS));
+	it("both mode mounts every non-Audit standalone row alongside the Box and one headless Audit service", () => {
+		const boxOwn = mountRaw({ display: "box", ...only() });
+		const nonAuditRows = mount(only(...ALL_IDS.filter(id => id !== "auditTrailBox")));
 		const bothAllEnabled = mountRaw({ display: "both", ...only(...ALL_IDS) });
 
-		expect(bothAllEnabled.events.slice().sort()).toEqual([...rowsAllEnabled.events, ...boxOwnEvents].sort());
-		expect(bothAllEnabled.commands.slice().sort()).toEqual(rowsAllEnabled.commands.slice().sort());
+		expect(bothAllEnabled.events.slice().sort()).toEqual([...boxOwn.events, ...nonAuditRows.events].sort());
+		expect(bothAllEnabled.commands).toEqual(["audit-trail", "cache"]);
 	});
 
-	it("rows mode mounts no box; its session_start belongs only to Agent Tree", () => {
+	it("rows mode mounts no box and has no session_start subscription", () => {
 		const rows = mount(only(...ALL_IDS)).events.filter(event => event === "session_start");
-		const agentTree = mount(only("agentTree")).events.filter(event => event === "session_start");
-		expect(rows).toEqual(agentTree);
+		expect(rows).toEqual([]);
 	});
 
 	it("box and both modes each mount the box exactly once", () => {
@@ -253,11 +231,6 @@ describe("display modes (Animations Box integration, Plan 017)", () => {
 				setLabel: () => {},
 				registerCommand: () => {},
 				logger: { error() {}, warn() {}, debug() {}, info() {} },
-				pi: {
-					AgentRegistry: {
-						global: () => ({ list: () => [], onChange: () => () => {} }),
-					},
-				},
 			} as unknown as ExtensionAPI;
 			const ctx = {
 				hasUI: true,
@@ -302,12 +275,10 @@ describe("display modes (Animations Box integration, Plan 017)", () => {
 });
 
 describe("resolveAnimationsConfig", () => {
-	it("defaults to tier 'full', enables the established set, and leaves Agent Tree opt-in", () => {
+	it("defaults to tier 'full' and enables every standalone animation", () => {
 		const cfg = resolveAnimationsConfig({}, {});
 		expect(cfg.tier).toBe("full");
-		expect(cfg.enabled.agentTree).toBe(false);
-		expect(ALL_IDS.filter(id => id !== "agentTree").every(id => cfg.enabled[id])).toBe(true);
-		expect(ANIMATIONS.find(animation => animation.id === "agentTree")?.defaultEnabled).toBe(false);
+		expect(ALL_IDS.every(id => cfg.enabled[id])).toBe(true);
 	});
 
 	it("reads the tier and a stored disable from plugin settings", () => {
@@ -327,13 +298,6 @@ describe("resolveAnimationsConfig", () => {
 	it("prefers a stored setting over the env fallback", () => {
 		const cfg = resolveAnimationsConfig({ cacheMeter: false }, { OMP_ANIMATIONS_CACHE_METER: "true" });
 		expect(cfg.enabled.cacheMeter).toBe(false);
-	});
-
-	it("allows env and stored settings to opt Agent Tree in or back out", () => {
-		expect(resolveAnimationsConfig({}, { OMP_ANIMATIONS_AGENT_TREE: "true" }).enabled.agentTree).toBe(true);
-		expect(
-			resolveAnimationsConfig({ agentTree: false }, { OMP_ANIMATIONS_AGENT_TREE: "true" }).enabled.agentTree,
-		).toBe(false);
 	});
 });
 
@@ -421,11 +385,11 @@ describe("readPluginSettingsSync", () => {
 			return solo.events;
 		};
 
-		// cacheMeter is disabled by stored settings. Agent Tree is absent and keeps
-		// its opt-in default. Every other animation defaults to enabled. Compare the
-		// complete subscription multiset because event names are shared across factories.
+		// cacheMeter is disabled by stored settings. Every other animation defaults
+		// to enabled. Compare the complete subscription multiset because event names
+		// are shared across factories.
 		expect(soloEvents("cacheMeter").length).toBeGreaterThan(0);
-		const expected = ALL_IDS.filter(id => id !== "cacheMeter" && id !== "agentTree")
+		const expected = ALL_IDS.filter(id => id !== "cacheMeter")
 			.flatMap(soloEvents)
 			.sort();
 		expect(events.slice().sort()).toEqual(expected);
@@ -442,7 +406,7 @@ describe("package.json#omp.settings — this package's native default", () => {
 		expect(settings[BOX_SETTING_KEYS.detail]?.default).toBe(BOX_DEFAULTS.detail);
 		expect(settings[BOX_SETTING_KEYS.placement]?.default).toBe(BOX_DEFAULTS.placement);
 
-		for (const id of ALL_IDS) expect(settings[id]?.default).toBe(id !== "agentTree");
+		for (const id of ALL_IDS) expect(settings[id]?.default).toBe(true);
 
 		const excludedIds = [
 			"agentFleet",
@@ -462,20 +426,19 @@ describe("package.json#omp.settings — this package's native default", () => {
 		];
 		for (const id of excludedIds) expect(settings[id]).toBeUndefined();
 
-		// Exactly the tier setting + the 3 Animations Box settings (Plan 017 Decision 3) +
-		// per shipped animation: the enable boolean, a Placement appearance setting for
-		// every animation, and an AccentColor appearance setting for every animation except
-		// toolConstellation — its per-category rainbow palette has no single overridable
-		// slot (see `tool-constellation/index.ts`), so that key was dropped rather than left
-		// inert. No leftover excluded keys, no inert box keys (`BOX_SETTING_KEYS` is exactly
-		// 3 — no `animationsBoxOnly` subset key, no separate box accent key).
+		// Exactly the tier setting + the 3 Animations Box settings + Agent Bonsai's
+		// Box-only toggle, then each standalone animation's enable and appearance
+		// keys. Tool Constellation has no single accent slot because its categories
+		// use a rainbow palette.
 		const accentCapableIds = ALL_IDS.filter(id => id !== "toolConstellation");
 		const appearanceKeys = [
 			...ALL_IDS.map(id => `${id}Placement`),
 			...accentCapableIds.map(id => `${id}AccentColor`),
 		];
 		const boxKeys = Object.values(BOX_SETTING_KEYS);
-		expect(Object.keys(settings).sort()).toEqual(["animations", ...boxKeys, ...ALL_IDS, ...appearanceKeys].sort());
+		expect(Object.keys(settings).sort()).toEqual(
+			["animations", "agentBonsai", ...boxKeys, ...ALL_IDS, ...appearanceKeys].sort(),
+		);
 		const orderedAnimationKeys = ALL_IDS.flatMap(id => [
 			id,
 			`${id}Placement`,

@@ -1,25 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { renderLegend } from "../src/animations-box/legend";
-import {
-	AUDIT_TRAIL_SEGMENT,
-	CACHE_METER_SEGMENT,
-	PALIMPSEST_SEGMENT,
-	RATE_LIMIT_TIDEPOOL_SEGMENT,
-	SEGMENT_REGISTRY,
-	TOOL_CONSTELLATION_SEGMENT,
-} from "../src/animations-box/segments";
-import { BOX_SEGMENT_DEFAULT_VISIBLE } from "../src/animations-box/settings";
+import { OPTIONAL_SEGMENT_REGISTRY, REQUIRED_SEGMENT_REGISTRY, SEGMENT_REGISTRY } from "../src/animations-box/segments";
 
-// D8: the legend documents the status-line grammar — D2's four-dot table plus
-// the default-visible rows — not a per-segment glyph vocabulary (there is none).
-
-const DEFAULT_VISIBLE_SEGMENTS = [
-	CACHE_METER_SEGMENT,
-	AUDIT_TRAIL_SEGMENT,
-	RATE_LIMIT_TIDEPOOL_SEGMENT,
-	TOOL_CONSTELLATION_SEGMENT,
-	PALIMPSEST_SEGMENT,
-] as const;
+// The legend documents the status-line grammar: the dot vocabulary, required
+// summaries, and optional animations.
 
 describe("SEGMENT_REGISTRY — metadata contract", () => {
 	it("every segment has a non-empty id, label, and description", () => {
@@ -59,16 +43,24 @@ describe("renderLegend", () => {
 		expect(renderLegend("unicode")[4]).toBe("");
 	});
 
-	it("lists exactly the default-visible segments as `label — description`, in priority order (D7 cut rows absent)", () => {
-		const rows = renderLegend("unicode").slice(5);
-		expect(rows).toEqual(DEFAULT_VISIBLE_SEGMENTS.map(s => `${s.label} — ${s.description}`));
-		expect(rows.some(row => row.startsWith("cadence "))).toBe(false);
-		expect(rows.some(row => row.startsWith("reflect "))).toBe(false);
+	it("lists required summaries in canonical order, then optional animations after one blank separator", () => {
+		const lines = renderLegend("unicode");
+		const requiredStart = 5;
+		const optionalSeparator = requiredStart + REQUIRED_SEGMENT_REGISTRY.length;
+		expect(lines.slice(requiredStart, optionalSeparator)).toEqual(
+			REQUIRED_SEGMENT_REGISTRY.map(segment => `${segment.label} — ${segment.description}`),
+		);
+		expect(lines[optionalSeparator]).toBe("");
+		expect(lines.slice(optionalSeparator + 1)).toEqual(
+			OPTIONAL_SEGMENT_REGISTRY.map(segment => `${segment.label} — ${segment.description}`),
+		);
 	});
 
-	it("derives its rows from the LIVE registry and visibility map — one row per default-visible registry entry", () => {
-		const expected = SEGMENT_REGISTRY.filter(s => BOX_SEGMENT_DEFAULT_VISIBLE[s.id]).length;
-		expect(renderLegend("unicode")).toHaveLength(4 + 1 + expected);
+	it("derives one row from each live registry entry", () => {
+		expect(renderLegend("unicode")).toHaveLength(
+			4 + 1 + REQUIRED_SEGMENT_REGISTRY.length + 1 + OPTIONAL_SEGMENT_REGISTRY.length,
+		);
+		expect(SEGMENT_REGISTRY).toEqual([...REQUIRED_SEGMENT_REGISTRY, ...OPTIONAL_SEGMENT_REGISTRY]);
 	});
 
 	it("segment rows are preset-independent — only the dot glyphs vary", () => {

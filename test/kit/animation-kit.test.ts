@@ -353,6 +353,14 @@ class StaticWidget extends AnimatedWidget {
 	}
 }
 
+class MutableWidget extends AnimatedWidget {
+	value = "before";
+
+	renderFrame(): readonly string[] {
+		return [this.value];
+	}
+}
+
 class ClockWidget extends AnimatedWidget {
 	renderFrame(): readonly string[] {
 		// Content changes every frame (phase-dependent), forcing a repaint each tick.
@@ -391,6 +399,22 @@ describe("AnimatedWidget lifecycle", () => {
 		expect(tui.renders).toBe(0);
 
 		widget.dispose();
+	});
+
+	it("invalidates cached rows and requests one repaint for external state changes", () => {
+		const scheduler = new FakeScheduler();
+		const policy = new MotionPolicy(interactiveEnv(), "off");
+		const host = new AnimationHost({ policy, scheduler });
+		const tui = new CountingHost();
+		const widget = new MutableWidget({ tui, host, policy });
+
+		expect(widget.render(80)).toEqual(["before"]);
+		widget.value = "after";
+		expect(widget.render(80)).toEqual(["before"]);
+
+		widget.requestRender();
+		expect(tui.renders).toBe(1);
+		expect(widget.render(80)).toEqual(["after"]);
 	});
 
 	it("requests a scoped repaint each frame when the rendered rows change", () => {

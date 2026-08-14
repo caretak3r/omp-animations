@@ -2,16 +2,12 @@ import { describe, expect, it } from "bun:test";
 import {
 	type AuditTrailBoxContext,
 	AuditTrailBoxController,
-	DEFAULT_TERMINAL_COLUMNS,
-	MIN_STATUS_WIDTH,
 	PROBE_INTERVAL_MS,
-	STATUS_KEY,
-	statusWidthFor,
 	WIDGET_KEY,
 } from "../src/audit-trail-box/controller";
 import { hashContent, type ProbeObservation, type ProbeSource } from "../src/audit-trail-box/probe";
 import { FORMATTER_WINDOW_MS, POISON_STREAK_TICKS } from "../src/audit-trail-box/state";
-import { type AuditTrailBoxTheme, AuditTrailBoxWidget, badgeGlyph, statusGlyphs } from "../src/audit-trail-box/widget";
+import { type AuditTrailBoxTheme, AuditTrailBoxWidget, badgeGlyph } from "../src/audit-trail-box/widget";
 import type { FrameScheduler } from "../src/kit";
 
 // Identity theme so assertions see plain text instead of ANSI escapes.
@@ -21,7 +17,6 @@ const taggedTheme: AuditTrailBoxTheme = { fg: (color, text) => `${color}:${text}
 
 // Unicode-tier glyphs, resolved once — every controller call below defaults to `"unicode"`.
 const BADGE_GLYPH = badgeGlyph("unicode");
-const STATUS_GLYPHS = statusGlyphs("unicode");
 
 const noopTui = { requestComponentRender: () => {} };
 
@@ -77,12 +72,10 @@ function fakeDisk(initial: Record<string, string> = {}) {
 interface Recorded {
 	ctx: AuditTrailBoxContext;
 	widgets: Array<{ key: string; content: unknown }>;
-	statuses: Array<{ key: string; text: string | undefined }>;
 }
 
 function recordingContext(overrides: Partial<AuditTrailBoxContext> = {}): Recorded {
 	const widgets: Recorded["widgets"] = [];
-	const statuses: Recorded["statuses"] = [];
 	const ctx: AuditTrailBoxContext = {
 		hasUI: true,
 		isTTY: true,
@@ -91,10 +84,9 @@ function recordingContext(overrides: Partial<AuditTrailBoxContext> = {}): Record
 		theme: idTheme,
 		glyphPreset: "unicode",
 		setWidget: (key, content) => widgets.push({ key, content }),
-		setStatus: (key, text) => statuses.push({ key, text }),
 		...overrides,
 	};
-	return { ctx, widgets, statuses };
+	return { ctx, widgets };
 }
 
 /** Content plus the hash the agent would have taken when it saw that content. */
@@ -109,30 +101,11 @@ function staticLines(widgets: Recorded["widgets"], index: number): readonly stri
 	return content;
 }
 
-describe("audit trail box — status width budget", () => {
-	it("takes a share of the terminal width", () => {
-		expect(statusWidthFor(200)).toBe(60);
-		expect(statusWidthFor(100)).toBe(30);
-	});
-
-	it("falls back to a default width when the host reports no columns", () => {
-		expect(statusWidthFor()).toBe(statusWidthFor(DEFAULT_TERMINAL_COLUMNS));
-	});
-
-	it("never drops below the floor, whatever nonsense the host reports", () => {
-		expect(statusWidthFor(1)).toBe(MIN_STATUS_WIDTH);
-		expect(statusWidthFor(0)).toBe(statusWidthFor(DEFAULT_TERMINAL_COLUMNS));
-		expect(statusWidthFor(-40)).toBe(statusWidthFor(DEFAULT_TERMINAL_COLUMNS));
-		expect(statusWidthFor(Number.NaN)).toBe(statusWidthFor(DEFAULT_TERMINAL_COLUMNS));
-		expect(statusWidthFor(Number.POSITIVE_INFINITY)).toBe(statusWidthFor(DEFAULT_TERMINAL_COLUMNS));
-	});
-});
-
 describe("audit trail box controller — dormancy", () => {
 	it("touches nothing at all when there is no UI surface", async () => {
 		const disk = fakeDisk({ "a.ts": "v1" });
 		const controller = new AuditTrailBoxController({ scheduler: manualScheduler(), probeSource: disk.source });
-		const { ctx, widgets, statuses } = recordingContext({ hasUI: false });
+		const { ctx, widgets } = recordingContext({ hasUI: false });
 
 		controller.noteRead("a.ts", seen("v1"), ctx);
 		controller.noteWrite("a.ts", seen("v2"), ctx);
@@ -143,7 +116,6 @@ describe("audit trail box controller — dormancy", () => {
 		await controller.settled();
 
 		expect(widgets).toHaveLength(0);
-		expect(statuses).toHaveLength(0);
 		expect(controller.state.size).toBe(0);
 		expect(disk.inspected).toHaveLength(0);
 	});
@@ -202,7 +174,7 @@ describe("audit trail box controller — mounting", () => {
 	it("renders a static text line, not an animated widget, in the off tier", () => {
 		const disk = fakeDisk({ "a.ts": "v1" });
 		const controller = new AuditTrailBoxController({ scheduler: manualScheduler(), probeSource: disk.source });
-		const { ctx, widgets, statuses } = recordingContext({ motionSetting: "off" });
+		const { ctx, widgets } = recordingContext({ motionSetting: "off" });
 
 		controller.noteRead("a.ts", seen("v1"), ctx);
 		expect(staticLines(widgets, 0)[0]).toContain(BADGE_GLYPH);
@@ -212,7 +184,6 @@ describe("audit trail box controller — mounting", () => {
 		controller.noteRead("b.ts", seen("x"), ctx);
 		expect(widgets).toHaveLength(2);
 		expect(staticLines(widgets, 1)[0]).toContain("2 fresh");
-		expect(statuses).toHaveLength(0);
 	});
 
 	it("resolves off from a non-TTY environment even when the setting says full", () => {
@@ -368,7 +339,7 @@ describe("audit trail box controller — divergence", () => {
 		const scheduler = manualScheduler();
 		const disk = fakeDisk({ "a.ts": "const x=1\n" });
 		const controller = new AuditTrailBoxController({ scheduler, probeSource: disk.source });
-		const { ctx, statuses } = recordingContext();
+		const { ctx } = recordingContext();
 
 		controller.noteWrite("a.ts", seen("const x=1\n"), ctx);
 		await controller.settled();
@@ -384,8 +355,6 @@ describe("audit trail box controller — divergence", () => {
 		expect(record?.status).toBe("dirty");
 		expect(record?.formatterAbsorbs).toBe(1);
 		expect(record?.divergenceStreak).toBe(0);
-		// Nothing cleared the severity gate, so the alarm line never appeared.
-		expect(statuses).toHaveLength(0);
 	});
 
 	it("still fires POISONED for an external edit that lands after the formatter window closes", async () => {
@@ -403,199 +372,6 @@ describe("audit trail box controller — divergence", () => {
 		await controller.probeNow(ctx);
 
 		expect(controller.state.record("a.ts")?.status).toBe("poisoned");
-	});
-});
-
-describe("audit trail box controller — the alarm status line", () => {
-	/** Drive a path to two firing families without poisoning it: repeat reads, then repeated writes. */
-	function alarmingPath(controller: AuditTrailBoxController, ctx: AuditTrailBoxContext, path = "a.ts") {
-		controller.noteRead(path, seen("v1"), ctx);
-		controller.noteRead(path, seen("v1"), ctx);
-		controller.noteWrite(path, seen("v2"), ctx);
-		controller.noteWrite(path, seen("v3"), ctx);
-		controller.noteWrite(path, seen("v4"), ctx);
-	}
-
-	it("stays quiet while nothing has cleared the >=2-family gate", () => {
-		const disk = fakeDisk({ "a.ts": "v1" });
-		const controller = new AuditTrailBoxController({ scheduler: manualScheduler(), probeSource: disk.source });
-		const { ctx, statuses } = recordingContext();
-
-		controller.noteRead("a.ts", seen("v1"), ctx);
-		controller.noteRead("a.ts", seen("v1"), ctx); // one family (recovery): a watch item, not an alarm
-		expect(controller.state.record("a.ts")?.severity).toBe("watch");
-		expect(statuses).toHaveLength(0);
-	});
-
-	it("appears once two independent families fire, and clears when the path is re-read", () => {
-		const disk = fakeDisk({ "a.ts": "v1" });
-		const controller = new AuditTrailBoxController({ scheduler: manualScheduler(), probeSource: disk.source });
-		const { ctx, statuses } = recordingContext();
-
-		alarmingPath(controller, ctx);
-		expect(controller.state.record("a.ts")?.severity).toBe("alarm");
-		const shown = statuses.filter(entry => entry.text !== undefined);
-		expect(shown.length).toBeGreaterThan(0);
-		expect(shown.at(-1)?.key).toBe(STATUS_KEY);
-		expect(shown.at(-1)?.text).toContain(BADGE_GLYPH);
-		expect(shown.at(-1)?.text).toContain(STATUS_GLYPHS.dirty);
-	});
-
-	it("clears itself when the working set stops being alarming", () => {
-		const disk = fakeDisk({ "a.ts": "v1" });
-		const controller = new AuditTrailBoxController({ scheduler: manualScheduler(), probeSource: disk.source });
-		const { ctx, statuses } = recordingContext();
-
-		alarmingPath(controller, ctx);
-		expect(statuses.at(-1)?.text).toBeDefined();
-
-		controller.noteSessionSwitch(ctx);
-		expect(statuses.at(-1)).toEqual({ key: STATUS_KEY, text: undefined });
-	});
-
-	it("does not spam a clear for a status line that was never shown", () => {
-		const disk = fakeDisk({ "a.ts": "v1" });
-		const controller = new AuditTrailBoxController({ scheduler: manualScheduler(), probeSource: disk.source });
-		const { ctx, statuses } = recordingContext();
-
-		controller.noteRead("a.ts", seen("v1"), ctx);
-		controller.noteTurn(ctx);
-		controller.noteTurn(ctx);
-		expect(statuses).toHaveLength(0);
-	});
-
-	it("carries the economics tail on a wide terminal and drops it on a narrow one", () => {
-		const disk = fakeDisk({ "a.ts": "v1" });
-		const wide = new AuditTrailBoxController({ scheduler: manualScheduler(), probeSource: disk.source });
-		const narrow = new AuditTrailBoxController({ scheduler: manualScheduler(), probeSource: disk.source });
-		const wideCtx = recordingContext({ columns: 200 });
-		const narrowCtx = recordingContext({ columns: 40 });
-
-		alarmingPath(wide, wideCtx.ctx);
-		alarmingPath(narrow, narrowCtx.ctx);
-
-		expect(wideCtx.statuses.at(-1)?.text).toContain("r/w");
-		expect(narrowCtx.statuses.at(-1)?.text).not.toContain("r/w");
-	});
-
-	it("degrades to the single highest-risk count when the footer budget runs out", async () => {
-		const scheduler = manualScheduler();
-		const disk = fakeDisk({ "a.ts": "v1", "b.ts": "v1", "c.ts": "v1", "d.ts": "v1" });
-		const controller = new AuditTrailBoxController({ scheduler, probeSource: disk.source });
-		const { ctx, statuses } = recordingContext({ columns: 1 }); // clamps to MIN_STATUS_WIDTH
-
-		controller.noteRead("b.ts", seen("v1"), ctx);
-		controller.noteRead("b.ts", seen("v1"), ctx); // -> redundant
-		controller.noteWrite("c.ts", seen("v2"), ctx); // -> dirty
-		disk.write("c.ts", "v2"); // the write landed, so c.ts has not diverged
-		controller.noteRead("d.ts", seen("v1"), ctx); // -> fresh
-		controller.noteRead("a.ts", seen("v1"), ctx);
-		await controller.settled();
-
-		disk.write("a.ts", "moved");
-		await controller.probeNow(ctx);
-		await controller.probeNow(ctx);
-		expect(controller.state.record("a.ts")?.status).toBe("poisoned");
-		expect(controller.state.snapshot().counts).toMatchObject({ poisoned: 1, dirty: 1, redundant: 1, fresh: 1 });
-
-		const text = statuses.at(-1)?.text;
-		expect(text).toBe(`${BADGE_GLYPH} 1${STATUS_GLYPHS.poisoned}`);
-	});
-
-	it("applies the accent override to the badge", () => {
-		const disk = fakeDisk({ "a.ts": "v1" });
-		const controller = new AuditTrailBoxController({
-			scheduler: manualScheduler(),
-			probeSource: disk.source,
-			accentColor: "syntaxString",
-		});
-		const { ctx, statuses } = recordingContext({ theme: taggedTheme });
-
-		alarmingPath(controller, ctx);
-		expect(statuses.at(-1)?.text).toContain(`syntaxString:${BADGE_GLYPH}`);
-	});
-});
-
-describe("audit trail box controller — headless mode (suppressRow)", () => {
-	/** Same drive `describe("... the alarm status line")` uses above, scoped locally per this file's own convention. */
-	function alarmingPath(controller: AuditTrailBoxController, ctx: AuditTrailBoxContext, path = "a.ts") {
-		controller.noteRead(path, seen("v1"), ctx);
-		controller.noteRead(path, seen("v1"), ctx);
-		controller.noteWrite(path, seen("v2"), ctx);
-		controller.noteWrite(path, seen("v3"), ctx);
-		controller.noteWrite(path, seen("v4"), ctx);
-	}
-
-	it("never mounts the WIDGET_KEY row, in any motion tier", () => {
-		for (const motionSetting of ["off", "subtle", "full"] as const) {
-			const disk = fakeDisk({ "a.ts": "v1" });
-			const controller = new AuditTrailBoxController({
-				scheduler: manualScheduler(),
-				probeSource: disk.source,
-				suppressRow: true,
-			});
-			const { ctx, widgets } = recordingContext({ motionSetting });
-
-			alarmingPath(controller, ctx);
-			expect(widgets).toEqual([]);
-		}
-	});
-
-	it("the alarm still fires at motion tier 'off' — headless mode is the sole POISONED surface, so it is not gated by motion", () => {
-		const disk = fakeDisk({ "a.ts": "v1" });
-		const controller = new AuditTrailBoxController({
-			scheduler: manualScheduler(),
-			probeSource: disk.source,
-			suppressRow: true,
-		});
-		const { ctx, statuses } = recordingContext({ motionSetting: "off" });
-
-		alarmingPath(controller, ctx);
-		const shown = statuses.filter(entry => entry.text !== undefined);
-		expect(shown.length).toBeGreaterThan(0);
-		expect(shown.at(-1)?.key).toBe(STATUS_KEY);
-		expect(shown.at(-1)?.text).toContain(BADGE_GLYPH);
-	});
-
-	it("the row-mounted 'off' tier stays silent for comparison — only headless mode is exempt from that rule", () => {
-		const disk = fakeDisk({ "a.ts": "v1" });
-		const controller = new AuditTrailBoxController({ scheduler: manualScheduler(), probeSource: disk.source });
-		const { ctx, statuses } = recordingContext({ motionSetting: "off" });
-
-		alarmingPath(controller, ctx);
-		expect(statuses).toHaveLength(0);
-	});
-
-	it("clears the alarm and stays clear once the working set stops being alarming", () => {
-		const disk = fakeDisk({ "a.ts": "v1" });
-		const controller = new AuditTrailBoxController({
-			scheduler: manualScheduler(),
-			probeSource: disk.source,
-			suppressRow: true,
-		});
-		const { ctx, statuses } = recordingContext();
-
-		alarmingPath(controller, ctx);
-		expect(statuses.at(-1)?.text).toBeDefined();
-
-		controller.noteSessionSwitch(ctx);
-		expect(statuses.at(-1)).toEqual({ key: STATUS_KEY, text: undefined });
-	});
-
-	it("dispose clears the alarm but never touches the widget key — headless mode never set it", () => {
-		const disk = fakeDisk({ "a.ts": "v1" });
-		const controller = new AuditTrailBoxController({
-			scheduler: manualScheduler(),
-			probeSource: disk.source,
-			suppressRow: true,
-		});
-		const { ctx, widgets, statuses } = recordingContext();
-
-		alarmingPath(controller, ctx);
-		controller.dispose(ctx);
-
-		expect(widgets).toEqual([]);
-		expect(statuses.at(-1)).toEqual({ key: STATUS_KEY, text: undefined });
 	});
 });
 
@@ -707,11 +483,11 @@ describe("audit trail box controller — remedy and panel", () => {
 });
 
 describe("audit trail box controller — teardown", () => {
-	it("clears both surfaces and stops the frame clock", () => {
+	it("clears its widget and stops the frame clock", () => {
 		const scheduler = manualScheduler();
 		const disk = fakeDisk({ "a.ts": "v" });
 		const controller = new AuditTrailBoxController({ scheduler, probeSource: disk.source });
-		const { ctx, widgets, statuses } = recordingContext();
+		const { ctx, widgets } = recordingContext();
 
 		controller.noteRead("a.ts", seen("v"), ctx);
 		const factory = widgets[0]?.content as (tui: typeof noopTui, theme: AuditTrailBoxTheme) => AuditTrailBoxWidget;
@@ -720,7 +496,6 @@ describe("audit trail box controller — teardown", () => {
 
 		controller.dispose(ctx);
 		expect(widgets.at(-1)).toEqual({ key: WIDGET_KEY, content: undefined });
-		expect(statuses.at(-1)).toEqual({ key: STATUS_KEY, text: undefined });
 		expect(scheduler.running).toBe(false);
 	});
 
@@ -751,9 +526,8 @@ describe("audit trail box controller — teardown", () => {
 	it("disposing before anything mounted touches no surface", () => {
 		const disk = fakeDisk();
 		const controller = new AuditTrailBoxController({ scheduler: manualScheduler(), probeSource: disk.source });
-		const { ctx, widgets, statuses } = recordingContext();
+		const { ctx, widgets } = recordingContext();
 		controller.dispose(ctx);
 		expect(widgets).toHaveLength(0);
-		expect(statuses).toHaveLength(0);
 	});
 });

@@ -17,8 +17,19 @@ import type {
 	TurnStartEvent,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 import { type AnimationsBoxContext, AnimationsBoxController, BOX_WIDGET_KEY } from "../src/animations-box/controller";
-import { BOX_SEGMENT_IDS, resolveAnimationsBoxConfig } from "../src/animations-box/settings";
+import {
+	BOX_OPTIONAL_STATUS_SEGMENT_IDS,
+	BOX_REQUIRED_SEGMENT_IDS,
+	resolveAnimationsBoxConfig,
+} from "../src/animations-box/settings";
 import type { AnimationsBoxWidget } from "../src/animations-box/widget";
+import {
+	AuditLedgerState,
+	AuditTrailService,
+	hashContent,
+	type ProbeObservation,
+	type ProbeSource,
+} from "../src/audit-trail-box";
 import {
 	BASE_BREATH_PERIOD_MS,
 	BREATHING_BORDER_COLORS,
@@ -395,7 +406,7 @@ describe("AnimationsBoxController — cache-meter state wiring", () => {
 		afterSwitch.dispose();
 	});
 
-	it("respects the enabled gate — a disabled cacheMeter segment never appears, active or resting", () => {
+	it("keeps the required cache summary visible when its standalone-row setting is disabled", () => {
 		const scheduler = manualScheduler();
 		const { ctx, calls } = recordingContext();
 		const controller = new AnimationsBoxController({
@@ -407,7 +418,7 @@ describe("AnimationsBoxController — cache-meter state wiring", () => {
 
 		const widget = buildWidget(calls[0] as SetWidgetCall);
 		const rows = widget.renderFrame(69).join("\n");
-		expect(rows).not.toContain("cache");
+		expect(rows).toContain("cache");
 		widget.dispose();
 	});
 });
@@ -733,7 +744,7 @@ describe("AnimationsBoxController — rate-limit tidepool state wiring", () => {
 		afterSwitch.dispose();
 	});
 
-	it("respects the enabled gate — a disabled rateLimitTidepool segment never appears, active or resting", () => {
+	it("keeps the required limits summary visible when its standalone-row setting is disabled", () => {
 		const scheduler = manualScheduler();
 		const { ctx, calls } = recordingContext();
 		const controller = new AnimationsBoxController({
@@ -746,7 +757,7 @@ describe("AnimationsBoxController — rate-limit tidepool state wiring", () => {
 
 		const widget = buildWidget(calls[0] as SetWidgetCall);
 		const rows = widget.renderFrame(69).join("\n");
-		expect(rows).not.toContain("limits");
+		expect(rows).toContain("limits");
 		widget.dispose();
 	});
 });
@@ -867,9 +878,8 @@ describe("AnimationsBoxController — reflection ripple state wiring", () => {
 	// Pins the RESTING status line specifically: "reflect" fills its 7-col label
 	// gutter exactly, then the two-space gap, then the shared idle phrase "—"
 	// (IDLE_SPANS — see segments.ts). The active line puts rule names there
-	// instead, so this substring only ever matches the resting row. Reflect is
-	// cut from the box by default (D7), so every test here opts it back in with
-	// an explicit per-animation true.
+	// instead, so this substring only ever matches the resting row. Reflection
+	// is an optional animation, so each test enables it explicitly.
 	const RESTING_REFLECT_ROW = "reflect  —";
 
 	it("the mounted widget starts on the resting row before any ttsr_triggered event — the COMMON state, not a startup gap", () => {
@@ -971,34 +981,34 @@ describe("AnimationsBoxController — reflection ripple state wiring", () => {
 	});
 });
 
-describe("AnimationsBoxController — detailed-mode row order and the D7 default cut", () => {
-	it("composes the five default-visible rows in BOX_SEGMENT_IDS priority order regardless of activation order", () => {
+describe("AnimationsBoxController — grouped Audit Box composition", () => {
+	it("renders all required summaries in canonical order even when their standalone settings are false", () => {
 		const scheduler = manualScheduler();
 		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		const controller = new AnimationsBoxController({
+			scheduler,
+			initialConfig: resolveAnimationsBoxConfig({
+				cacheMeter: false,
+				auditTrailBox: false,
+				rateLimitTidepool: false,
+				toolConstellation: false,
+				palimpsest: false,
+			}),
+		});
 		controller.mount(ctx);
 		const widget = buildWidget(calls[0] as SetWidgetCall);
 
-		// Activate segments in an order deliberately scrambled from priority order,
-		// to prove the row order comes from BOX_SEGMENT_IDS, not activation order.
-		controller.onTtsrTriggered(ttsrTriggered(["rule"]), ctx);
-		controller.onToolCall(toolCall("read"), ctx);
-		controller.onMessageStart(assistantMessageStart({ output: 10, duration: 1_000 }), ctx);
-
-		// D7's default cut: cadence and reflect are absent even though both just
-		// received events — only the five default rows compose.
-		const expectedLabels = ["cache", "audit", "limits", "tools", "files"];
 		const frame = widget.renderFrame(69);
-		expect(frame).toHaveLength(expectedLabels.length + 2); // 2 border rows + one per visible segment
+		const expectedLabels = ["cache", "audit", "limits", "tools", "files"];
+		expect(expectedLabels).toHaveLength(BOX_REQUIRED_SEGMENT_IDS.length);
+		expect(frame).toHaveLength(BOX_REQUIRED_SEGMENT_IDS.length + 2);
 		for (let i = 0; i < expectedLabels.length; i++) {
 			expect(frame[i + 1]).toContain(expectedLabels[i] as string);
 		}
-		expect(frame.join("\n")).not.toContain("cadence");
-		expect(frame.join("\n")).not.toContain("reflect");
 		widget.dispose();
 	});
 
-	it("explicit per-animation true opts both cut rows back in, restoring all 7 rows in priority order", () => {
+	it("renders enabled optional status rows below exactly one separator in deterministic order", () => {
 		const scheduler = manualScheduler();
 		const { ctx, calls } = recordingContext();
 		const controller = new AnimationsBoxController({
@@ -1009,17 +1019,67 @@ describe("AnimationsBoxController — detailed-mode row order and the D7 default
 		const widget = buildWidget(calls[0] as SetWidgetCall);
 
 		controller.onTtsrTriggered(ttsrTriggered(["rule"]), ctx);
-		controller.onToolCall(toolCall("read"), ctx);
 		controller.onMessageStart(assistantMessageStart({ output: 10, duration: 1_000 }), ctx);
 
-		const frame = widget.renderFrame(69);
-		expect(frame).toHaveLength(BOX_SEGMENT_IDS.length + 2); // 2 border rows + one per segment
-
-		const expectedLabels = ["cache", "cadence", "audit", "limits", "tools", "files", "reflect"];
-		expect(expectedLabels).toHaveLength(BOX_SEGMENT_IDS.length);
-		for (let i = 0; i < expectedLabels.length; i++) {
+		const width = 69;
+		const frame = widget.renderFrame(width);
+		const expectedLabels = ["cache", "audit", "limits", "tools", "files", "cadence", "reflect"];
+		expect(expectedLabels).toHaveLength(BOX_REQUIRED_SEGMENT_IDS.length + BOX_OPTIONAL_STATUS_SEGMENT_IDS.length);
+		expect(frame).toHaveLength(expectedLabels.length + 3);
+		for (let i = 0; i < BOX_REQUIRED_SEGMENT_IDS.length; i++) {
 			expect(frame[i + 1]).toContain(expectedLabels[i] as string);
 		}
+		expect(frame[BOX_REQUIRED_SEGMENT_IDS.length + 1]).toBe(`│ ${" ".repeat(width - 4)} │`);
+		for (let i = 0; i < BOX_OPTIONAL_STATUS_SEGMENT_IDS.length; i++) {
+			expect(frame[BOX_REQUIRED_SEGMENT_IDS.length + 2 + i]).toContain(
+				expectedLabels[BOX_REQUIRED_SEGMENT_IDS.length + i] as string,
+			);
+		}
+		widget.dispose();
+	});
+
+	it("toggles cadence and reflection independently without interleaving either with required rows", () => {
+		const { ctx, calls } = recordingContext();
+		new AnimationsBoxController({
+			scheduler: manualScheduler(),
+			initialConfig: resolveAnimationsBoxConfig({ cadenceEqualizer: false, reflectionRipple: true }),
+		}).mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall);
+
+		const frame = widget.renderFrame(69);
+		expect(frame.join("\n")).not.toContain("cadence");
+		expect(frame[BOX_REQUIRED_SEGMENT_IDS.length + 2]).toContain("reflect");
+		widget.dispose();
+	});
+	it("renders a headless probe failure as a sanitized actionable alarm in the shared audit row", async () => {
+		const scheduler = manualScheduler();
+		const state = new AuditLedgerState();
+		let diskContent = "held\n";
+		const probeSource: ProbeSource = {
+			async inspect(): Promise<ProbeObservation> {
+				return { hash: hashContent(diskContent), content: diskContent };
+			},
+		};
+		const service = new AuditTrailService({ scheduler, probeSource, state });
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({
+			scheduler,
+			initialConfig: resolveAnimationsBoxConfig({}),
+			auditTrailState: state,
+		});
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall);
+
+		service.noteRead("/repo/src/a.ts", { hash: hashContent(diskContent), content: diskContent });
+		await service.settled();
+		diskContent = "changed behind the agent\n";
+		await service.probeNow();
+		await service.probeNow();
+
+		const auditRow = widget.renderFrame(69).find(row => row.includes("audit"));
+		expect(auditRow).toContain("1 changed on disk");
+		expect(auditRow).toContain("a.ts");
+		expect(auditRow).not.toContain("/repo/");
 		widget.dispose();
 	});
 });
@@ -1033,6 +1093,7 @@ describe("AnimationsBoxController — breathing border wiring (Decision 2)", () 
 		});
 		controller.mount(ctx);
 		const widget = buildWidget(calls[0] as SetWidgetCall, taggedTheme);
+
 		const row = widget.renderFrame(20)[0];
 		expect(row).toBe(`${BREATHING_BORDER_COLORS.muted}:╭${"─".repeat(18)}╮`);
 		widget.dispose();

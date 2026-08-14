@@ -1,26 +1,22 @@
 /**
  * Animations Box — the bordered widget itself.
  *
- * ONE widget hosting the enabled keeper segments as composed content instead
- * of one ambient row per animation. The border costs 2 rows (top/bottom) and
- * 4 columns of inner width (`"│ "` + `" │"`), so every content line is built
- * to `width - 4` and then padded/truncated back out to exactly `width` (Plan
- * 017 Decision 5).
+ * ONE widget hosts required summaries and optional animations. The border
+ * costs 2 rows and 4 columns (`"│ "` + `" │"`). Each content line uses
+ * `width - 4` columns and is then padded or truncated to the target width.
  *
- * `simple` draws one composed row via the kit's `composeSegments`, built only
- * from the segments that are currently `active`; an idle segment simply
- * contributes nothing to that row (its `variants` are empty). `detailed`
- * draws one STATUS LINE per ENABLED segment regardless of `active` — `dot ·
- * label · phrase` (Plan 018), rendered by `status-line.ts`'s
- * `renderStatusLine` from the plain spans each segment source emits; an idle
- * segment renders its own dim resting line (`○ label   —`) instead of being
- * absent, so height in detailed mode is a pure function of the enabled set
- * and never jitters with runtime activity. Coloring — dot tone, span tones,
- * gradient percentages, and the change-flash driven by this widget's own
- * `FlashTracker` on its existing frame clock — happens at render time here,
- * NOT in the segment sources (Plan 018's one deliberate contract change from
- * 017). Both modes remain pure functions of `buildSamples(now)`'s output;
- * this class holds no segment-specific business logic of its own.
+ * `simple` draws one composed row from active segments. An idle segment has
+ * no variants and contributes nothing. `detailed` always draws the required
+ * summaries first. If at least one optional animation is visible, the widget
+ * adds one blank separator and then draws the optional rows. An idle segment
+ * still draws its dim resting line (`○ label   —`), so runtime activity does
+ * not change the height.
+ *
+ * `status-line.ts` renders the plain spans that each segment source emits.
+ * This widget applies dot tone, span tones, gradient percentages, and change
+ * flashes at render time. Both modes use `buildSampleGroups(now)` as their
+ * only composition input; this class contains no segment-specific business
+ * logic.
  *
  * The border chrome itself breathes (Decision 2): every glyph of the top
  * row, bottom row, and side pipes is colored uniformly, per frame, via
@@ -35,6 +31,8 @@
 
 import type { SymbolPreset, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
+import type { AgentBonsaiSnapshot } from "../agent-bonsai";
+import { hyperlinksSupported, renderAgentBonsaiRows } from "../agent-bonsai";
 import type { AccentColor } from "../appearance";
 import {
 	type BorderBrightnessToken,
@@ -99,6 +97,12 @@ function contentLine(
 	return `${pipe} ${cell(text, inner)} ${pipe}`;
 }
 
+/** Controller-owned composition groups. The widget alone decides how those groups are separated on screen. */
+export interface AnimationsBoxSampleGroups {
+	readonly required: readonly SegmentSample[];
+	readonly optional: readonly SegmentSample[];
+}
+
 export interface AnimationsBoxWidgetOptions extends AnimatedWidgetOptions {
 	/** Foreground coloring, for both segment content and the border chrome (Decision 2). */
 	theme: BoxTheme;
@@ -106,8 +110,8 @@ export interface AnimationsBoxWidgetOptions extends AnimatedWidgetOptions {
 	clock: Pick<FrameScheduler, "now">;
 	/** Per-frame state mutation, called once per tick before the next render. No-op until a wired segment needs one (e.g. a settle/ripple timer). */
 	onTick: (nowMs: number) => void;
-	/** Build this frame's segment samples — one per ENABLED segment, active or resting. Pure given `nowMs`. */
-	buildSamples: (nowMs: number) => readonly SegmentSample[];
+	/** Build this frame's required summaries and enabled optional animations. Pure given `nowMs`. */
+	buildSampleGroups: (nowMs: number) => AnimationsBoxSampleGroups;
 	/** Live detail level. Re-read every call — the controller updates its backing value on settings changes, not just at construction. */
 	getDetail: () => BoxDetail;
 	/**
@@ -124,31 +128,49 @@ export interface AnimationsBoxWidgetOptions extends AnimatedWidgetOptions {
 	accentColor?: AccentColor;
 	/** Host glyph preset for the semantic status dots (detailed mode). Mirrors the controller's mount-captured preset; defaults to `unicode`. */
 	preset?: SymbolPreset;
+	/** Optional Agent Bonsai snapshot. Main-only snapshots are intentionally invisible. */
+	getAgentBonsai?: () => AgentBonsaiSnapshot;
+	/**
+	 * Whether Bonsai's active-skill chip may carry an OSC 8 hyperlink. Resolved
+	 * once at construction from the plugin's own capability gate
+	 * (`hyperlinksSupported()`), never from the host's `isHyperlinkEnabled()` —
+	 * that one reads a `Settings` singleton belonging to the host bundle's
+	 * module graph and is therefore permanently false from a plugin. Injected
+	 * only by tests, which pin it so golden rows never vary with the terminal
+	 * running the suite.
+	 */
+	hyperlinks?: boolean;
 }
 
 export class AnimationsBoxWidget extends AnimatedWidget {
 	#theme: BoxTheme;
 	#clock: Pick<FrameScheduler, "now">;
 	#onTick: (nowMs: number) => void;
-	#buildSamples: (nowMs: number) => readonly SegmentSample[];
+	#buildSampleGroups: (nowMs: number) => AnimationsBoxSampleGroups;
 	#getDetail: () => BoxDetail;
 	#policy: MotionPolicy;
 	#getBorderBrightness: (nowMs: number) => number | undefined;
 	#colors: BreathingBorderColors;
 	#preset: SymbolPreset;
 	#flash = new FlashTracker();
+	#bonsaiFlash = new FlashTracker();
+	#bonsaiSeen = new Set<string>();
+	#getAgentBonsai: () => AgentBonsaiSnapshot;
+	#hyperlinks: boolean;
 
 	constructor(options: AnimationsBoxWidgetOptions) {
 		super(options);
 		this.#theme = options.theme;
 		this.#clock = options.clock;
 		this.#onTick = options.onTick;
-		this.#buildSamples = options.buildSamples;
+		this.#buildSampleGroups = options.buildSampleGroups;
 		this.#getDetail = options.getDetail;
 		this.#policy = options.policy;
 		this.#getBorderBrightness = options.getBorderBrightness;
 		this.#colors = breathingBorderColors(options.accentColor);
 		this.#preset = options.preset ?? "unicode";
+		this.#getAgentBonsai = options.getAgentBonsai ?? (() => ({ nodes: [], hiddenCount: 0, visible: false }));
+		this.#hyperlinks = options.hyperlinks ?? hyperlinksSupported();
 	}
 
 	onFrame(_elapsedMs: number): void {
@@ -159,47 +181,80 @@ export class AnimationsBoxWidget extends AnimatedWidget {
 		if (width <= 0) return [];
 
 		const now = this.#clock.now();
-		const samples = this.#buildSamples(now);
-		if (samples.length === 0) return [];
+		const groups = this.#buildSampleGroups(now);
+		if (groups.required.length === 0 && groups.optional.length === 0) return [];
 		const inner = Math.max(0, width - BORDER_COLS);
 		const theme = this.#theme;
 		const borderColor = this.#resolveBorderColor(now);
 
+		// Reduced-motion forces off-tier flash regardless of setting (D6/jj7.7);
+		// otherwise the flash rides the motion tier itself.
+		const flashTier: FlashTier = this.#policy.reducedMotion ? "off" : this.#policy.tier;
+		const bonsaiRows = renderAgentBonsaiRows(this.#getAgentBonsai(), inner, {
+			theme,
+			glyphPreset: this.#preset,
+			now,
+			flashTier,
+			flash: this.#bonsaiFlash,
+			seenIds: this.#bonsaiSeen,
+			hyperlinks: this.#hyperlinks,
+		});
+
 		if (this.#getDetail() === "detailed") {
-			// Reduced-motion forces off-tier flash regardless of setting (D6/jj7.7);
-			// otherwise the flash rides the motion tier itself.
-			const flashTier: FlashTier = this.#policy.reducedMotion ? "off" : this.#policy.tier;
-			const rows = samples.map(s =>
-				contentLine(
-					renderStatusLine(s.line, inner, {
+			const rows: string[] = [borderTop(width, theme, borderColor)];
+			const appendSample = (sample: SegmentSample): void => {
+				rows.push(
+					contentLine(
+						renderStatusLine(sample.line, inner, {
+							theme,
+							preset: this.#preset,
+							colorMode: RENDER_TIER.colorMode,
+							program: TERMINAL_PROGRAM,
+							segmentId: sample.id,
+							now,
+							flashTier,
+							flash: this.#flash,
+						}),
+						inner,
+						width,
 						theme,
-						preset: this.#preset,
-						colorMode: RENDER_TIER.colorMode,
-						program: TERMINAL_PROGRAM,
-						segmentId: s.id,
-						now,
-						flashTier,
-						flash: this.#flash,
-					}),
-					inner,
-					width,
-					theme,
-					borderColor,
-				),
-			);
-			return [borderTop(width, theme, borderColor), ...rows, borderBottom(width, theme, borderColor)];
+						borderColor,
+					),
+				);
+			};
+			for (const sample of groups.required) appendSample(sample);
+			if (groups.optional.length > 0 || bonsaiRows.length > 0) {
+				rows.push(contentLine("", inner, width, theme, borderColor));
+			}
+			for (const sample of groups.optional) appendSample(sample);
+			if (bonsaiRows.length > 0) {
+				rows.push(contentLine(theme.fg("dim", "agents"), inner, width, theme, borderColor));
+				for (const row of bonsaiRows) rows.push(contentLine(row, inner, width, theme, borderColor));
+			}
+			rows.push(borderBottom(width, theme, borderColor));
+			return rows;
 		}
 
-		// Simple mode: exactly one composed row, always drawn (even empty) — height
-		// stays fixed at 3 regardless of how many of the enabled segments are
-		// currently active.
-		const activeSegments = samples.filter(s => s.active).map(s => toKitSegment(s.id, s.priority, s.variants));
+		// Simple mode keeps its composed status row, then appends Agent Bonsai as
+		// a conditional group. Main-only snapshots retain the original 3-row box.
+		const activeSegments = [];
+		for (const sample of groups.required) {
+			if (sample.active) activeSegments.push(toKitSegment(sample.id, sample.priority, sample.variants));
+		}
+		for (const sample of groups.optional) {
+			if (sample.active) activeSegments.push(toKitSegment(sample.id, sample.priority, sample.variants));
+		}
 		const { row } = composeSegments(activeSegments, inner);
-		return [
-			borderTop(width, theme, borderColor),
-			contentLine(row, inner, width, theme, borderColor),
-			borderBottom(width, theme, borderColor),
-		];
+		const rows = [borderTop(width, theme, borderColor), contentLine(row, inner, width, theme, borderColor)];
+		if (bonsaiRows.length > 0) {
+			rows.push(contentLine("", inner, width, theme, borderColor));
+			rows.push(contentLine(theme.fg("dim", "agents"), inner, width, theme, borderColor));
+			for (const bonsaiRow of bonsaiRows) {
+				rows.push(contentLine(bonsaiRow, inner, width, theme, borderColor));
+			}
+		}
+		rows.push(borderBottom(width, theme, borderColor));
+		return rows;
 	}
 
 	/**
@@ -219,6 +274,6 @@ export class AnimationsBoxWidget extends AnimatedWidget {
 	}
 }
 
-/** Documented row-cost accounting for tests: border rows + one content row (simple) or one per enabled segment (detailed). */
+/** Fixed border cost. Detailed mode adds one row per segment and one separator when optionals exist. */
 export const BOX_BORDER_ROWS = BORDER_ROWS;
 export const BOX_BORDER_COLS = BORDER_COLS;

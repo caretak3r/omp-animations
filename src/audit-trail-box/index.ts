@@ -13,11 +13,14 @@ import type { MotionSetting } from "../kit";
 import { type AuditTrailBoxContext, AuditTrailBoxController } from "./controller";
 import { hashContent, type ProbeSource } from "./probe";
 import { formatRemedyPlan } from "./remedy";
-import type { TouchObservation } from "./state";
+import { AuditTrailService } from "./service";
+import { AuditLedgerState, type TouchObservation } from "./state";
+import { auditColors, renderAuditPanel } from "./widget";
 
 export * from "./controller";
 export * from "./probe";
 export * from "./remedy";
+export * from "./service";
 export * from "./state";
 export * from "./widget";
 
@@ -223,22 +226,15 @@ function toAuditContext(ctx: ExtensionContext, options: AuditTrailBoxExtensionOp
 		motionSetting: readMotionSetting(options),
 		theme: ctx.ui.theme,
 		glyphPreset: ctx.ui.theme.getSymbolPreset(),
-		columns: process.stdout.columns,
 		setWidget: (key, content, widgetOptions) => ctx.ui.setWidget(key, content, widgetOptions),
-		setStatus: (key, text) => ctx.ui.setStatus(key, text),
 	};
 }
 
 /**
- * Audit Trail Box: a live meter over the agent's own working set, classifying
- * every touched path as FRESH / DIRTY / POISONED / REDUNDANT / COLD.
- *
- * The ambient surface is a compact widget; a footer status line escalates only
- * while something is genuinely stale (see `controller.ts` for why the two are
- * not copies of each other), and `/audit-trail` opens the full risk-sorted
- * panel. `/audit-trail remedy` is the payload: it re-reads every path the agent
- * can no longer trust and prints what changed *before* the stale copy is
- * discarded, alongside the list of cold paths that are safe to drop.
+ * Audit Trail service: the authoritative working-set ledger, off-path disk
+ * probe, `/audit-trail` panel, and remedy command. A standalone row is optional;
+ * the canonical Audit Box consumes the same injected state without replaying
+ * audit events.
  *
  * Evidence is gathered from tool results (`read`/`write`/`edit`, plus the
  * narrow set of `bash` invocations that dump a file), turn boundaries,
@@ -254,46 +250,67 @@ export interface AuditTrailBoxExtensionOptions {
 	accentColor?: AccentColor;
 	/** Filesystem seam for the divergence probe. Defaults to the real one; tests inject a fake. */
 	probeSource?: ProbeSource;
-	/** Run headless — no widget row, ledger/probe/alarm unchanged. See `AuditTrailBoxController`'s own doc. */
-	suppressRow?: boolean;
+	/** Shared authoritative ledger consumed by the Audit Box. */
+	state?: AuditLedgerState;
+	/** Keep the service and command but mount no standalone widget. */
+	headless?: boolean;
+	/** Called after the authoritative ledger changes, including asynchronous probe results. */
+	onChange?: () => void;
 }
 
 export function createAuditTrailBoxExtension(options: AuditTrailBoxExtensionOptions = {}): ExtensionFactory {
 	return api => {
-		const controller = new AuditTrailBoxController({
-			placement: options.placement,
-			accentColor: options.accentColor,
-			probeSource: options.probeSource,
-			suppressRow: options.suppressRow,
-		});
+		const state = options.state ?? new AuditLedgerState();
+		const controller = options.headless
+			? undefined
+			: new AuditTrailBoxController({
+					placement: options.placement,
+					accentColor: options.accentColor,
+					probeSource: options.probeSource,
+					state,
+					onChange: options.onChange,
+				});
+		const service = options.headless
+			? new AuditTrailService({ probeSource: options.probeSource, state, onChange: options.onChange })
+			: undefined;
 
 		api.on("tool_result", (event, ctx) => {
 			if (!ctx.hasUI) return;
-			const audit = toAuditContext(ctx, options);
 			for (const touch of auditTouchesFromToolResult(event, ctx.cwd)) {
-				if (touch.kind === "read") controller.noteRead(touch.path, touch.observed, audit);
-				else controller.noteWrite(touch.path, touch.observed, audit);
+				if (controller !== undefined) {
+					const audit = toAuditContext(ctx, options);
+					if (touch.kind === "read") controller.noteRead(touch.path, touch.observed, audit);
+					else controller.noteWrite(touch.path, touch.observed, audit);
+				} else if (touch.kind === "read") {
+					service?.noteRead(touch.path, touch.observed);
+				} else {
+					service?.noteWrite(touch.path, touch.observed);
+				}
 			}
 		});
 
 		api.on("turn_end", (_event, ctx) => {
-			controller.noteTurn(toAuditContext(ctx, options));
+			if (!ctx.hasUI) return;
+			if (controller !== undefined) controller.noteTurn(toAuditContext(ctx, options));
+			else service?.noteTurn();
 		});
 
-		// A compaction or a clear right after a poison flag is the derived
-		// "the user recovered from a bad copy" signal — no prompt, no labelling.
-		api.on("session_compact", (_event, ctx) => {
-			controller.noteRecovery(toAuditContext(ctx, options));
-		});
-		api.on("auto_compaction_end", (_event, ctx) => {
-			controller.noteRecovery(toAuditContext(ctx, options));
-		});
+		const noteRecovery = (ctx: ExtensionContext): void => {
+			if (!ctx.hasUI) return;
+			if (controller !== undefined) controller.noteRecovery(toAuditContext(ctx, options));
+			else service?.noteRecovery();
+		};
+		api.on("session_compact", (_event, ctx) => noteRecovery(ctx));
+		api.on("auto_compaction_end", (_event, ctx) => noteRecovery(ctx));
 
 		api.on("session_switch", (_event, ctx) => {
-			controller.noteSessionSwitch(toAuditContext(ctx, options));
+			if (!ctx.hasUI) return;
+			if (controller !== undefined) controller.noteSessionSwitch(toAuditContext(ctx, options));
+			else service?.noteSessionSwitch();
 		});
 		api.on("session_shutdown", (_event, ctx) => {
-			controller.dispose(toAuditContext(ctx, options));
+			if (controller !== undefined) controller.dispose(toAuditContext(ctx, options));
+			else service?.noteSessionSwitch();
 		});
 
 		api.registerCommand(AUDIT_TRAIL_COMMAND, {
@@ -312,11 +329,19 @@ export function createAuditTrailBoxExtension(options: AuditTrailBoxExtensionOpti
 				if (!ctx.hasUI) return;
 				const audit = toAuditContext(ctx, options);
 				if (args.trim().toLowerCase() === "remedy") {
-					const plan = await controller.remedy(audit);
+					const plan = controller !== undefined ? await controller.remedy(audit) : await service?.remedy();
+					if (plan === undefined) return;
 					ctx.ui.notify(formatRemedyPlan(plan).join("\n"), plan.mustReread.length > 0 ? "warning" : "info");
 					return;
 				}
-				ctx.ui.notify(controller.panel(audit).join("\n"), "info");
+				const panel =
+					controller !== undefined
+						? controller.panel(audit)
+						: renderAuditPanel(state.snapshot(), audit.theme, {
+								colors: auditColors(options.accentColor),
+								preset: audit.glyphPreset,
+							});
+				ctx.ui.notify(panel.join("\n"), "info");
 			},
 		});
 	};

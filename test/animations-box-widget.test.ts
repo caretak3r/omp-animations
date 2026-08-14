@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { visibleWidth } from "@oh-my-pi/pi-tui";
+import type { AgentBonsaiSnapshot } from "../src/agent-bonsai";
 import type { SegmentSample } from "../src/animations-box/segments";
 import { AnimationsBoxWidget, BOX_BORDER_COLS, BOX_BORDER_ROWS } from "../src/animations-box/widget";
 import type { AccentColor } from "../src/appearance";
@@ -60,8 +61,80 @@ const ACTIVE: SegmentSample = {
 	},
 };
 
+const CADENCE: SegmentSample = {
+	...ACTIVE,
+	id: "cadenceEqualizer",
+	priority: 6,
+	line: { ...ACTIVE.line, label: "cadence" },
+};
+
+const REFLECT: SegmentSample = {
+	...ACTIVE,
+	id: "reflectionRipple",
+	priority: 7,
+	line: { ...ACTIVE.line, label: "reflect" },
+};
+
+const MAIN_ONLY_BONSAI: AgentBonsaiSnapshot = {
+	visible: false,
+	hiddenCount: 0,
+	nodes: [
+		{
+			id: "Main",
+			cohortLabel: "M",
+			name: "Main",
+			depth: 0,
+			isLast: true,
+			ancestorsLast: [],
+			status: "running",
+			loadedSkills: [],
+		},
+	],
+};
+
+const ACTIVE_BONSAI: AgentBonsaiSnapshot = {
+	visible: true,
+	hiddenCount: 0,
+	nodes: [
+		...MAIN_ONLY_BONSAI.nodes,
+		{
+			id: "worker",
+			cohortLabel: "A1",
+			name: "worker",
+			depth: 1,
+			isLast: true,
+			ancestorsLast: [],
+			status: "running",
+			model: "anthropic/sonnet",
+			loadedSkills: [],
+			gist: "read src/a.ts 12",
+		},
+	],
+};
+
+const SKILL_BONSAI: AgentBonsaiSnapshot = {
+	visible: true,
+	hiddenCount: 0,
+	nodes: [
+		...MAIN_ONLY_BONSAI.nodes,
+		{
+			id: "worker",
+			cohortLabel: "A1",
+			name: "worker",
+			depth: 1,
+			isLast: true,
+			ancestorsLast: [],
+			status: "running",
+			model: "anthropic/sonnet",
+			activeSkill: { name: "tdd", path: "/skills/tdd/SKILL.md" },
+			loadedSkills: [{ name: "tdd", path: "/skills/tdd/SKILL.md" }],
+		},
+	],
+};
+
 function makeWidget(opts: {
 	samples: readonly SegmentSample[];
+	optionalSamples?: readonly SegmentSample[];
 	detail?: "simple" | "detailed";
 	onTick?: (now: number) => void;
 	scheduler?: FrameScheduler;
@@ -69,6 +142,8 @@ function makeWidget(opts: {
 	theme?: { fg: (color: string, text: string) => string };
 	getBorderBrightness?: (now: number) => number | undefined;
 	accentColor?: AccentColor;
+	agentBonsai?: AgentBonsaiSnapshot;
+	hyperlinks?: boolean;
 }): AnimationsBoxWidget {
 	const scheduler = opts.scheduler ?? manualScheduler();
 	const policy = new MotionPolicy(fullEnv, opts.motionSetting ?? "full");
@@ -80,12 +155,15 @@ function makeWidget(opts: {
 		theme: opts.theme ?? idTheme,
 		clock: scheduler,
 		onTick: opts.onTick ?? (() => {}),
-		buildSamples: () => opts.samples,
+		buildSampleGroups: () => ({ required: opts.samples, optional: opts.optionalSamples ?? [] }),
 		getDetail: () => opts.detail ?? "detailed",
 		// `undefined` is the plain, pre-dxi.5 chrome — the sensible default for every
 		// test above that doesn't care about border coloring.
 		getBorderBrightness: opts.getBorderBrightness ?? (() => undefined),
 		accentColor: opts.accentColor,
+		getAgentBonsai: () => opts.agentBonsai ?? MAIN_ONLY_BONSAI,
+		// Pinned off by default so golden rows never vary with the terminal running the suite.
+		hyperlinks: opts.hyperlinks ?? false,
 	});
 }
 
@@ -107,7 +185,7 @@ describe("AnimationsBoxWidget — border chrome and empty/zero-width guards", ()
 	});
 });
 
-describe("AnimationsBoxWidget — detailed mode: one row per ENABLED segment, active or resting (Decision 5)", () => {
+describe("AnimationsBoxWidget — detailed grouped rows", () => {
 	it("renders exactly 3 rows (2 border + 1 content) for one enabled segment, regardless of activity", () => {
 		expect(makeWidget({ samples: [RESTING], detail: "detailed" }).render(40)).toHaveLength(3);
 		expect(makeWidget({ samples: [ACTIVE], detail: "detailed" }).render(40)).toHaveLength(3);
@@ -116,6 +194,88 @@ describe("AnimationsBoxWidget — detailed mode: one row per ENABLED segment, ac
 	it("height scales with the enabled count, not the active count — one resting + one active still yields 4 rows", () => {
 		const rows = makeWidget({ samples: [ACTIVE, RESTING], detail: "detailed" }).render(40);
 		expect(rows).toHaveLength(4);
+	});
+
+	it("adds exactly one blank separator between required summaries and visible optional animations", () => {
+		const width = 40;
+		const rows = makeWidget({
+			samples: [ACTIVE, RESTING],
+			optionalSamples: [CADENCE, REFLECT],
+			detail: "detailed",
+		}).render(width);
+
+		expect(rows).toHaveLength(2 + 2 + 1 + 2);
+		expect(rows[1]).toContain("cache");
+		expect(rows[2]).toContain("cache");
+		expect(rows[3]).toBe(`│ ${" ".repeat(width - BOX_BORDER_COLS)} │`);
+		expect(rows[4]).toContain("cadence");
+		expect(rows[5]).toContain("reflect");
+		for (const narrowWidth of [20, 6]) {
+			for (const row of makeWidget({
+				samples: [ACTIVE],
+				optionalSamples: [CADENCE],
+				detail: "detailed",
+			}).render(narrowWidth)) {
+				expect(visibleWidth(row)).toBe(narrowWidth);
+			}
+		}
+	});
+
+	it("does not add a trailing blank row when no optional animation is visible", () => {
+		const width = 40;
+		const rows = makeWidget({ samples: [ACTIVE, RESTING], detail: "detailed" }).render(width);
+
+		expect(rows).toHaveLength(2 + 2);
+		expect(rows.slice(1, -1)).not.toContain(`│ ${" ".repeat(width - BOX_BORDER_COLS)} │`);
+	});
+
+	it("hides the agents group and its separator for Main-only snapshots", () => {
+		const width = 48;
+		const rows = makeWidget({
+			samples: [ACTIVE],
+			detail: "detailed",
+			agentBonsai: MAIN_ONLY_BONSAI,
+		}).render(width);
+
+		expect(rows).toHaveLength(3);
+		expect(rows.join("\n")).not.toContain("agents");
+		expect(rows.slice(1, -1)).not.toContain(`│ ${" ".repeat(width - BOX_BORDER_COLS)} │`);
+	});
+
+	it("adds one agents group and one separator when a subagent exists", () => {
+		const width = 72;
+		const rows = makeWidget({
+			samples: [ACTIVE],
+			detail: "detailed",
+			agentBonsai: ACTIVE_BONSAI,
+		}).render(width);
+
+		expect(rows).toHaveLength(7);
+		expect(rows[2]).toBe(`│ ${" ".repeat(width - BOX_BORDER_COLS)} │`);
+		expect(rows.filter(row => row.includes("agents"))).toHaveLength(1);
+		expect(rows.join("\n")).toContain("A1 worker");
+	});
+
+	it("keeps every border pipe aligned when the skill chip carries an OSC 8 link", () => {
+		const width = 72;
+		const plain = makeWidget({ samples: [ACTIVE], detail: "detailed", agentBonsai: SKILL_BONSAI }).render(width);
+		const linked = makeWidget({
+			samples: [ACTIVE],
+			detail: "detailed",
+			agentBonsai: SKILL_BONSAI,
+			hyperlinks: true,
+		}).render(width);
+
+		expect(plain.join("\n")).toContain("skill:tdd");
+		expect(plain.join("\n")).not.toContain("\u001b]8;");
+		expect(linked.join("\n")).toContain("\u001b]8;");
+
+		// The link costs zero cells, so the box geometry must not move at all.
+		expect(linked).toHaveLength(plain.length);
+		for (const row of linked) {
+			expect(visibleWidth(row)).toBe(width);
+			expect(row.endsWith(" │") || row.endsWith("╮") || row.endsWith("╯")).toBe(true);
+		}
 	});
 
 	it("an idle enabled segment renders its own resting row content, not absence", () => {
@@ -160,7 +320,7 @@ describe("AnimationsBoxWidget — detailed mode: one row per ENABLED segment, ac
 	});
 });
 
-describe("AnimationsBoxWidget — simple mode: exactly 3 rows always, one composed strip", () => {
+describe("AnimationsBoxWidget — simple mode: fixed status strip plus conditional Agent Bonsai", () => {
 	it("is always exactly 3 rows regardless of how many segments are enabled", () => {
 		expect(makeWidget({ samples: [RESTING], detail: "simple" }).render(40)).toHaveLength(3);
 		expect(makeWidget({ samples: [ACTIVE, RESTING], detail: "simple" }).render(40)).toHaveLength(3);
@@ -176,6 +336,26 @@ describe("AnimationsBoxWidget — simple mode: exactly 3 rows always, one compos
 		const rows = makeWidget({ samples: [ACTIVE], detail: "simple" }).render(40);
 		expect(rows[1]).toContain("ACTIVE WIDE");
 	});
+
+	it("appends the agents group only while a subagent exists", () => {
+		const width = 72;
+		const mainOnly = makeWidget({
+			samples: [ACTIVE],
+			detail: "simple",
+			agentBonsai: MAIN_ONLY_BONSAI,
+		}).render(width);
+		const active = makeWidget({
+			samples: [ACTIVE],
+			detail: "simple",
+			agentBonsai: ACTIVE_BONSAI,
+		}).render(width);
+
+		expect(mainOnly).toHaveLength(3);
+		expect(mainOnly.join("\n")).not.toContain("agents");
+		expect(active).toHaveLength(7);
+		expect(active.filter(row => row.includes("agents"))).toHaveLength(1);
+		expect(active.join("\n")).toContain("A1 worker");
+	});
 });
 
 describe("AnimationsBoxWidget — lifecycle and per-tick hook", () => {
@@ -190,7 +370,7 @@ describe("AnimationsBoxWidget — lifecycle and per-tick hook", () => {
 			theme: idTheme,
 			clock: scheduler,
 			onTick: () => {},
-			buildSamples: () => [ACTIVE],
+			buildSampleGroups: () => ({ required: [ACTIVE], optional: [] }),
 			getDetail: () => "detailed",
 			getBorderBrightness: () => undefined,
 		});

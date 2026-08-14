@@ -81,6 +81,7 @@ import type {
 import type { SymbolPreset } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import { getDiffStats } from "@oh-my-pi/pi-coding-agent/tools/render-utils";
 import { calculateTokensPerSecond } from "@oh-my-pi/pi-coding-agent/utils/token-rate";
+import type { AgentBonsaiController } from "../agent-bonsai";
 import type { AccentColor } from "../appearance";
 import { AuditLedgerState, auditTouchesFromToolResult } from "../audit-trail-box";
 import { BreathingBorderState, breathEnvelope, EXHALE_DURATION_MS, exhaleEnvelope } from "../breathing-border";
@@ -107,8 +108,8 @@ import {
 	buildToolConstellationSegment,
 	type SegmentSample,
 } from "./segments";
-import { type AnimationsBoxConfig, segmentVisible } from "./settings";
-import { AnimationsBoxWidget } from "./widget";
+import type { AnimationsBoxConfig } from "./settings";
+import { type AnimationsBoxSampleGroups, AnimationsBoxWidget } from "./widget";
 
 /** Namespaced per the native-vs-plugin key-collision memory — never a keeper's own `WIDGET_KEY` (only 2 of 8 even export theirs). */
 export const BOX_WIDGET_KEY = "oh-my-pi-animations-box";
@@ -239,6 +240,10 @@ export interface AnimationsBoxControllerOptions {
 	initialConfig: AnimationsBoxConfig;
 	/** Accent override for the border's peak brightness — the existing `breathingBorderAccentColor` setting; `undefined` keeps the breathing-border keeper's built-in palette. */
 	accentColor?: AccentColor;
+	/** Shared authoritative Audit Trail ledger. When present, the headless audit service owns all mutations. */
+	auditTrailState?: AuditLedgerState;
+	/** Process-global Agent Bonsai observer. */
+	agentBonsai?: AgentBonsaiController;
 }
 
 /** Drives the Animations Box. See the module doc above for why this owns a fresh `CacheMeterState` rather than delegating to `CacheMeterController`. */
@@ -249,12 +254,14 @@ export class AnimationsBoxController {
 	#accentColor: AccentColor | undefined;
 
 	#config: AnimationsBoxConfig;
-	#mount: { host: AnimationHost } | undefined;
+	#mount: { host: AnimationHost; widget?: AnimationsBoxWidget } | undefined;
 	/** The host's live symbol preset, captured once at {@link mount} — mirrors `accentColor`'s restart-required posture, no live re-read. */
 	#glyphPreset: SymbolPreset = "unicode";
 
 	#cacheMeterState: CacheMeterState = new CacheMeterState();
-	#auditTrailState: AuditLedgerState = new AuditLedgerState();
+	#auditTrailState: AuditLedgerState;
+	#ownsAuditTrailState: boolean;
+	#agentBonsai: AgentBonsaiController | undefined;
 	#constellationState: ConstellationState = new ConstellationState();
 	#palimpsestState: PalimpsestState = new PalimpsestState();
 	#cadenceState: CadenceEqualizerState = new CadenceEqualizerState();
@@ -277,6 +284,9 @@ export class AnimationsBoxController {
 		this.#motionSetting = options.motionSetting ?? "full";
 		this.#config = options.initialConfig;
 		this.#accentColor = options.accentColor;
+		this.#auditTrailState = options.auditTrailState ?? new AuditLedgerState();
+		this.#ownsAuditTrailState = options.auditTrailState === undefined;
+		this.#agentBonsai = options.agentBonsai;
 	}
 
 	/** Live-resolved box config — read-only accessor for tests/introspection. */
@@ -293,28 +303,37 @@ export class AnimationsBoxController {
 		const backpressure = deferredBackpressure();
 		const host = new AnimationHost({ policy, backpressure: backpressure.signal, scheduler: this.#scheduler });
 		const scheduler = this.#scheduler;
+		const mount: { host: AnimationHost; widget?: AnimationsBoxWidget } = { host };
+		this.#mount = mount;
 
 		ctx.setWidget(
 			BOX_WIDGET_KEY,
 			(tui, theme) => {
 				backpressure.attach(tui);
-				return new AnimationsBoxWidget({
+				const widget = new AnimationsBoxWidget({
 					tui,
 					host,
 					policy,
 					theme,
 					clock: scheduler,
 					onTick: now => this.#onTick(now),
-					buildSamples: now => this.#buildSamples(now, theme),
+					buildSampleGroups: now => this.#buildSampleGroups(now, theme),
 					getDetail: () => this.#config.detail,
 					getBorderBrightness: now => this.#getBorderBrightness(now),
 					accentColor: this.#accentColor,
 					preset: this.#glyphPreset,
+					getAgentBonsai: () => this.#agentBonsai?.snapshot() ?? { nodes: [], hiddenCount: 0, visible: false },
 				});
+				mount.widget = widget;
+				return widget;
 			},
 			this.#widgetOptions,
 		);
-		this.#mount = { host };
+	}
+
+	/** Repaint after a headless service or registry observer changes Box-owned state. */
+	requestRender(): void {
+		this.#mount?.widget?.requestRender();
 	}
 
 	/** Sample the live tok/s rate at `wallNowMs` from the currently tracked message — identical call shape to `CadenceEqualizerController.sampleRate`. */
@@ -372,28 +391,34 @@ export class AnimationsBoxController {
 		}
 	}
 
-	#buildSamples(now: number, theme: BoxTheme): readonly SegmentSample[] {
-		// Priority order, not builder-list order — this array feeds detailed mode's
-		// row-per-segment loop directly (see `widget.ts`), which does not sort by
-		// priority itself.
-		const all: readonly SegmentSample[] = [
+	#buildSampleGroups(now: number, theme: BoxTheme): AnimationsBoxSampleGroups {
+		const required: readonly SegmentSample[] = [
 			buildCacheMeterSegment(this.#cacheMeterState, now, theme, undefined, this.#glyphPreset),
-			buildCadenceEqualizerSegment(
-				this.#cadenceState,
-				this.#cadenceHasStreamed,
-				this.#sampleCadenceRate(now),
-				now,
-				theme,
-				undefined,
-				this.#glyphPreset,
-			),
 			buildAuditTrailBoxSegment(this.#auditTrailState, now, theme, undefined, this.#glyphPreset),
 			buildRateLimitTidepoolSegment(this.#tidepoolState, now, theme, undefined, this.#glyphPreset),
 			buildToolConstellationSegment(this.#constellationState, now, theme, this.#glyphPreset),
 			buildPalimpsestSegment(this.#palimpsestState, now, theme, undefined, this.#glyphPreset),
-			buildReflectionRippleSegment(this.#reflectionRippleState, now, theme, undefined, this.#glyphPreset),
 		];
-		return all.filter(s => segmentVisible(this.#config, s.id));
+		const optional: SegmentSample[] = [];
+		if (this.#config.optional.cadenceEqualizer) {
+			optional.push(
+				buildCadenceEqualizerSegment(
+					this.#cadenceState,
+					this.#cadenceHasStreamed,
+					this.#sampleCadenceRate(now),
+					now,
+					theme,
+					undefined,
+					this.#glyphPreset,
+				),
+			);
+		}
+		if (this.#config.optional.reflectionRipple) {
+			optional.push(
+				buildReflectionRippleSegment(this.#reflectionRippleState, now, theme, undefined, this.#glyphPreset),
+			);
+		}
+		return { required, optional };
 	}
 
 	/**
@@ -488,9 +513,11 @@ export class AnimationsBoxController {
 	 */
 	onToolResult(event: ToolResultEvent, ctx: Pick<AnimationsBoxContext, "hasUI" | "cwd">): void {
 		if (!ctx.hasUI) return;
-		for (const touch of auditTouchesFromToolResult(event, ctx.cwd)) {
-			if (touch.kind === "read") this.#auditTrailState.noteRead(touch.path, touch.observed);
-			else this.#auditTrailState.noteWrite(touch.path, this.#scheduler.now(), touch.observed);
+		if (this.#ownsAuditTrailState) {
+			for (const touch of auditTouchesFromToolResult(event, ctx.cwd)) {
+				if (touch.kind === "read") this.#auditTrailState.noteRead(touch.path, touch.observed);
+				else this.#auditTrailState.noteWrite(touch.path, this.#scheduler.now(), touch.observed);
+			}
 		}
 
 		if (!isEditToolResult(event)) return;
@@ -562,7 +589,7 @@ export class AnimationsBoxController {
 	 */
 	onTurnEnd(event: TurnEndEvent, ctx: Pick<AnimationsBoxContext, "hasUI">): void {
 		if (!ctx.hasUI) return;
-		this.#auditTrailState.noteTurn();
+		if (this.#ownsAuditTrailState) this.#auditTrailState.noteTurn();
 		this.#palimpsestState.advanceTurn(event.turnIndex);
 		this.#breathingBorderState.applyTurnEnd(event.turnIndex, this.#scheduler.now());
 	}
@@ -571,7 +598,7 @@ export class AnimationsBoxController {
 	onSessionCompact(ctx: Pick<AnimationsBoxContext, "hasUI">): void {
 		if (!ctx.hasUI) return;
 		this.#cacheMeterState.recordEvent("compact", this.#scheduler.now());
-		this.#auditTrailState.noteRecovery(this.#scheduler.now());
+		if (this.#ownsAuditTrailState) this.#auditTrailState.noteRecovery(this.#scheduler.now());
 	}
 
 	/** `auto_compaction_start`: same cache-invalidation attribution, distinct cause. */
@@ -583,7 +610,7 @@ export class AnimationsBoxController {
 	/** `auto_compaction_end`: Audit Trail's own recovery-correlation signal — a distinct event from `onAutoCompactionStart`'s cache attribution above. */
 	onAutoCompactionEnd(ctx: Pick<AnimationsBoxContext, "hasUI">): void {
 		if (!ctx.hasUI) return;
-		this.#auditTrailState.noteRecovery(this.#scheduler.now());
+		if (this.#ownsAuditTrailState) this.#auditTrailState.noteRecovery(this.#scheduler.now());
 	}
 
 	/**
@@ -605,7 +632,7 @@ export class AnimationsBoxController {
 	onSessionSwitch(_event: unknown, ctx: Pick<AnimationsBoxContext, "hasUI">): void {
 		if (!ctx.hasUI) return;
 		this.#cacheMeterState = new CacheMeterState();
-		this.#auditTrailState.noteSessionSwitch();
+		if (this.#ownsAuditTrailState) this.#auditTrailState.noteSessionSwitch();
 		this.#tidepoolPendingHeaders = undefined;
 		this.#tidepoolState = new RateLimitTidepoolState();
 	}

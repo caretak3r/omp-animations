@@ -653,13 +653,17 @@ export function buildReflectionRippleSegment(
 	};
 }
 
-/** All segment metadata in priority order for legend rendering. */
-export const SEGMENT_REGISTRY = [
+/** Required summary metadata in immutable Audit Box row order. */
+export const REQUIRED_SEGMENT_REGISTRY = [
 	CACHE_METER_SEGMENT,
-	CADENCE_EQUALIZER_SEGMENT,
 	AUDIT_TRAIL_SEGMENT,
 	RATE_LIMIT_TIDEPOOL_SEGMENT,
 	TOOL_CONSTELLATION_SEGMENT,
 	PALIMPSEST_SEGMENT,
-	REFLECTION_RIPPLE_SEGMENT,
 ] as const;
+
+/** Optional animation metadata in deterministic toggle/render order. */
+export const OPTIONAL_SEGMENT_REGISTRY = [CADENCE_EQUALIZER_SEGMENT, REFLECTION_RIPPLE_SEGMENT] as const;
+
+/** Complete segment metadata in simple-mode priority order. */
+export const SEGMENT_REGISTRY = [...REQUIRED_SEGMENT_REGISTRY, ...OPTIONAL_SEGMENT_REGISTRY] as const;

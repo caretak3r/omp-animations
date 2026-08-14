@@ -2,51 +2,57 @@ import { describe, expect, it } from "bun:test";
 import {
 	BOX_DEFAULTS,
 	BOX_MIGRATED_ANIMATION_IDS,
-	BOX_SEGMENT_DEFAULT_VISIBLE,
+	BOX_OPTIONAL_SEGMENT_IDS,
+	BOX_OPTIONAL_STATUS_SEGMENT_IDS,
+	BOX_REQUIRED_SEGMENT_IDS,
 	BOX_SEGMENT_IDS,
 	BOX_SETTING_ENV,
 	BOX_SETTING_KEYS,
 	resolveAnimationsBoxConfig,
 	resolveAnimationsBoxConfigFromSources,
-	segmentVisible,
 } from "../src/animations-box/settings";
 import { animationsEnvKey } from "../src/appearance";
 import { ANIMATIONS } from "../src/registrar";
 
 const ALL_ANIMATION_IDS = ANIMATIONS.map(a => a.id);
 
-describe("BOX_SEGMENT_IDS / BOX_MIGRATED_ANIMATION_IDS — derived from the registrar, never hardcoded counts", () => {
-	it("every segment id names a real registrar animation, with no duplicates", () => {
-		for (const id of BOX_SEGMENT_IDS) expect(ALL_ANIMATION_IDS).toContain(id);
+describe("Audit Box segment groups", () => {
+	it("pins the immutable required-summary order and deterministic optional-animation order", () => {
+		expect(BOX_REQUIRED_SEGMENT_IDS).toEqual([
+			"cacheMeter",
+			"auditTrailBox",
+			"rateLimitTidepool",
+			"toolConstellation",
+			"palimpsest",
+		]);
+		expect(BOX_OPTIONAL_SEGMENT_IDS).toEqual(["cadenceEqualizer", "reflectionRipple", "agentBonsai"]);
+		expect(BOX_SEGMENT_IDS).toEqual([...BOX_REQUIRED_SEGMENT_IDS, ...BOX_OPTIONAL_STATUS_SEGMENT_IDS]);
+	});
+
+	it("covers every registrar status animation except border chrome exactly once", () => {
+		const expected = ALL_ANIMATION_IDS.filter(id => id !== "breathingBorder");
+		expect(expected.sort()).toEqual([...BOX_SEGMENT_IDS].sort());
 		expect(new Set(BOX_SEGMENT_IDS).size).toBe(BOX_SEGMENT_IDS.length);
 	});
 
-	it("excludes breathingBorder and Agent Tree from box segments", () => {
-		expect(BOX_SEGMENT_IDS).not.toContain("breathingBorder");
-		expect(BOX_SEGMENT_IDS).not.toContain("agentTree");
-	});
-
-	it("is exactly the registrar set minus breathingBorder and Agent Tree", () => {
-		const expected = ALL_ANIMATION_IDS.filter(id => id !== "breathingBorder" && id !== "agentTree");
-		expect(expected.sort()).toEqual([...BOX_SEGMENT_IDS].sort());
-		expect(BOX_SEGMENT_IDS).toHaveLength(expected.length);
-	});
-
-	it("migrates the complete registrar set except the independent Agent Tree row", () => {
-		const expected = ALL_ANIMATION_IDS.filter(id => id !== "agentTree");
-		expect(expected.sort()).toEqual([...BOX_MIGRATED_ANIMATION_IDS].sort());
-		expect(BOX_MIGRATED_ANIMATION_IDS).toHaveLength(expected.length);
+	it("migrates the complete standalone registrar set", () => {
+		expect([...BOX_MIGRATED_ANIMATION_IDS].sort()).toEqual(ALL_ANIMATION_IDS.sort());
+		expect(BOX_MIGRATED_ANIMATION_IDS).toHaveLength(ALL_ANIMATION_IDS.length);
 	});
 });
 
 describe("resolveAnimationsBoxConfig — defaults and validation", () => {
-	it("falls back to display=box, detail=detailed, placement=belowEditor, every segment enabled, on an empty record", () => {
+	it("defaults to the box, detailed mode, no status animations, and Agent Bonsai enabled", () => {
 		const config = resolveAnimationsBoxConfig({});
 		expect(config.display).toBe(BOX_DEFAULTS.display);
 		expect(config.detail).toBe(BOX_DEFAULTS.detail);
 		expect(config.placement).toBe(BOX_DEFAULTS.placement);
 		for (const id of BOX_SEGMENT_IDS) expect(config.enabled[id]).toBe(true);
-		for (const id of BOX_SEGMENT_IDS) expect(config.visible[id]).toBe(BOX_SEGMENT_DEFAULT_VISIBLE[id]);
+		expect(config.optional).toEqual({
+			cadenceEqualizer: false,
+			reflectionRipple: false,
+			agentBonsai: true,
+		});
 	});
 
 	it("accepts each valid display/detail/placement value", () => {
@@ -65,12 +71,16 @@ describe("resolveAnimationsBoxConfig — defaults and validation", () => {
 		expect(resolveAnimationsBoxConfig({ [BOX_SETTING_KEYS.detail]: "off" }).detail).toBe(BOX_DEFAULTS.detail);
 	});
 
-	it("resolves each segment's own boolean key independently, accepting real booleans and string forms", () => {
-		const config = resolveAnimationsBoxConfig({ cacheMeter: false, palimpsest: "false", toolConstellation: "true" });
+	it("resolves standalone enable booleans and optional box toggles independently", () => {
+		const config = resolveAnimationsBoxConfig({
+			cacheMeter: false,
+			cadenceEqualizer: "true",
+			reflectionRipple: false,
+		});
 		expect(config.enabled.cacheMeter).toBe(false);
-		expect(config.enabled.palimpsest).toBe(false);
-		expect(config.enabled.toolConstellation).toBe(true);
-		expect(config.enabled.reflectionRipple).toBe(true); // untouched key stays at the default
+		expect(config.enabled.cadenceEqualizer).toBe(true);
+		expect(config.enabled.reflectionRipple).toBe(false);
+		expect(config.optional).toEqual({ cadenceEqualizer: true, reflectionRipple: false, agentBonsai: true });
 	});
 
 	it("ignores a stray animationsBoxOnly key entirely — the subset key was dropped, not just renamed", () => {
@@ -138,44 +148,79 @@ describe("resolveAnimationsBoxConfigFromSources — stored > env > default prece
 	});
 });
 
-describe("segment visibility — D7's box-scope default cut", () => {
-	it("BOX_SEGMENT_DEFAULT_VISIBLE cuts exactly cadenceEqualizer and reflectionRipple", () => {
-		const cut = BOX_SEGMENT_IDS.filter(id => !BOX_SEGMENT_DEFAULT_VISIBLE[id]);
-		expect(cut).toEqual(["cadenceEqualizer", "reflectionRipple"]);
+describe("optional animation toggles", () => {
+	it("contains only optional animation ids, so required summaries cannot become user-toggleable", () => {
+		const config = resolveAnimationsBoxConfig({
+			cacheMeter: false,
+			auditTrailBox: false,
+			rateLimitTidepool: false,
+			toolConstellation: false,
+			palimpsest: false,
+		});
+		expect(Object.keys(config.optional)).toEqual([...BOX_OPTIONAL_SEGMENT_IDS]);
+		for (const id of BOX_REQUIRED_SEGMENT_IDS) expect(config.enabled[id]).toBe(false);
+		expect(config.optional).toEqual({
+			cadenceEqualizer: false,
+			reflectionRipple: false,
+			agentBonsai: true,
+		});
 	});
 
-	it("a cut segment stays enabled by default — rows mode and the per-animation boolean are untouched", () => {
-		const config = resolveAnimationsBoxConfig({});
-		expect(config.enabled.cadenceEqualizer).toBe(true);
-		expect(segmentVisible(config, "cadenceEqualizer")).toBe(false);
-		expect(config.enabled.reflectionRipple).toBe(true);
-		expect(segmentVisible(config, "reflectionRipple")).toBe(false);
+	it("round-trips cadence and reflection independently from booleans and string forms", () => {
+		expect(resolveAnimationsBoxConfig({ cadenceEqualizer: true }).optional).toEqual({
+			cadenceEqualizer: true,
+			reflectionRipple: false,
+			agentBonsai: true,
+		});
+		expect(resolveAnimationsBoxConfig({ reflectionRipple: "true" }).optional).toEqual({
+			cadenceEqualizer: false,
+			reflectionRipple: true,
+			agentBonsai: true,
+		});
+		expect(resolveAnimationsBoxConfig({ cadenceEqualizer: "false", reflectionRipple: true }).optional).toEqual({
+			cadenceEqualizer: false,
+			reflectionRipple: true,
+			agentBonsai: true,
+		});
 	});
 
-	it("an explicit per-animation true opts a cut row back in, boolean or string form", () => {
-		expect(segmentVisible(resolveAnimationsBoxConfig({ cadenceEqualizer: true }), "cadenceEqualizer")).toBe(true);
-		expect(segmentVisible(resolveAnimationsBoxConfig({ reflectionRipple: "true" }), "reflectionRipple")).toBe(true);
+	it("round-trips Agent Bonsai and lets a stored false beat the env fallback", () => {
+		expect(resolveAnimationsBoxConfig({ agentBonsai: false }).optional.agentBonsai).toBe(false);
+		expect(
+			resolveAnimationsBoxConfigFromSources({}, { OMP_ANIMATIONS_AGENT_BONSAI: "false" }).optional.agentBonsai,
+		).toBe(false);
+		expect(
+			resolveAnimationsBoxConfigFromSources({ agentBonsai: false }, { OMP_ANIMATIONS_AGENT_BONSAI: "true" }).optional
+				.agentBonsai,
+		).toBe(false);
 	});
 
-	it("an explicit false still hides a default-visible segment", () => {
-		const config = resolveAnimationsBoxConfig({ cacheMeter: false });
-		expect(segmentVisible(config, "cacheMeter")).toBe(false);
-		expect(config.enabled.cacheMeter).toBe(false);
-	});
-
-	it("the opt-back-in reads the SAME key/env pair as the enable boolean, stored > env", () => {
-		const fromEnv = resolveAnimationsBoxConfigFromSources({}, { [animationsEnvKey("cadenceEqualizer")]: "true" });
-		expect(segmentVisible(fromEnv, "cadenceEqualizer")).toBe(true);
+	it("uses each animation's existing stored-setting and env key with stored > env precedence", () => {
+		const fromEnv = resolveAnimationsBoxConfigFromSources(
+			{},
+			{
+				[animationsEnvKey("cadenceEqualizer")]: "true",
+				[animationsEnvKey("reflectionRipple")]: "false",
+			},
+		);
+		expect(fromEnv.optional).toEqual({ cadenceEqualizer: true, reflectionRipple: false, agentBonsai: true });
 
 		const stored = resolveAnimationsBoxConfigFromSources(
-			{ reflectionRipple: false },
-			{ [animationsEnvKey("reflectionRipple")]: "true" },
+			{ cadenceEqualizer: false, reflectionRipple: true },
+			{
+				[animationsEnvKey("cadenceEqualizer")]: "true",
+				[animationsEnvKey("reflectionRipple")]: "false",
+			},
 		);
-		expect(segmentVisible(stored, "reflectionRipple")).toBe(false); // stored false wins over env true
+		expect(stored.optional).toEqual({ cadenceEqualizer: false, reflectionRipple: true, agentBonsai: true });
 	});
 
-	it("is independent of display — callers gate box presence on display separately", () => {
-		const config = resolveAnimationsBoxConfig({ [BOX_SETTING_KEYS.display]: "rows", cacheMeter: true });
-		expect(segmentVisible(config, "cacheMeter")).toBe(true);
+	it("is independent of display; callers still gate whether the box itself mounts", () => {
+		const config = resolveAnimationsBoxConfig({
+			[BOX_SETTING_KEYS.display]: "rows",
+			cadenceEqualizer: true,
+			reflectionRipple: false,
+		});
+		expect(config.optional).toEqual({ cadenceEqualizer: true, reflectionRipple: false, agentBonsai: true });
 	});
 });
