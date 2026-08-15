@@ -12,7 +12,6 @@ import type {
 	EditToolResultEvent,
 	MessageEndEvent,
 	MessageStartEvent,
-	ToolCallEvent,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 import type { Theme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import {
@@ -58,7 +57,6 @@ import {
 	renderReflectionRippleRow,
 } from "../src/reflection-ripple/widget";
 import { ANIMATIONS, createAnimationsPlugin, resolveAnimationsConfig } from "../src/registrar";
-import { type ToolConstellationContext, ToolConstellationController } from "../src/tool-constellation/controller";
 
 const idTheme: Pick<Theme, "fg" | "underline" | "bold"> = {
 	fg: (_color, text) => text,
@@ -202,10 +200,6 @@ function rule(name: string): Rule {
 	};
 }
 
-function toolCallEvent(toolName: string): ToolCallEvent {
-	return { type: "tool_call", toolCallId: "call-1", toolName, input: {} } as ToolCallEvent;
-}
-
 describe("resolveAnimationAppearance", () => {
 	it("uses the historical placement and built-in palette by default", () => {
 		expect(resolveAnimationAppearance("cacheMeter", "aboveEditor", {}, {})).toEqual({
@@ -322,8 +316,8 @@ describe("resolveAnimationAppearance", () => {
 	});
 
 	it("derives manifest and env keys from camel-case ids", () => {
-		expect(animationsEnvKey("toolConstellation")).toBe("OMP_ANIMATIONS_TOOL_CONSTELLATION");
-		expect(animationsEnvKey("toolConstellation", "PLACEMENT")).toBe("OMP_ANIMATIONS_TOOL_CONSTELLATION_PLACEMENT");
+		expect(animationsEnvKey("rateLimitTidepool")).toBe("OMP_ANIMATIONS_RATE_LIMIT_TIDEPOOL");
+		expect(animationsEnvKey("rateLimitTidepool", "PLACEMENT")).toBe("OMP_ANIMATIONS_RATE_LIMIT_TIDEPOOL_PLACEMENT");
 		expect(placementKey("cadenceEqualizer")).toBe("cadenceEqualizerPlacement");
 		expect(accentColorKey("cadenceEqualizer")).toBe("cadenceEqualizerAccentColor");
 	});
@@ -350,7 +344,6 @@ describe("resolveAnimationsConfig appearance", () => {
 			"cadenceEqualizer",
 			"palimpsest",
 			"rateLimitTidepool",
-			"toolConstellation",
 		]);
 		expect(ANIMATIONS.filter(entry => entry.defaultPlacement === "aboveEditor").map(entry => entry.id)).toEqual([
 			"breathingBorder",
@@ -401,14 +394,6 @@ describe("manifest appearance settings", () => {
 			expect(placement?.values).toEqual([...PLACEMENT_VALUES]);
 			expect(placement?.env).toBe(animationsEnvKey(entry.id, "PLACEMENT"));
 			expect(placement?.default).toBe(entry.defaultPlacement);
-
-			// toolConstellation has no AccentColor manifest key: its per-category rainbow
-			// palette has no single overridable slot (see tool-constellation/index.ts).
-			if (entry.id === "toolConstellation") {
-				expect(settings[accentColorKey(entry.id)]).toBeUndefined();
-				continue;
-			}
-
 			const accent = settings[accentColorKey(entry.id)];
 			expect(accent?.type).toBe("enum");
 			expect(accent?.values).toEqual([...ACCENT_SETTING_VALUES]);
@@ -523,20 +508,6 @@ describe("controller placement threading", () => {
 			controller.onTtsrTriggered({ type: "ttsr_triggered", rules: [rule("no-console-log")] }, ctx);
 			controller.dispose(ctx);
 			expectPlacement(recorder.calls, "belowEditor");
-		}
-
-		{
-			const recorder = widgetRecorder();
-			const ctx: ToolConstellationContext = {
-				...fullEnv,
-				motionSetting: "full",
-				theme: idTheme,
-				setWidget: recorder.setWidget,
-			};
-			const controller = new ToolConstellationController({ scheduler: manualScheduler(), placement: "aboveEditor" });
-			controller.onToolCall(toolCallEvent("bash"), ctx);
-			controller.dispose(ctx);
-			expectPlacement(recorder.calls, "aboveEditor");
 		}
 	});
 

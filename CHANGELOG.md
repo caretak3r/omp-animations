@@ -5,13 +5,13 @@ All notable changes to `@oh-my-pi/animations` are documented here.
 ## [Unreleased]
 
 ### Changed
-- **T6 — Curated to eight standalone animations plus Agent Bonsai.** Reduced
+- **T6 — Curated to seven standalone animations plus Agent Bonsai.** Reduced
   the registrar to Audit Trail Box, Breathing Border, Cache Meter, Cadence
-  Equalizer, Palimpsest, Rate-Limit Tidepool, Reflection Ripple, and Tool
-  Constellation. Agent Bonsai is now a Box-owned group, not a ninth standalone
-  animation. Every excluded animation below is absent from this repository.
-  Pruned `package.json#omp.settings`, `src/index.ts`, and `src/registrar.ts`
-  to match.
+  Equalizer, Palimpsest, Rate-Limit Tidepool, and Reflection Ripple. Agent
+  Bonsai is a Box-owned group, not a standalone animation. Every excluded
+  animation below is absent from this repository. Pruned
+  `package.json#omp.settings`, `src/index.ts`, and `src/registrar.ts` to
+  match.
 - Grouped the Audit Box into five fixed summaries (`cache`, `audit`, `limits`,
   `tools`, `files`) and independently toggleable optional animations. Cadence
   and Reflection now render after one conditional blank separator.
@@ -67,6 +67,15 @@ All notable changes to `@oh-my-pi/animations` are documented here.
 - Kept wide cache and audit details beside their row indicators instead of
   pushing uncached-token counts and filenames to the far box edge.
 
+### Removed
+- **Tool Constellation.** Deleted the standalone animation, its settings key
+  (`toolConstellation`), its glyph-preset keys, and its tests. The star map,
+  comet, per-tool particles, and the seven-way category rainbow are gone.
+- The Box's `tools` row is now a box-owned tally with no animation behind it.
+  It reports the total call count and the two busiest tool categories. It
+  never names reads or writes, because the `audit` row owns the file metrics
+  from the ledger, and one number must have one owner.
+
 ### Validation
-- `bun run fix && bun check && bun test` green; 1200 pass / 0 fail across
+- `bun run fix && bun check && bun test` green; 1186 pass / 0 fail across
   37 files.

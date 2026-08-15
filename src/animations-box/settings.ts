@@ -19,7 +19,7 @@ export const BOX_REQUIRED_SEGMENT_IDS = [
 	"cacheMeter",
 	"auditTrailBox",
 	"rateLimitTidepool",
-	"toolConstellation",
+	"toolActivity",
 	"palimpsest",
 ] as const;
 
@@ -42,11 +42,17 @@ export type BoxSegmentId = (typeof BOX_SEGMENT_IDS)[number];
 const BREATHING_BORDER_ID = "breathingBorder";
 
 /**
- * The 8 animations that stop mounting standalone rows when the box owns
- * them (`display !== "rows"`): all seven segments above plus Breathing
- * Border. The box renders Breathing Border as chrome, not as a segment.
+ * The animations that stop mounting standalone rows when the box owns them
+ * (`display !== "rows"`): every segment that still has a standalone widget,
+ * plus Breathing Border, which the box renders as chrome rather than as a
+ * segment. `toolActivity` is excluded — Tool Constellation was deleted
+ * outright (`omp-animations-buv.4`) and its row is box-only, so there is no
+ * standalone animation of that id left to migrate.
  */
-export const BOX_MIGRATED_ANIMATION_IDS: readonly string[] = [...BOX_SEGMENT_IDS, BREATHING_BORDER_ID];
+export const BOX_MIGRATED_ANIMATION_IDS: readonly string[] = [
+	...BOX_SEGMENT_IDS.filter(id => id !== "toolActivity"),
+	BREATHING_BORDER_ID,
+];
 
 /** `rows` is today's behavior unchanged; `box` mounts the one consolidated widget; `both` is a debug/compare mode. */
 export type BoxDisplay = "rows" | "box" | "both";

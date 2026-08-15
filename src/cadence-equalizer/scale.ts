@@ -31,7 +31,7 @@ export function rateBucket(tokensPerSecond: number): RateBucket {
 /**
  * Bucket -> theme color, warming from resting dim through cool teal/cyan to
  * hot amber as throughput climbs. Chosen from the existing {@link ThemeColor}
- * set rather than inventing raw ANSI colors, matching the tool-constellation
+ * set rather than inventing raw ANSI colors, matching the audit-trail
  * precedent.
  */
 export const BUCKET_THEME_COLOR: Readonly<Record<RateBucket, ThemeColor>> = {

@@ -6,8 +6,8 @@
  * kit's `composeSegments`) plus the detailed-mode status-line spans (Plan
  * 018), both derived
  * from that animation's own exported pure renderers/state — never reinvented
- * text. Cache Meter (`oh-my-pi-dxi.2`), Audit Trail, Tool Constellation,
- * Palimpsest, Cadence Equalizer, Rate-Limit Tidepool and Reflection Ripple
+ * text. Cache Meter (`oh-my-pi-dxi.2`), Audit Trail, Palimpsest, Cadence
+ * Equalizer, Rate-Limit Tidepool and Reflection Ripple
  * (`oh-my-pi-dxi.3`/`oh-my-pi-dxi.4`) are wired here; the breathing border
  * lands in `oh-my-pi-dxi.5`.
  *
@@ -24,7 +24,7 @@
  * never the host `AnimatedWidget`'s mount-relative `elapsedMs` (Decision 4).
  */
 import { basename } from "node:path";
-import type { SymbolPreset, Theme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { SymbolPreset, Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import { formatNumber } from "@oh-my-pi/pi-utils";
 import {
 	AUDIT_TRAIL_BOX_COLORS,
@@ -67,15 +67,9 @@ import {
 	type ReflectionRippleState,
 	renderReflectionRippleRow,
 } from "../reflection-ripple";
-import {
-	CATEGORY_ORDER,
-	CATEGORY_THEME_COLOR,
-	type ConstellationState,
-	renderConstellationTally,
-	type ToolCategory,
-} from "../tool-constellation";
 import { BOX_SEGMENT_IDS, type BoxSegmentId } from "./settings";
 import type { PhraseSpan, SegmentLine, StatusDot } from "./status-line";
+import type { ToolActivityState } from "./tool-activity";
 
 /** The slice of {@link Theme} every segment builder needs — foreground coloring, plus color hex for gradients and bold for flash emphasis where available. */
 export type BoxTheme = Pick<Theme, "fg"> & Partial<Pick<Theme, "getColorHex" | "bold">>;
@@ -434,90 +428,74 @@ export function buildRateLimitTidepoolSegment(
 	};
 }
 
-/** Highest-fire-count category, ties broken by {@link CATEGORY_ORDER}'s own canonical order. `undefined` when nothing has fired. */
-function dominantCategory(counts: ReadonlyMap<ToolCategory, number>): ToolCategory | undefined {
-	let best: ToolCategory | undefined;
-	let bestCount = 0;
-	for (const category of CATEGORY_ORDER) {
-		const count = counts.get(category) ?? 0;
-		if (count > bestCount) {
-			best = category;
-			bestCount = count;
-		}
-	}
-	return best;
+/**
+ * The `tools` row's single accent. Tool Constellation's seven-way per-category
+ * rainbow died with it — one row, one color, like every other segment.
+ */
+const TOOL_ACTIVITY_ACCENT: ThemeColor = "syntaxKeyword";
+
+/** The `tools` phrase in both detail levels: the headline total, then the reported categories. */
+function toolActivityPhrase(total: string, tallies: readonly string[]): string {
+	return tallies.length === 0 ? total : `${total} — ${tallies.join(" · ")}`;
 }
 
 /**
- * Tool Constellation segment. A dim resting row until the first `tool_call`
- * fires a star (`state.snapshot().stars.length > 0`) — mirrors
- * `ToolConstellationController`'s own mount policy. Its grid renderer is 3
- * rows tall and does not fit a one-row segment (Decision 1's first stated
- * exception), so both the widest and truncated simple-mode variants reuse
- * the exported `renderConstellationTally` instead — the widest variant over
- * every category that has fired, the truncated one over the dominant
- * category alone. Keeps the 7-way `CATEGORY_THEME_COLOR` rainbow: unlike
- * every other segment, there is no single accent slot to override here, so
- * this builder takes no `colors` parameter.
+ * Tool activity segment. A dim resting row until the first `tool_call` is
+ * recorded. Unlike its siblings there is no standalone widget to mirror: Tool
+ * Constellation was deleted outright (`omp-animations-buv.4`) and this row is
+ * the only surviving tool-activity surface, so the phrase is derived straight
+ * from {@link ToolActivityState}'s own summary rather than from an animation's
+ * exported renderer.
+ *
+ * The breakdown never names `read`/`write` — the `audit` row above it already
+ * reports those from the file ledger, and repeating them here would be the
+ * duplication this row exists to remove. They still count toward `total`.
+ * Variants and spans share one vocabulary via {@link toolActivityPhrase}; the
+ * simple-mode ladder just drops the tail the same way the detailed line's
+ * rightmost-first span degradation does: total + top-2, total + top-1, then
+ * the bare total.
  */
-/** Tool Constellation segment metadata for legend. */
-export const TOOL_CONSTELLATION_SEGMENT = {
-	id: "toolConstellation" as const,
+/** Tool activity segment metadata for legend. */
+export const TOOL_ACTIVITY_SEGMENT = {
+	id: "toolActivity" as const,
 	label: "tools",
-	description: "Tool call frequency by category",
+	description: "Tool call volume by category",
 } satisfies { id: BoxSegmentId; label: string; description: string };
 
-export function buildToolConstellationSegment(
-	state: ConstellationState,
-	_now: number,
-	theme: BoxTheme,
-	preset: SymbolPreset = "unicode",
-): SegmentSample {
-	const priority = priorityOf("toolConstellation");
-	const snapshot = state.snapshot();
-	if (snapshot.stars.length === 0) {
+export function buildToolActivitySegment(state: ToolActivityState, _now: number, _theme: BoxTheme): SegmentSample {
+	const priority = priorityOf("toolActivity");
+	const summary = state.summary();
+	if (summary.total === 0) {
 		return {
-			id: "toolConstellation",
+			id: "toolActivity",
 			priority,
 			...INACTIVE,
 			line: { dot: "idle", label: "tools", accent: "dim", spans: IDLE_SPANS },
 		};
 	}
 
-	const counts = state.categoryCounts();
-	const dominant = dominantCategory(counts);
-	const full = renderConstellationTally(counts, theme, preset);
-	const narrow =
-		dominant === undefined
-			? full
-			: renderConstellationTally(new Map([[dominant, counts.get(dominant) ?? 0]]), theme, preset);
-	const variants = dedupe([full, narrow]);
+	const total = `${summary.total} call${summary.total === 1 ? "" : "s"}`;
+	const tallies = summary.top.map(({ category, count }) => `${category} (${count})`);
+	const variants = dedupe([toolActivityPhrase(total, tallies), toolActivityPhrase(total, tallies.slice(0, 1)), total]);
 
-	// D3+D6: category icons are gone from the box; the phrase is the total plus
-	// a top-2 words tally — the dominant category appears there once and is
-	// repeated nowhere else. Stable sort keeps CATEGORY_ORDER as the tie-break,
-	// matching dominantCategory's own first-canonical-wins rule.
-	const total = [...counts.values()].reduce((sum, count) => sum + count, 0);
-	const top = CATEGORY_ORDER.filter(category => (counts.get(category) ?? 0) > 0)
-		.sort((a, b) => (counts.get(b) ?? 0) - (counts.get(a) ?? 0))
-		.slice(0, 2)
-		.map(category => `${category} (${counts.get(category)})`)
-		.join(" · ");
-
-	const spans: PhraseSpan[] = [{ key: "total", text: `${total} calls` }];
-	if (top.length > 0) spans.push({ key: "top", text: top, sep: " — " });
+	// One span per tally so the renderer's rightmost-first degradation walks the
+	// same ladder `variants` spells out, and a single category's count changing
+	// flashes only that category.
+	const spans: PhraseSpan[] = [
+		{ key: "total", text: total },
+		...summary.top.map(({ category, count }, index) => ({
+			key: `cat:${category}`,
+			text: `${category} (${count})`,
+			sep: index === 0 ? " — " : undefined,
+		})),
+	];
 
 	return {
-		id: "toolConstellation",
+		id: "toolActivity",
 		priority,
 		active: true,
 		variants,
-		line: {
-			dot: "live",
-			label: "tools",
-			accent: dominant === undefined ? "dim" : CATEGORY_THEME_COLOR[dominant],
-			spans,
-		},
+		line: { dot: "live", label: "tools", accent: TOOL_ACTIVITY_ACCENT, spans },
 	};
 }
 
@@ -658,7 +636,7 @@ export const REQUIRED_SEGMENT_REGISTRY = [
 	CACHE_METER_SEGMENT,
 	AUDIT_TRAIL_SEGMENT,
 	RATE_LIMIT_TIDEPOOL_SEGMENT,
-	TOOL_CONSTELLATION_SEGMENT,
+	TOOL_ACTIVITY_SEGMENT,
 	PALIMPSEST_SEGMENT,
 ] as const;
 

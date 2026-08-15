@@ -762,7 +762,7 @@ describe("AnimationsBoxController — rate-limit tidepool state wiring", () => {
 	});
 });
 
-describe("AnimationsBoxController — tool constellation state wiring", () => {
+describe("AnimationsBoxController — tool activity state wiring", () => {
 	it("the mounted widget starts on the resting row before any tool_call lands", () => {
 		const { ctx, calls } = recordingContext();
 		const controller = new AnimationsBoxController({
@@ -776,7 +776,7 @@ describe("AnimationsBoxController — tool constellation state wiring", () => {
 		widget.dispose();
 	});
 
-	it("onToolCall fires a star, flipping the segment to its active row", () => {
+	it("onToolCall counts the call, flipping the segment to its active row", () => {
 		const scheduler = manualScheduler();
 		const { ctx, calls } = recordingContext();
 		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
@@ -785,8 +785,22 @@ describe("AnimationsBoxController — tool constellation state wiring", () => {
 
 		controller.onToolCall(toolCall("read"), ctx);
 		const toolsRow = widget.renderFrame(69).find(row => row.includes("tools"));
-		expect(toolsRow).toBeDefined();
-		expect(toolsRow).not.toContain("—     ");
+		expect(toolsRow).toContain("1 call");
+		widget.dispose();
+	});
+
+	it("counts a file tool toward the total but never breaks it out — the audit row owns read/write", () => {
+		const scheduler = manualScheduler();
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall);
+
+		controller.onToolCall(toolCall("read"), ctx);
+		controller.onToolCall(toolCall("bash"), ctx);
+		const toolsRow = widget.renderFrame(69).find(row => row.includes("tools"));
+		expect(toolsRow).toContain("2 calls — bash (1)");
+		expect(toolsRow).not.toContain("read (");
 		widget.dispose();
 	});
 
@@ -991,7 +1005,7 @@ describe("AnimationsBoxController — grouped Audit Box composition", () => {
 				cacheMeter: false,
 				auditTrailBox: false,
 				rateLimitTidepool: false,
-				toolConstellation: false,
+				toolActivity: false,
 				palimpsest: false,
 			}),
 		});

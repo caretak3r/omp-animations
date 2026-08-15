@@ -22,15 +22,17 @@ describe("Audit Box segment groups", () => {
 			"cacheMeter",
 			"auditTrailBox",
 			"rateLimitTidepool",
-			"toolConstellation",
+			"toolActivity",
 			"palimpsest",
 		]);
 		expect(BOX_OPTIONAL_SEGMENT_IDS).toEqual(["cadenceEqualizer", "reflectionRipple", "agentBonsai"]);
 		expect(BOX_SEGMENT_IDS).toEqual([...BOX_REQUIRED_SEGMENT_IDS, ...BOX_OPTIONAL_STATUS_SEGMENT_IDS]);
 	});
 
-	it("covers every registrar status animation except border chrome exactly once", () => {
-		const expected = ALL_ANIMATION_IDS.filter(id => id !== "breathingBorder");
+	it("covers every registrar status animation except border chrome, plus the box-owned tally, exactly once", () => {
+		// `toolActivity` has no standalone animation: Tool Constellation was deleted and
+		// the box owns the tally outright (`omp-animations-buv.4`).
+		const expected = [...ALL_ANIMATION_IDS.filter(id => id !== "breathingBorder"), "toolActivity"];
 		expect(expected.sort()).toEqual([...BOX_SEGMENT_IDS].sort());
 		expect(new Set(BOX_SEGMENT_IDS).size).toBe(BOX_SEGMENT_IDS.length);
 	});
@@ -86,6 +88,20 @@ describe("resolveAnimationsBoxConfig — defaults and validation", () => {
 	it("ignores a stray animationsBoxOnly key entirely — the subset key was dropped, not just renamed", () => {
 		const config = resolveAnimationsBoxConfig({ animationsBoxOnly: "cacheMeter" });
 		for (const id of BOX_SEGMENT_IDS) expect(config.enabled[id]).toBe(true);
+	});
+
+	it("ignores a stored toolConstellation key — the deleted animation's setting changes nothing", () => {
+		// Tool Constellation was deleted in `omp-animations-buv.4`; the manifest key went
+		// with it. A settings file left over from an older install must resolve identically
+		// to one that never had the key, and must never disable the box-owned `tools` row.
+		expect(resolveAnimationsBoxConfig({ toolConstellation: false })).toEqual(resolveAnimationsBoxConfig({}));
+		expect(resolveAnimationsBoxConfig({ toolConstellation: false }).enabled.toolActivity).toBe(true);
+	});
+
+	it("ignores the deleted OMP_ANIMATIONS_TOOL_CONSTELLATION env fallback", () => {
+		expect(resolveAnimationsBoxConfigFromSources({}, { [animationsEnvKey("toolConstellation")]: "false" })).toEqual(
+			resolveAnimationsBoxConfigFromSources({}, {}),
+		);
 	});
 
 	it("breathingBorder defaults to enabled and resolves through the same raw key as the segment booleans (Decision 2)", () => {
@@ -154,7 +170,7 @@ describe("optional animation toggles", () => {
 			cacheMeter: false,
 			auditTrailBox: false,
 			rateLimitTidepool: false,
-			toolConstellation: false,
+			toolActivity: false,
 			palimpsest: false,
 		});
 		expect(Object.keys(config.optional)).toEqual([...BOX_OPTIONAL_SEGMENT_IDS]);

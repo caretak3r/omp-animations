@@ -52,7 +52,6 @@ import type { MotionSetting } from "./kit";
 import { createPalimpsestExtension } from "./palimpsest";
 import { createRateLimitTidepoolExtension } from "./rate-limit-tidepool";
 import { createReflectionRippleExtension } from "./reflection-ripple";
-import { createToolConstellationExtension } from "./tool-constellation";
 
 /** npm package name — the key the runtime plugin settings store files settings under. */
 export const PLUGIN_NAME = "@oh-my-pi/animations";
@@ -83,7 +82,7 @@ export interface MountContext {
 
 /** A single mountable animation: its settings id, label, and how to wire it. */
 export interface AnimationEntry {
-	/** Flat settings key that toggles this animation (e.g. `toolConstellation`). */
+	/** Flat settings key that toggles this animation (e.g. `cacheMeter`). */
 	id: string;
 	/** Human-facing label. */
 	title: string;
@@ -98,16 +97,13 @@ export interface AnimationEntry {
 /**
  * The config-driven registry of this package's shipped animations:
  * audit-trail-box, breathing-border, cache-meter, cadence-equalizer,
- * palimpsest, rate-limit-tidepool, reflection-ripple, and tool-constellation.
- * Agent Bonsai is an Audit Box group rather than an independent animation.
+ * palimpsest, rate-limit-tidepool, and reflection-ripple. Agent Bonsai is an
+ * Audit Box group rather than an independent animation, and the Audit Box's
+ * `tools` row is a box-owned tally with no standalone animation behind it
+ * (Tool Constellation was deleted in `omp-animations-buv.4`).
  *
  * Every shipped animation threads the resolved `<id>Placement`/`<id>AccentColor`
  * appearance record (see `appearance.ts`) straight through its factory.
- * `toolConstellation` is the one exception on the accent half: its star field is
- * colored by a seven-way per-category rainbow with no single overridable slot (see
- * its `index.ts`), so its factory only accepts `placement` — the resolved
- * `accentColor` still flows through the spread below for uniformity with every
- * other entry, but the factory itself ignores it.
  */
 export const ANIMATIONS: readonly AnimationEntry[] = [
 	{
@@ -160,13 +156,6 @@ export const ANIMATIONS: readonly AnimationEntry[] = [
 		defaultPlacement: "aboveEditor",
 		mount: (api, c) =>
 			createReflectionRippleExtension({ motionSetting: c.tier, ...c.appearance.reflectionRipple })(api),
-	},
-	{
-		id: "toolConstellation",
-		title: "Tool Constellation",
-		defaultPlacement: "belowEditor",
-		mount: (api, c) =>
-			createToolConstellationExtension({ motionSetting: c.tier, ...c.appearance.toolConstellation })(api),
 	},
 ];
 

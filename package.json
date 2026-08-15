@@ -398,22 +398,6 @@
 				],
 				"default": "default",
 				"env": "OMP_ANIMATIONS_REFLECTION_RIPPLE_ACCENT_COLOR"
-			},
-			"toolConstellation": {
-				"type": "boolean",
-				"description": "Mount Tool Constellation.",
-				"default": true,
-				"env": "OMP_ANIMATIONS_TOOL_CONSTELLATION"
-			},
-			"toolConstellationPlacement": {
-				"type": "enum",
-				"description": "Which side of the editor Tool Constellation mounts on. Applied at wire time (restart to change).",
-				"values": [
-					"aboveEditor",
-					"belowEditor"
-				],
-				"default": "belowEditor",
-				"env": "OMP_ANIMATIONS_TOOL_CONSTELLATION_PLACEMENT"
 			}
 		}
 	}

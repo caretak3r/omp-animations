@@ -100,7 +100,7 @@ describe("animations registrar", () => {
 			own.set(a.id, mount(only(a.id)).events.slice().sort());
 		}
 		// A representative subset of the shipped set.
-		const subset = ["breathingBorder", "cadenceEqualizer", "toolConstellation"];
+		const subset = ["breathingBorder", "cadenceEqualizer", "palimpsest"];
 		const got = mount(only(...subset))
 			.events.slice()
 			.sort();
@@ -125,7 +125,7 @@ describe("animations registrar", () => {
 	});
 
 	it("the excluded animations are not in the registrar's mounted set and register no listeners", () => {
-		// This package ships eight standalone animations; the other animation source
+		// This package ships seven standalone animations; the other animation source
 		// dirs from the broader oh-my-pi-animations suite were deliberately left out
 		// of the copy entirely (see package.json's description and this file's imports).
 		// They are not merely unregistered; their source does not exist in this repo.
@@ -157,7 +157,6 @@ describe("animations registrar", () => {
 				"palimpsest",
 				"rateLimitTidepool",
 				"reflectionRipple",
-				"toolConstellation",
 			].sort(),
 		);
 
@@ -299,6 +298,19 @@ describe("resolveAnimationsConfig", () => {
 		const cfg = resolveAnimationsConfig({ cacheMeter: false }, { OMP_ANIMATIONS_CACHE_METER: "true" });
 		expect(cfg.enabled.cacheMeter).toBe(false);
 	});
+
+	it("drops the deleted toolConstellation key: it never enters the enable map, stored or from env", () => {
+		// Tool Constellation is gone (`omp-animations-buv.4`). A stale settings file or a
+		// stale exported env var must resolve to the same config as a clean one, and must
+		// not resurrect an enable entry the registrar would then look up.
+		const stored = resolveAnimationsConfig({ toolConstellation: true }, {});
+		expect(Object.keys(stored.enabled)).toEqual(ALL_IDS);
+		expect(stored.enabled).toEqual(resolveAnimationsConfig({}, {}).enabled);
+		expect(resolveAnimationsConfig({}, { OMP_ANIMATIONS_TOOL_CONSTELLATION: "true" }).enabled).toEqual(
+			stored.enabled,
+		);
+		expect(mount({ toolConstellation: true }).events).toEqual(mount({}).events);
+	});
 });
 
 describe("readPluginSettingsSync", () => {
@@ -340,18 +352,18 @@ describe("readPluginSettingsSync", () => {
 
 	it("reads the global lockfile when no project override exists", () => {
 		const { home, cwd } = isolatedRoots();
-		writeGlobalLockfile(home, { animations: "subtle", toolConstellation: false });
-		expect(readPluginSettingsSync(cwd, home)).toEqual({ animations: "subtle", toolConstellation: false });
+		writeGlobalLockfile(home, { animations: "subtle", palimpsest: false });
+		expect(readPluginSettingsSync(cwd, home)).toEqual({ animations: "subtle", palimpsest: false });
 	});
 
 	it("project overrides win over the global lockfile, per key", () => {
 		const { home, cwd } = isolatedRoots();
-		writeGlobalLockfile(home, { animations: "full", toolConstellation: true, sessionBonsai: true });
-		writeProjectOverrides(cwd, { animations: "subtle", toolConstellation: false });
+		writeGlobalLockfile(home, { animations: "full", palimpsest: true, sessionBonsai: true });
+		writeProjectOverrides(cwd, { animations: "subtle", palimpsest: false });
 		const settings = readPluginSettingsSync(cwd, home);
 		// Project wins on contested keys...
 		expect(settings.animations).toBe("subtle");
-		expect(settings.toolConstellation).toBe(false);
+		expect(settings.palimpsest).toBe(false);
 		// ...and global still supplies keys the project override doesn't mention.
 		expect(settings.sessionBonsai).toBe(true);
 	});
@@ -427,23 +439,13 @@ describe("package.json#omp.settings — this package's native default", () => {
 		for (const id of excludedIds) expect(settings[id]).toBeUndefined();
 
 		// Exactly the tier setting + the 3 Animations Box settings + Agent Bonsai's
-		// Box-only toggle, then each standalone animation's enable and appearance
-		// keys. Tool Constellation has no single accent slot because its categories
-		// use a rainbow palette.
-		const accentCapableIds = ALL_IDS.filter(id => id !== "toolConstellation");
-		const appearanceKeys = [
-			...ALL_IDS.map(id => `${id}Placement`),
-			...accentCapableIds.map(id => `${id}AccentColor`),
-		];
+		// Box-only toggle, then each standalone animation's enable and appearance keys.
+		const appearanceKeys = [...ALL_IDS.map(id => `${id}Placement`), ...ALL_IDS.map(id => `${id}AccentColor`)];
 		const boxKeys = Object.values(BOX_SETTING_KEYS);
 		expect(Object.keys(settings).sort()).toEqual(
 			["animations", "agentBonsai", ...boxKeys, ...ALL_IDS, ...appearanceKeys].sort(),
 		);
-		const orderedAnimationKeys = ALL_IDS.flatMap(id => [
-			id,
-			`${id}Placement`,
-			...(id === "toolConstellation" ? [] : [`${id}AccentColor`]),
-		]);
+		const orderedAnimationKeys = ALL_IDS.flatMap(id => [id, `${id}Placement`, `${id}AccentColor`]);
 		const animationKeySet = new Set(orderedAnimationKeys);
 		expect(ALL_IDS).toEqual([...ALL_IDS].sort());
 		expect(Object.keys(settings).filter(key => animationKeySet.has(key))).toEqual(orderedAnimationKeys);

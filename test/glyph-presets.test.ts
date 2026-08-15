@@ -1,11 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import {
-	type GlyphKey,
-	resolveGlyph,
-	resolveGlyphRamp,
-	resolveRingGlyphRamp,
-	resolveStarGlyphRamp,
-} from "../src/glyph-presets";
+import { type GlyphKey, resolveGlyph, resolveGlyphRamp, resolveRingGlyphRamp } from "../src/glyph-presets";
 
 const ALL_KEYS: readonly GlyphKey[] = [
 	"border.ramp.0",
@@ -38,19 +32,6 @@ const ALL_KEYS: readonly GlyphKey[] = [
 	"auditTrail.status.redundant",
 	"auditTrail.status.cold",
 	"auditTrail.status.fresh",
-	"toolConstellation.star.0",
-	"toolConstellation.star.1",
-	"toolConstellation.star.2",
-	"toolConstellation.star.3",
-	"toolConstellation.comet",
-	"toolConstellation.empty",
-	"toolConstellation.category.read",
-	"toolConstellation.category.write",
-	"toolConstellation.category.bash",
-	"toolConstellation.category.search",
-	"toolConstellation.category.agent",
-	"toolConstellation.category.mcp",
-	"toolConstellation.category.other",
 	"rateLimitTidepool.water",
 	"rateLimitTidepool.waterShimmer",
 	"rateLimitTidepool.pebble",
@@ -83,19 +64,6 @@ describe("resolveGlyph — unicode preset (default, byte-identical to today's ha
 		expect(resolveGlyph("auditTrail.status.redundant", "unicode")).toBe("⟳");
 		expect(resolveGlyph("auditTrail.status.cold", "unicode")).toBe("❄\uFE0E");
 		expect(resolveGlyph("auditTrail.status.fresh", "unicode")).toBe("✓\uFE0E");
-		expect(resolveGlyph("toolConstellation.star.0", "unicode")).toBe("·");
-		expect(resolveGlyph("toolConstellation.star.1", "unicode")).toBe("•");
-		expect(resolveGlyph("toolConstellation.star.2", "unicode")).toBe("✦\uFE0E");
-		expect(resolveGlyph("toolConstellation.star.3", "unicode")).toBe("✹\uFE0E");
-		expect(resolveGlyph("toolConstellation.comet", "unicode")).toBe("☄\uFE0E");
-		expect(resolveGlyph("toolConstellation.empty", "unicode")).toBe("·");
-		expect(resolveGlyph("toolConstellation.category.read", "unicode")).toBe("⛏\uFE0E");
-		expect(resolveGlyph("toolConstellation.category.write", "unicode")).toBe("✎\uFE0E");
-		expect(resolveGlyph("toolConstellation.category.bash", "unicode")).toBe("↯");
-		expect(resolveGlyph("toolConstellation.category.search", "unicode")).toBe("◈");
-		expect(resolveGlyph("toolConstellation.category.agent", "unicode")).toBe("◆");
-		expect(resolveGlyph("toolConstellation.category.mcp", "unicode")).toBe("⬡");
-		expect(resolveGlyph("toolConstellation.category.other", "unicode")).toBe("∘");
 		expect(resolveGlyph("rateLimitTidepool.water", "unicode")).toBe("≈");
 		expect(resolveGlyph("rateLimitTidepool.waterShimmer", "unicode")).toBe("~");
 		expect(resolveGlyph("rateLimitTidepool.pebble", "unicode")).toBe("∘");
@@ -129,19 +97,6 @@ describe("resolveGlyph — ascii preset (exact 1-column substitutes, non-negotia
 		expect(resolveGlyph("auditTrail.status.redundant", "ascii")).toBe("~");
 		expect(resolveGlyph("auditTrail.status.cold", "ascii")).toBe("o");
 		expect(resolveGlyph("auditTrail.status.fresh", "ascii")).toBe("v");
-		expect(resolveGlyph("toolConstellation.star.0", "ascii")).toBe(".");
-		expect(resolveGlyph("toolConstellation.star.1", "ascii")).toBe(",");
-		expect(resolveGlyph("toolConstellation.star.2", "ascii")).toBe("*");
-		expect(resolveGlyph("toolConstellation.star.3", "ascii")).toBe("#");
-		expect(resolveGlyph("toolConstellation.comet", "ascii")).toBe("@");
-		expect(resolveGlyph("toolConstellation.empty", "ascii")).toBe(".");
-		expect(resolveGlyph("toolConstellation.category.read", "ascii")).toBe("^");
-		expect(resolveGlyph("toolConstellation.category.write", "ascii")).toBe("/");
-		expect(resolveGlyph("toolConstellation.category.bash", "ascii")).toBe("!");
-		expect(resolveGlyph("toolConstellation.category.search", "ascii")).toBe("<");
-		expect(resolveGlyph("toolConstellation.category.agent", "ascii")).toBe("#");
-		expect(resolveGlyph("toolConstellation.category.mcp", "ascii")).toBe("o");
-		expect(resolveGlyph("toolConstellation.category.other", "ascii")).toBe(".");
 		expect(resolveGlyph("rateLimitTidepool.water", "ascii")).toBe("~");
 		expect(resolveGlyph("rateLimitTidepool.waterShimmer", "ascii")).toBe("-");
 		expect(resolveGlyph("rateLimitTidepool.pebble", "ascii")).toBe(".");
@@ -164,8 +119,8 @@ describe("resolveGlyph — ascii preset (exact 1-column substitutes, non-negotia
 	/**
 	 * Per-widget within-surface collision guard: every distinct semantic glyph a single
 	 * widget can render side by side (e.g. Audit Trail's badge + all five status cells in
-	 * one row, or Tool Constellation's own star ramp + comet, or its own category-icon
-	 * tally) must stay visually distinct in ascii too — see `../src/glyph-presets.ts`'s
+	 * one row, or the Rate-Limit Tidepool's four water/shore cells) must stay visually
+	 * distinct in ascii too — see `../src/glyph-presets.ts`'s
 	 * `ASCII_GLYPHS` doc for the cross-widget exception (identical unicode glyphs, or
 	 * glyphs from widgets that never render together, may share a column).
 	 */
@@ -190,29 +145,6 @@ describe("resolveGlyph — ascii preset (exact 1-column substitutes, non-negotia
 			"auditTrail.status.fresh",
 		];
 		expect(distinctAsciiCount(auditTrailKeys)).toBe(auditTrailKeys.length);
-
-		// The star ramp + comet head render together in the grid; `empty` shares star.0's
-		// column deliberately (identical unicode glyph already, see module doc) so it is
-		// excluded from this particular distinctness check.
-		const starRampAndCometKeys: readonly GlyphKey[] = [
-			"toolConstellation.star.0",
-			"toolConstellation.star.1",
-			"toolConstellation.star.2",
-			"toolConstellation.star.3",
-			"toolConstellation.comet",
-		];
-		expect(distinctAsciiCount(starRampAndCometKeys)).toBe(starRampAndCometKeys.length);
-
-		const categoryIconKeys: readonly GlyphKey[] = [
-			"toolConstellation.category.read",
-			"toolConstellation.category.write",
-			"toolConstellation.category.bash",
-			"toolConstellation.category.search",
-			"toolConstellation.category.agent",
-			"toolConstellation.category.mcp",
-			"toolConstellation.category.other",
-		];
-		expect(distinctAsciiCount(categoryIconKeys)).toBe(categoryIconKeys.length);
 
 		const tidepoolKeys: readonly GlyphKey[] = [
 			"rateLimitTidepool.water",
@@ -252,25 +184,6 @@ describe("resolveGlyphRamp", () => {
 
 	it("nerd's ramp is identical to unicode's", () => {
 		expect(resolveGlyphRamp("nerd")).toEqual(resolveGlyphRamp("unicode"));
-	});
-});
-
-describe("resolveStarGlyphRamp", () => {
-	it("returns the unicode star ramp, dimmest to brightest, excluding the comet glyph", () => {
-		expect(resolveStarGlyphRamp("unicode")).toEqual(["·", "•", "✦\uFE0E", "✹\uFE0E"]);
-	});
-
-	it("returns the ascii star ramp in the same order, every entry one 7-bit column", () => {
-		const ramp = resolveStarGlyphRamp("ascii");
-		expect(ramp).toEqual([".", ",", "*", "#"]);
-		for (const glyph of ramp) {
-			expect(glyph).toHaveLength(1);
-			expect(glyph.charCodeAt(0)).toBeLessThan(128);
-		}
-	});
-
-	it("nerd's ramp is identical to unicode's", () => {
-		expect(resolveStarGlyphRamp("nerd")).toEqual(resolveStarGlyphRamp("unicode"));
 	});
 });
 

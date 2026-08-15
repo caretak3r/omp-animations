@@ -1,9 +1,9 @@
 # @oh-my-pi/animations
 
 `@oh-my-pi/animations` is one [oh-my-pi](https://omp.sh) plugin. It offers
-eight animation signals plus Agent Bonsai from the current agent session.
+seven animation signals plus Agent Bonsai from the current agent session.
 The signals share one consolidated [Animations Box](#the-animations-box) by
-default. The eight animation signals can also use separate ambient widgets.
+default. The seven animation signals can also use separate ambient widgets.
 The plugin uses a vendored `pi-animation` kit (`src/kit/`). Every widget
 respects a shared motion tier. Motion turns off on a non-TTY terminal, under
 `NO_COLOR`, in CI, or when the terminal falls behind on rendering.
@@ -57,23 +57,21 @@ headers; every other provider stays invisible.
 interrupts generation to apply a matched rule. The ripple expands outward and
 the row dims briefly, then the widget disappears once the ripple settles.
 
-**Tool Constellation.** Shows the session's tool use as a star map. Each tool
-type is a fixed star. A tool call lights up its star and draws a line from the
-star of the previously used tool, so the shape of a session's work builds up
-over time.
-
 ## The Animations Box
 
 By default, the plugin draws its signals as one bordered box instead of
 separate rows. The box sits above or below the editor, next to the status
 bar. It shows five fixed summaries for cache use, file trust, rate-limit
-headroom, tool use, and edit hotspots. Cadence, Reflection, and Agent Bonsai
-are optional groups. The border breathes with the agent's work rhythm.
+headroom, tool use, and edit hotspots. The tool summary belongs to the box
+alone: it counts every tool call and names the two busiest tool categories.
+It never names reads or writes, because the file summary owns those counts.
+Cadence, Reflection, and Agent Bonsai are optional groups. The border
+breathes with the agent's work rhythm.
 
 The `display` setting picks how the plugin shows its signals:
 
 - `box` (default) — one consolidated box.
-- `rows` — separate rows for the eight standalone animations. Agent Bonsai
+- `rows` — separate rows for the seven standalone animations. Agent Bonsai
   does not render in this mode.
 - `both` — standalone rows and the box together. Use this to compare them.
 
@@ -81,6 +79,9 @@ Each standalone animation's enable setting (`auditTrailBox`, `cacheMeter`,
 and more) controls its row. In `box` mode, those settings control the matching
 Box summary or optional status row. The `agentBonsai` setting controls its
 Box-only group.
+
+The tool summary has no setting of its own. It is part of the box, and no
+standalone animation stands behind it.
 
 Three more settings shape the box:
 
@@ -127,9 +128,9 @@ environment fallback for scripts and CI:
   or `full`. The default is `subtle`. The environment fallback is
   `OMP_ANIMATIONS`.
 - One boolean per standalone animation — `auditTrailBox`, `breathingBorder`,
-  `cacheMeter`, `cadenceEqualizer`, `palimpsest`, `rateLimitTidepool`,
-  `reflectionRipple`, and `toolConstellation`. Each defaults to `true`. Each
-  environment fallback follows the pattern `OMP_ANIMATIONS_<ID>`.
+  `cacheMeter`, `cadenceEqualizer`, `palimpsest`, `rateLimitTidepool`, and
+  `reflectionRipple`. Each defaults to `true`. Each environment fallback
+  follows the pattern `OMP_ANIMATIONS_<ID>`.
 - Three settings for [the Animations Box](#the-animations-box): `display`
   (`rows` / `box` / `both`, default `box`, environment fallback
   `OMP_ANIMATIONS_DISPLAY`), `animationsBoxDetail` (`simple` / `detailed`,
@@ -143,7 +144,7 @@ Use `omp plugin config` to read and change these settings:
 
 ```bash
 omp plugin config set @oh-my-pi/animations animations subtle
-omp plugin config set @oh-my-pi/animations toolConstellation false
+omp plugin config set @oh-my-pi/animations cadenceEqualizer false
 omp plugin config list @oh-my-pi/animations
 ```
 

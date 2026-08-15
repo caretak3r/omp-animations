@@ -6,10 +6,11 @@ import {
 	buildPalimpsestSegment,
 	buildRateLimitTidepoolSegment,
 	buildReflectionRippleSegment,
-	buildToolConstellationSegment,
+	buildToolActivitySegment,
 } from "../src/animations-box/segments";
 import { BOX_SEGMENT_IDS } from "../src/animations-box/settings";
 import type { PhraseSpan } from "../src/animations-box/status-line";
+import { ToolActivityState } from "../src/animations-box/tool-activity";
 import {
 	AUDIT_TRAIL_BOX_COLORS,
 	AuditLedgerState,
@@ -29,7 +30,6 @@ import { MAX_REFERENCE_RATE } from "../src/cadence-equalizer/scale";
 import { GLOW_THRESHOLD, PALIMPSEST_COLORS, PalimpsestState } from "../src/palimpsest";
 import { RateLimitTidepoolState, refillLevel, renderTidepoolRow, TIDEPOOL_COLORS } from "../src/rate-limit-tidepool";
 import { REFLECTION_RIPPLE_COLORS, ReflectionRippleState, renderReflectionRippleRow } from "../src/reflection-ripple";
-import { CATEGORY_THEME_COLOR, ConstellationState, renderConstellationTally } from "../src/tool-constellation";
 
 // Identity theme so variant assertions see plain text instead of ANSI escapes.
 // Builders emit PLAIN spans (Plan 018) — the theme only ever reaches the
@@ -576,26 +576,26 @@ describe("buildRateLimitTidepoolSegment — dot escalation (D6: alerts persist, 
 	});
 });
 
-describe("buildToolConstellationSegment — priority", () => {
-	it("derives its priority from toolConstellation's position in BOX_SEGMENT_IDS, never a hardcoded literal", () => {
-		const sample = buildToolConstellationSegment(new ConstellationState(), 0, idTheme);
-		expect(sample.priority).toBe(BOX_SEGMENT_IDS.indexOf("toolConstellation") + 1);
+describe("buildToolActivitySegment — priority", () => {
+	it("derives its priority from toolActivity's position in BOX_SEGMENT_IDS, never a hardcoded literal", () => {
+		const sample = buildToolActivitySegment(new ToolActivityState(), 0, idTheme);
+		expect(sample.priority).toBe(BOX_SEGMENT_IDS.indexOf("toolActivity") + 1);
 	});
 
-	it("id is always toolConstellation", () => {
-		expect(buildToolConstellationSegment(new ConstellationState(), 0, idTheme).id).toBe("toolConstellation");
+	it("id is always toolActivity", () => {
+		expect(buildToolActivitySegment(new ToolActivityState(), 0, idTheme).id).toBe("toolActivity");
 	});
 });
 
-describe("buildToolConstellationSegment — resting line (Decision 5: enabled-but-idle, never absent)", () => {
+describe("buildToolActivitySegment — resting line (Decision 5: enabled-but-idle, never absent)", () => {
 	it("is inactive with empty variants before any tool_call has fired", () => {
-		const sample = buildToolConstellationSegment(new ConstellationState(), 0, idTheme);
+		const sample = buildToolActivitySegment(new ToolActivityState(), 0, idTheme);
 		expect(sample.active).toBe(false);
 		expect(sample.variants).toEqual([]);
 	});
 
 	it("still renders a full resting line: idle dot, label 'tools', dim accent, lone dim em-dash", () => {
-		const sample = buildToolConstellationSegment(new ConstellationState(), 0, idTheme);
+		const sample = buildToolActivitySegment(new ToolActivityState(), 0, idTheme);
 		expect(sample.line).toEqual({
 			dot: "idle",
 			label: "tools",
@@ -605,72 +605,69 @@ describe("buildToolConstellationSegment — resting line (Decision 5: enabled-bu
 	});
 });
 
-describe("buildToolConstellationSegment — active line", () => {
-	it("collapses to a single variant when only one category has fired (full and truncated coincide)", () => {
-		const state = new ConstellationState();
-		state.recordFire("read", 0);
-		const sample = buildToolConstellationSegment(state, 0, idTheme);
+describe("buildToolActivitySegment — active line", () => {
+	function stateWith(...toolNames: readonly string[]): ToolActivityState {
+		const state = new ToolActivityState();
+		for (const name of toolNames) state.record(name);
+		return state;
+	}
+
+	it("total span counts every call, file tools included — the audit row owns their breakdown, not their existence", () => {
+		const sample = buildToolActivitySegment(stateWith("read", "read", "bash"), 0, idTheme);
 		expect(sample.active).toBe(true);
-		expect(sample.variants).toEqual([renderConstellationTally(state.categoryCounts(), idTheme)]);
-	});
-
-	it("keeps two variants — the full rainbow tally, then the dominant category alone — once more than one category has fired", () => {
-		const state = new ConstellationState();
-		for (let i = 0; i < 5; i++) state.recordFire("read", 0);
-		state.recordFire("write", 0);
-		state.recordFire("edit", 0); // normalizes to "write" alongside the category above
-		const sample = buildToolConstellationSegment(state, 0, idTheme);
-
-		const counts = state.categoryCounts();
-		const full = renderConstellationTally(counts, idTheme);
-		const narrow = renderConstellationTally(new Map([["read", counts.get("read") ?? 0]]), idTheme);
-		expect(sample.variants).toEqual([full, narrow]);
-	});
-
-	it("breaks a tied fire count by CATEGORY_ORDER, not insertion order", () => {
-		const state = new ConstellationState();
-		state.recordFire("write", 0); // categorizes to "write", fired first
-		state.recordFire("read", 0); // categorizes to "read", fired second, but read precedes write in CATEGORY_ORDER
-		const sample = buildToolConstellationSegment(state, 0, idTheme);
-		expect(sample.line.spans[1]).toEqual({ key: "top", text: "read (1) · write (1)", sep: " — " });
-	});
-
-	it("total span is the total fire count across every category", () => {
-		const state = new ConstellationState();
-		state.recordFire("read", 0);
-		state.recordFire("read", 0);
-		state.recordFire("bash", 0);
-		const sample = buildToolConstellationSegment(state, 0, idTheme);
 		expect(sample.line.dot).toBe("live");
 		expect(sample.line.spans[0]).toEqual({ key: "total", text: "3 calls" });
 	});
 
-	it("top span is the top-2 plain-word tally with counts, em-dash separated, never a third entry (D3)", () => {
-		const state = new ConstellationState();
-		state.recordFire("read", 0);
-		state.recordFire("read", 0);
-		state.recordFire("bash", 0);
-		state.recordFire("search", 0);
-		const sample = buildToolConstellationSegment(state, 0, idTheme);
-		expect(sample.line.spans[1]).toEqual({ key: "top", text: "read (2) · bash (1)", sep: " — " });
-		expect(sample.line.spans).toHaveLength(2); // no icon tally span — the dominant appears exactly once
+	it("singularizes a lone call", () => {
+		expect(buildToolActivitySegment(stateWith("bash"), 0, idTheme).line.spans[0]?.text).toBe("1 call");
 	});
 
-	it("accents the line with the dominant category's CATEGORY_THEME_COLOR — no accent override slot exists for this segment", () => {
-		const state = new ConstellationState();
-		state.recordFire("read", 0);
-		const sample = buildToolConstellationSegment(state, 0, idTheme);
-		expect(sample.line.accent).toBe(CATEGORY_THEME_COLOR.read);
+	it("never names read or write in the breakdown — that is the audit row's duplication this row removes", () => {
+		const sample = buildToolActivitySegment(stateWith("read", "read", "read", "edit", "bash"), 0, idTheme);
+		expect(sample.line.spans.map(span => span.key)).toEqual(["total", "cat:bash"]);
+		expect(sample.variants).toEqual(["5 calls — bash (1)", "5 calls"]);
 	});
-});
 
-describe("buildToolConstellationSegment — glyph preset", () => {
-	it("forwards the preset into the simple-mode variants only — the status line carries no icons (D3)", () => {
-		const state = new ConstellationState();
-		state.recordFire("read", 0);
-		const active = buildToolConstellationSegment(state, 0, idTheme, "ascii");
-		expect(active.variants[0]).toContain("^"); // read -> "^" in ascii
-		expect(active.line.spans.map(span => span.key)).toEqual(["total", "top"]);
+	it("collapses to the bare total when only file tools have fired", () => {
+		const sample = buildToolActivitySegment(stateWith("read", "write"), 0, idTheme);
+		expect(sample.variants).toEqual(["2 calls"]);
+		expect(sample.line.spans).toEqual([{ key: "total", text: "2 calls" }]);
+	});
+
+	it("orders the breakdown busiest-first and caps it at two categories (TOP_CATEGORY_LIMIT)", () => {
+		const sample = buildToolActivitySegment(
+			stateWith("grep", "glob", "grep", "bash", "task", "task", "task", "task"),
+			0,
+			idTheme,
+		);
+		expect(sample.line.spans).toEqual([
+			{ key: "total", text: "8 calls" },
+			{ key: "cat:agent", text: "agent (4)", sep: " — " },
+			{ key: "cat:search", text: "search (3)", sep: undefined },
+		]);
+	});
+
+	it("breaks a tied count by REPORTED_CATEGORIES order, not insertion order", () => {
+		const sample = buildToolActivitySegment(stateWith("task", "bash"), 0, idTheme);
+		expect(sample.line.spans.map(span => span.text)).toEqual(["2 calls", "bash (1)", "agent (1)"]);
+	});
+
+	it("routes mcp bridge names to the mcp category and unknown tools to other", () => {
+		const sample = buildToolActivitySegment(stateWith("mcp__qmd_query", "some_plugin_tool"), 0, idTheme);
+		expect(sample.line.spans.map(span => span.text)).toEqual(["2 calls", "mcp (1)", "other (1)"]);
+	});
+
+	it("spells the simple-mode ladder with the same phrase the detailed line renders, dropping the tail first", () => {
+		const sample = buildToolActivitySegment(stateWith("bash", "bash", "grep"), 0, idTheme);
+		expect(sample.variants).toEqual(["3 calls — bash (2) · search (1)", "3 calls — bash (2)", "3 calls"]);
+	});
+
+	it("uses one accent for the whole row — the deleted constellation's per-category rainbow is gone", () => {
+		const bash = buildToolActivitySegment(stateWith("bash"), 0, idTheme);
+		const agent = buildToolActivitySegment(stateWith("task"), 0, idTheme);
+		expect(bash.line.accent).toBe(agent.line.accent);
+		expect(bash.line.accent).not.toBe("dim");
 	});
 });
 

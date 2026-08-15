@@ -23,4 +23,3 @@ export { createPalimpsestExtension } from "./palimpsest";
 export { createRateLimitTidepoolExtension } from "./rate-limit-tidepool";
 export { createReflectionRippleExtension } from "./reflection-ripple";
 export * from "./registrar";
-export { createToolConstellationExtension } from "./tool-constellation";

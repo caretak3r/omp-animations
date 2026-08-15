@@ -31,7 +31,7 @@ import {
 	buildPalimpsestSegment,
 	buildRateLimitTidepoolSegment,
 	buildReflectionRippleSegment,
-	buildToolConstellationSegment,
+	buildToolActivitySegment,
 	type SegmentSample,
 } from "../src/animations-box/segments";
 import {
@@ -49,6 +49,7 @@ import {
 	renderStatusLine,
 	type StatusLineContext,
 } from "../src/animations-box/status-line";
+import { ToolActivityState } from "../src/animations-box/tool-activity";
 import { AnimationsBoxWidget, BOX_BORDER_COLS, BOX_BORDER_ROWS } from "../src/animations-box/widget";
 import { AuditLedgerState, POISON_STREAK_TICKS } from "../src/audit-trail-box";
 import { CacheMeterState } from "../src/cache-meter";
@@ -57,7 +58,6 @@ import { AnimationHost, composeSegments, type FrameScheduler, MotionPolicy, segm
 import { PalimpsestState } from "../src/palimpsest";
 import { RateLimitTidepoolState } from "../src/rate-limit-tidepool";
 import { ReflectionRippleState } from "../src/reflection-ripple";
-import { ConstellationState } from "../src/tool-constellation";
 
 // Identity theme so goldens pin plain text instead of ANSI escapes.
 const idTheme = { fg: (_color: string, text: string) => text };
@@ -204,7 +204,7 @@ function toolCall(toolName: string, toolCallId: string): ToolCallEvent {
 /**
  * Drive the controller through its real event handlers + one scheduler tick
  * to build a representative "5 of 7 active" scene: cache meter, cadence,
- * audit trail, rate-limit tidepool and tool constellation go active; palimpsest
+ * audit trail, rate-limit tidepool and tool activity go active; palimpsest
  * and reflection ripple stay on their resting rows — matching Decision 5's own
  * detailed-mode mock's activation pattern.
  */
@@ -229,6 +229,7 @@ function driveFullBox(detail: BoxDetail): AnimationsBoxWidget {
 	controller.onMessageStart(assistantMessageStart(50, 500), ctx); // reveals the provider to tidepool's pending headers
 	controller.onToolCall(toolCall("write", "tc-1"), ctx);
 	controller.onToolCall(toolCall("read", "tc-2"), ctx);
+	controller.onToolCall(toolCall("bash", "tc-3"), ctx); // the one non-file call: the tools row's whole breakdown
 
 	// One tick so cadence's EMA bands step off zero — mirrors the real per-frame pipeline.
 	scheduler.advance(50);
@@ -243,7 +244,7 @@ function restingSamples(): SegmentSample[] {
 		buildCacheMeterSegment(new CacheMeterState(), 0, idTheme),
 		buildAuditTrailBoxSegment(new AuditLedgerState(), 0, idTheme),
 		buildRateLimitTidepoolSegment(new RateLimitTidepoolState(), 0, idTheme),
-		buildToolConstellationSegment(new ConstellationState(), 0, idTheme),
+		buildToolActivitySegment(new ToolActivityState(), 0, idTheme),
 		buildPalimpsestSegment(new PalimpsestState(), 0, idTheme),
 		buildCadenceEqualizerSegment(new CadenceEqualizerState(), false, null, 0, idTheme),
 		buildReflectionRippleSegment(new ReflectionRippleState(), 0, idTheme),
@@ -272,9 +273,9 @@ function activeSamples(): SegmentSample[] {
 		observedAtMs: 0,
 	});
 
-	const constellationState = new ConstellationState();
-	constellationState.recordFire("write", 0);
-	constellationState.recordFire("read", 0);
+	const toolActivityState = new ToolActivityState();
+	toolActivityState.record("write");
+	toolActivityState.record("bash");
 
 	const palimpsestState = new PalimpsestState();
 	palimpsestState.applySpans("/repo/src/foo.ts", [{ start: 1, end: 5 }]);
@@ -287,7 +288,7 @@ function activeSamples(): SegmentSample[] {
 		buildCacheMeterSegment(cacheMeterState, 0, idTheme),
 		buildAuditTrailBoxSegment(auditState, 0, idTheme),
 		buildRateLimitTidepoolSegment(tidepoolState, 0, idTheme),
-		buildToolConstellationSegment(constellationState, 0, idTheme),
+		buildToolActivitySegment(toolActivityState, 0, idTheme),
 		buildPalimpsestSegment(palimpsestState, 0, idTheme),
 		buildCadenceEqualizerSegment(new CadenceEqualizerState(), true, 100, 0, idTheme),
 		buildReflectionRippleSegment(reflectionRippleState, 0, idTheme),
@@ -328,7 +329,7 @@ describe("AnimationsBoxController + AnimationsBoxWidget — full-box golden fram
 			`${"│ ●  cache    50% hit · 1/1   400 uncached".padEnd(68)}│`,
 			`${"│ ◐  audit    1 read · 1 write · 1 edited   widget.ts".padEnd(68)}│`,
 			"│ ●  limits   78% left · resets 12m · anthropic                     │",
-			"│ ●  tools    2 calls — read (1) · write (1)                        │",
+			"│ ●  tools    3 calls — bash (1)                                    │",
 			"│ ○  files    —                                                     │",
 			"╰───────────────────────────────────────────────────────────────────╯",
 		]);
@@ -338,7 +339,7 @@ describe("AnimationsBoxController + AnimationsBoxWidget — full-box golden fram
 			`${"│ ●  cache    50% hit · 1/1   400 uncached".padEnd(44)}│`,
 			"│ ◐  audit    1 read · 1 write · 1 edited   │",
 			"│ ●  limits   78% left · resets 12m         │",
-			"│ ●  tools    2 calls                       │",
+			"│ ●  tools    3 calls — bash (1)            │",
 			"│ ○  files    —                             │",
 			"╰───────────────────────────────────────────╯",
 		]);
@@ -348,7 +349,7 @@ describe("AnimationsBoxController + AnimationsBoxWidget — full-box golden fram
 			`${"│ ●  cache    50% hit · 1/1   400 uncached".padEnd(119)}│`,
 			`${"│ ◐  audit    1 read · 1 write · 1 edited   widget.ts".padEnd(119)}│`,
 			"│ ●  limits   78% left · resets 12m · anthropic                                                                        │",
-			"│ ●  tools    2 calls — read (1) · write (1)                                                                           │",
+			"│ ●  tools    3 calls — bash (1)                                                                                       │",
 			"│ ○  files    —                                                                                                        │",
 			"╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
 		]);
@@ -361,19 +362,19 @@ describe("AnimationsBoxController + AnimationsBoxWidget — full-box golden fram
 
 		expect(widget.renderFrame(69)).toEqual([
 			"╭───────────────────────────────────────────────────────────────────╮",
-			"│ ▤ H 50.0% (1/1) ▅ R 600 W 200 M 400 · ▣ 1✎\uFE0E · 78% · ⛏\uFE0E 1 · ✎\uFE0E 1      │",
+			"│ ▤ H 50.0% (1/1) ▅ R 600 W 200 M 400 · ▣ 1✎\uFE0E · 78% · 3 calls        │",
 			"╰───────────────────────────────────────────────────────────────────╯",
 		]);
 
 		expect(widget.renderFrame(45)).toEqual([
 			"╭───────────────────────────────────────────╮",
-			"│ ▤ 50.0% · ▣ 1✎\uFE0E · 78% · ⛏\uFE0E 1 · ✎\uFE0E 1          │",
+			"│ ▤ 50.0% · ▣ 1✎\uFE0E · 78% · 3 calls — bash (1) │",
 			"╰───────────────────────────────────────────╯",
 		]);
 
 		expect(widget.renderFrame(120)).toEqual([
 			"╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
-			"│ ▤ HIT 50.0% (1/1) ▅ READ 600 WRITE 200 MISS 400 · ▣ 1✎\uFE0E r/w 1/1 ×1.0 ↻0% · ≈≈≈≈≈≈≈≈∘∘ 78% anthropic · ⛏\uFE0E 1 · ✎\uFE0E 1       │",
+			"│ ▤ HIT 50.0% (1/1) ▅ READ 600 WRITE 200 MISS 400 · ▣ 1✎\uFE0E r/w 1/1 ×1.0 ↻0% · ≈≈≈≈≈≈≈≈∘∘ 78% anthropic · 3 calls         │",
 			"╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
 		]);
 
@@ -589,11 +590,12 @@ describe("kit composeSegments — degradation ladder at 45/69/120 in simple mode
 
 	// At the maintainer's real pane (69) and the wide surface (120), every segment's
 	// narrowest variant still fits — nothing is dropped. At 45 the combined narrowest
-	// widths no longer fit, so the composer drops the single lowest-priority segment
-	// (reflectionRipple, priority 7 — last in BOX_SEGMENT_IDS) and keeps everyone else.
+	// widths no longer fit, so the composer drops the two lowest-priority segments
+	// (reflectionRipple, priority 7, then cadenceEqualizer, priority 6) and keeps the
+	// five required summaries.
 	const LADDER: Record<number, readonly BoxSegmentId[]> = {
 		69: BOX_SEGMENT_IDS,
-		45: BOX_SEGMENT_IDS.slice(0, -1),
+		45: BOX_SEGMENT_IDS.slice(0, -2),
 		120: BOX_SEGMENT_IDS,
 	};
 
@@ -609,9 +611,11 @@ describe("kit composeSegments — degradation ladder at 45/69/120 in simple mode
 		}
 	});
 
-	it("the lowest-priority segment (reflectionRipple) is the first — and here the only — one to drop as width tightens", () => {
+	it("the lowest-priority segments (reflectionRipple, then cadenceEqualizer) are the first to drop as width tightens", () => {
 		expect(LADDER[69]).toContain("reflectionRipple");
 		expect(LADDER[120]).toContain("reflectionRipple");
 		expect(LADDER[45]).not.toContain("reflectionRipple");
+		expect(LADDER[45]).not.toContain("cadenceEqualizer");
+		expect(LADDER[45]).toContain("palimpsest");
 	});
 });

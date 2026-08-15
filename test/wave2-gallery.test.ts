@@ -12,7 +12,6 @@ import type {
 	ExtensionWidgetOptions,
 	MessageEndEvent,
 	MessageStartEvent,
-	ToolCallEvent,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 import type { Theme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import { type AuditTrailBoxContext, AuditTrailBoxController } from "../src/audit-trail-box/controller";
@@ -22,7 +21,6 @@ import { type CadenceEqualizerContext, CadenceEqualizerController } from "../src
 import { type PalimpsestContext, PalimpsestController } from "../src/palimpsest/controller";
 import { RateLimitTidepoolController, type TidepoolContext } from "../src/rate-limit-tidepool/controller";
 import { type ReflectionRippleContext, ReflectionRippleController } from "../src/reflection-ripple/controller";
-import { type ToolConstellationContext, ToolConstellationController } from "../src/tool-constellation/controller";
 
 // Identity theme so assertions see plain text instead of ANSI escapes. Palimpsest's theme
 // additionally needs `underline`/`bold`; every other feature's theme type is a subset of
@@ -45,7 +43,6 @@ const EXPECTED_PLACEMENT: Record<string, "aboveEditor" | "belowEditor"> = {
 	palimpsest: "belowEditor",
 	"rate-limit-tidepool": "belowEditor",
 	"reflection-ripple": "aboveEditor",
-	"tool-constellation": "belowEditor",
 };
 
 const REGISTRATION_ORDER = Object.keys(EXPECTED_PLACEMENT);
@@ -66,10 +63,6 @@ function rule(name: string): Rule {
 		content: "",
 		_source: { provider: "test", providerName: "Test", path: `/rules/${name}.md`, level: "project" },
 	};
-}
-
-function toolCallEvent(toolName: string, toolCallId = "1"): ToolCallEvent {
-	return { type: "tool_call", toolCallId, toolName, input: {} } as ToolCallEvent;
 }
 
 function assistantMessage(output: number): MessageStartEvent["message"] {
@@ -224,13 +217,6 @@ function mountGallery(): MountedGallery {
 		const controller = new ReflectionRippleController();
 		controller.onTtsrTriggered({ type: "ttsr_triggered", rules: [rule("no-console-log")] }, ctx);
 		disposers.push({ feature: "reflection-ripple", dispose: () => controller.dispose(ctx) });
-	}
-
-	{
-		const ctx: ToolConstellationContext = { ...base, setWidget: widget("tool-constellation") };
-		const controller = new ToolConstellationController();
-		controller.onToolCall(toolCallEvent("bash"), ctx);
-		disposers.push({ feature: "tool-constellation", dispose: () => controller.dispose(ctx) });
 	}
 
 	return { calls, disposers };

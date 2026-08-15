@@ -19,7 +19,7 @@
  * box does not reproduce (see `segments.ts`'s own doc) — the ledger
  * accounting itself comes through unmodified.
  *
- * Cache Meter (`oh-my-pi-dxi.2`), Audit Trail, Tool Constellation and
+ * Cache Meter (`oh-my-pi-dxi.2`), Audit Trail and
  * Palimpsest (`oh-my-pi-dxi.3`) are wired here the same way: a fresh `*State`
  * instance owned by this controller, fed by event handlers that reproduce
  * each standalone controller's own adapter logic where it isn't exported
@@ -96,7 +96,6 @@ import { AnimationHost, backpressureFromTui, DEFAULT_FRAME_SCHEDULER, MotionPoli
 import { PalimpsestState, parseHunkSpans } from "../palimpsest";
 import { familyForProvider, RateLimitTidepoolState, readRateLimitHeaders } from "../rate-limit-tidepool";
 import { ReflectionRippleState } from "../reflection-ripple";
-import { ConstellationState } from "../tool-constellation";
 import {
 	type BoxTheme,
 	buildAuditTrailBoxSegment,
@@ -105,10 +104,11 @@ import {
 	buildPalimpsestSegment,
 	buildRateLimitTidepoolSegment,
 	buildReflectionRippleSegment,
-	buildToolConstellationSegment,
+	buildToolActivitySegment,
 	type SegmentSample,
 } from "./segments";
 import type { AnimationsBoxConfig } from "./settings";
+import { ToolActivityState } from "./tool-activity";
 import { type AnimationsBoxSampleGroups, AnimationsBoxWidget } from "./widget";
 
 /** Namespaced per the native-vs-plugin key-collision memory — never a keeper's own `WIDGET_KEY` (only 2 of 8 even export theirs). */
@@ -262,7 +262,7 @@ export class AnimationsBoxController {
 	#auditTrailState: AuditLedgerState;
 	#ownsAuditTrailState: boolean;
 	#agentBonsai: AgentBonsaiController | undefined;
-	#constellationState: ConstellationState = new ConstellationState();
+	#toolActivityState: ToolActivityState = new ToolActivityState();
 	#palimpsestState: PalimpsestState = new PalimpsestState();
 	#cadenceState: CadenceEqualizerState = new CadenceEqualizerState();
 	#tidepoolState: RateLimitTidepoolState = new RateLimitTidepoolState();
@@ -396,7 +396,7 @@ export class AnimationsBoxController {
 			buildCacheMeterSegment(this.#cacheMeterState, now, theme, undefined, this.#glyphPreset),
 			buildAuditTrailBoxSegment(this.#auditTrailState, now, theme, undefined, this.#glyphPreset),
 			buildRateLimitTidepoolSegment(this.#tidepoolState, now, theme, undefined, this.#glyphPreset),
-			buildToolConstellationSegment(this.#constellationState, now, theme, this.#glyphPreset),
+			buildToolActivitySegment(this.#toolActivityState, now, theme),
 			buildPalimpsestSegment(this.#palimpsestState, now, theme, undefined, this.#glyphPreset),
 		];
 		const optional: SegmentSample[] = [];
@@ -546,10 +546,10 @@ export class AnimationsBoxController {
 		}
 	}
 
-	/** `tool_call`: fire (or refresh) Tool Constellation's star for this tool. */
+	/** `tool_call`: count this call toward the box-owned `tools` tally. */
 	onToolCall(event: ToolCallEvent, ctx: Pick<AnimationsBoxContext, "hasUI">): void {
 		if (!ctx.hasUI) return;
-		this.#constellationState.recordFire(event.toolName, this.#scheduler.now());
+		this.#toolActivityState.record(event.toolName);
 	}
 
 	/**
@@ -624,7 +624,7 @@ export class AnimationsBoxController {
 	 * teardown leak) rather than a fresh instance. Rate-Limit Tidepool's own
 	 * `session_switch` wiring also resets to a fresh instance and drops its
 	 * pending header buffer (`RateLimitTidepoolController.dispose`) — mirrored
-	 * the same way here. Tool Constellation, Palimpsest, Cadence Equalizer and
+	 * the same way here. Palimpsest, Cadence Equalizer and
 	 * Reflection Ripple wire no `session_switch` handler at all in their own
 	 * standalone extensions, so their state is deliberately left untouched
 	 * here too.

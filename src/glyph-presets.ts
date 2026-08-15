@@ -50,19 +50,6 @@ export type GlyphKey =
 	| "auditTrail.status.redundant"
 	| "auditTrail.status.cold"
 	| "auditTrail.status.fresh"
-	| "toolConstellation.star.0"
-	| "toolConstellation.star.1"
-	| "toolConstellation.star.2"
-	| "toolConstellation.star.3"
-	| "toolConstellation.comet"
-	| "toolConstellation.empty"
-	| "toolConstellation.category.read"
-	| "toolConstellation.category.write"
-	| "toolConstellation.category.bash"
-	| "toolConstellation.category.search"
-	| "toolConstellation.category.agent"
-	| "toolConstellation.category.mcp"
-	| "toolConstellation.category.other"
 	| "rateLimitTidepool.water"
 	| "rateLimitTidepool.waterShimmer"
 	| "rateLimitTidepool.pebble"
@@ -105,19 +92,6 @@ const UNICODE_GLYPHS: Record<GlyphKey, string> = {
 	"auditTrail.status.redundant": "⟳",
 	"auditTrail.status.cold": "❄\uFE0E", // U+2744 + VS15: default emoji presentation
 	"auditTrail.status.fresh": "✓\uFE0E", // U+2713 + VS15: has emoji variant
-	"toolConstellation.star.0": "·",
-	"toolConstellation.star.1": "•",
-	"toolConstellation.star.2": "✦\uFE0E", // U+2726 + VS15: has emoji variant
-	"toolConstellation.star.3": "✹\uFE0E", // U+2739 + VS15: has emoji variant
-	"toolConstellation.comet": "☄\uFE0E", // U+2604 + VS15: default emoji presentation
-	"toolConstellation.empty": "·",
-	"toolConstellation.category.read": "⛏\uFE0E", // U+26CF + VS15: default emoji presentation
-	"toolConstellation.category.write": "✎\uFE0E", // U+270E + VS15: has emoji variant
-	"toolConstellation.category.bash": "↯",
-	"toolConstellation.category.search": "◈",
-	"toolConstellation.category.agent": "◆",
-	"toolConstellation.category.mcp": "⬡",
-	"toolConstellation.category.other": "∘",
 	"rateLimitTidepool.water": "≈",
 	"rateLimitTidepool.waterShimmer": "~",
 	"rateLimitTidepool.pebble": "∘",
@@ -132,9 +106,8 @@ const UNICODE_GLYPHS: Record<GlyphKey, string> = {
 /**
  * One 7-bit-clean column per glyph — never a multi-char substitute (see module doc).
  * Two glyphs share an ascii column only when they either belong to different widgets
- * that never render together, or are already the identical unicode glyph upstream
- * (`toolConstellation.empty`/`star.0` are both literally `"·"` today) — never two
- * DISTINCT unicode glyphs a single widget renders side by side.
+ * that never render together, or are already the identical unicode glyph upstream —
+ * never two DISTINCT unicode glyphs a single widget renders side by side.
  *
  * `box.bar.filled`/`box.bar.empty` are the one deliberate exception to "never render
  * together": the Animations Box's cache/rate-limit rows draw their own badge glyph
@@ -178,19 +151,6 @@ const ASCII_GLYPHS: Record<GlyphKey, string> = {
 	"auditTrail.status.redundant": "~",
 	"auditTrail.status.cold": "o",
 	"auditTrail.status.fresh": "v",
-	"toolConstellation.star.0": ".",
-	"toolConstellation.star.1": ",",
-	"toolConstellation.star.2": "*",
-	"toolConstellation.star.3": "#",
-	"toolConstellation.comet": "@",
-	"toolConstellation.empty": ".",
-	"toolConstellation.category.read": "^",
-	"toolConstellation.category.write": "/",
-	"toolConstellation.category.bash": "!",
-	"toolConstellation.category.search": "<",
-	"toolConstellation.category.agent": "#",
-	"toolConstellation.category.mcp": "o",
-	"toolConstellation.category.other": ".",
 	"rateLimitTidepool.water": "~",
 	"rateLimitTidepool.waterShimmer": "-",
 	"rateLimitTidepool.pebble": ".",
@@ -224,18 +184,6 @@ const BORDER_RAMP_KEYS = [
 /** The breathing border's dimmest-to-heaviest ramp, resolved for one preset — feeds `breathing-border/breath.ts`'s `brightnessGlyph` bucket lookup. */
 export function resolveGlyphRamp(preset: SymbolPreset): readonly string[] {
 	return BORDER_RAMP_KEYS.map(key => resolveGlyph(key, preset));
-}
-
-const STAR_RAMP_KEYS = [
-	"toolConstellation.star.0",
-	"toolConstellation.star.1",
-	"toolConstellation.star.2",
-	"toolConstellation.star.3",
-] as const satisfies readonly GlyphKey[];
-
-/** Tool Constellation's dimmest-to-brightest star ramp (excludes the comet-head glyph), resolved for one preset — feeds `tool-constellation/sky.ts`'s `starGlyph` bucket lookup. */
-export function resolveStarGlyphRamp(preset: SymbolPreset): readonly string[] {
-	return STAR_RAMP_KEYS.map(key => resolveGlyph(key, preset));
 }
 
 const RING_RAMP_KEYS = [
