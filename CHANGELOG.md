@@ -18,6 +18,14 @@ All notable changes to `@oh-my-pi/animations` are documented here.
 - Consolidated Audit Trail into the Box. One headless service now owns the
   ledger, disk probe, and remedy command. Probe alarms render in the Box's
   `audit` summary; the duplicate standalone row and footer status are absent.
+- Merged the complete cache analytics into the Box's `cache` summary. One row
+  now carries hit percentage, saved cost, hits/requests, and the read, write,
+  and uncached token totals, all from a single ledger snapshot per frame. The
+  token totals ride a trailing detail group that sheds one metric at a time
+  from the right as the pane narrows, so the uncached total stays beside the
+  counts instead of drifting to the border, and a compact pane keeps the hit
+  state. `formatCost` is now shared with `/cache`, so both surfaces print one
+  money format.
 - Vendored Cadence Equalizer's own copy of the tok/s bucket classification
   and color-ramp module it used to share with Token Tide, since Token Tide is
   no longer part of this package.

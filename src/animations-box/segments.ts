@@ -33,7 +33,13 @@ import {
 	type PathRecord,
 	renderAuditMeterRow,
 } from "../audit-trail-box";
-import { CACHE_METER_COLORS, type CacheMeterColors, type CacheMeterState, renderCacheMeterRow } from "../cache-meter";
+import {
+	CACHE_METER_COLORS,
+	type CacheMeterColors,
+	type CacheMeterState,
+	formatCost,
+	renderCacheMeterRow,
+} from "../cache-meter";
 import {
 	type CadenceEqualizerColors,
 	type CadenceEqualizerState,
@@ -108,23 +114,6 @@ function dedupe(variants: readonly string[]): readonly string[] {
 	return out;
 }
 
-/** `<$0.01`/`$1.24`-style USD formatting — a local copy of `cache-meter/widget.ts`'s module-private `formatCost` (not exported from that module's barrel). */
-function formatCost(amountUsd: number): string {
-	const safe = Number.isFinite(amountUsd) && amountUsd > 0 ? amountUsd : 0;
-	if (safe === 0) return "$0.00";
-	return safe < 0.01 ? "<$0.01" : `$${safe.toFixed(2)}`;
-}
-
-/**
- * Cache Meter segment. A dim resting row until `message_end` has delivered at
- * least one usable prompt-cache sample — mirrors `CacheMeterController`'s own
- * lazy mount ("nothing to show before the first metered request lands").
- * Unlike the standalone `CacheMeterWidget`, this segment never eases the
- * displayed percentage or blinks the invalidation badge — both live inside
- * that widget's own per-frame state, which this box does not reuse (see
- * `controller.ts`'s module doc) — so it always draws the snapshot's true
- * current `warmth`, unalerted.
- */
 /** Cache Meter segment metadata for legend. */
 export const CACHE_METER_SEGMENT = {
 	id: "cacheMeter" as const,
@@ -132,6 +121,25 @@ export const CACHE_METER_SEGMENT = {
 	description: "Prompt cache hit rate and cost savings",
 } satisfies { id: BoxSegmentId; label: string; description: string };
 
+/**
+ * Cache Meter segment — the box's sole owner of prompt-cache telemetry (there
+ * is no standalone cache row in box display mode; see
+ * `BOX_MIGRATED_ANIMATION_IDS`). A dim resting row until `message_end` has
+ * delivered at least one usable prompt-cache sample — mirrors
+ * `CacheMeterController`'s own lazy mount ("nothing to show before the first
+ * metered request lands").
+ *
+ * The live line carries the ledger's whole contract in one phrase: hit
+ * percentage, dollars saved, hits/requests, and the read/write/miss token
+ * split. Every figure comes from ONE `state.snapshot()` per frame and is
+ * formatted with the cache keeper's own `formatCost`/`formatNumber`, so this
+ * row and `/cache` can never disagree. Unlike the standalone
+ * `CacheMeterWidget`, this segment never eases the displayed percentage or
+ * blinks the invalidation badge — both live inside that widget's own
+ * per-frame state, which this box does not reuse (see `controller.ts`'s
+ * module doc) — so it always draws the snapshot's true current `warmth`,
+ * unalerted.
+ */
 export function buildCacheMeterSegment(
 	state: CacheMeterState,
 	now: number,
@@ -190,12 +198,21 @@ export function buildCacheMeterSegment(
 					text: `${Math.round(snapshot.warmth * 100)}% hit`,
 					gradient: { ratio: snapshot.warmth, direction: "up-good" },
 				},
-				snapshot.savedCost !== undefined
-					? { key: "saved", text: `saved ${formatCost(snapshot.savedCost)}` }
-					: { key: "hits", text: `${snapshot.hitCount}/${snapshot.requestCount}` },
+				// `undefined` savings ≠ `$0.00` — a row must never claim money it
+				// hasn't derived a full-price rate for (state.ts's `hasSavings`).
+				...(snapshot.savedCost !== undefined
+					? [{ key: "saved", text: `saved ${formatCost(snapshot.savedCost)}` }]
+					: []),
+				{ key: "hits", text: `${snapshot.hitCount}/${snapshot.requestCount}` },
+				// The token split rides the wide tail, widest-detail-last: the
+				// renderer sheds tail spans one at a time from the right, so a pane
+				// too narrow for all three keeps `uncached` (the number that says
+				// "you are paying full price for this") adjacent to the body.
 				...(snapshot.missTokens > 0
 					? [{ key: "uncached", text: `${formatNumber(snapshot.missTokens)} uncached`, wideOnly: true }]
 					: []),
+				{ key: "read", text: `${formatNumber(snapshot.cacheReadTokens)} read`, wideOnly: true },
+				{ key: "write", text: `${formatNumber(snapshot.cacheWriteTokens)} write`, wideOnly: true },
 			],
 		},
 	};
@@ -502,7 +519,7 @@ export function buildToolActivitySegment(state: ToolActivityState, _now: number,
 /**
  * Same recency/overlap/path ordering `renderPalimpsestRows` sorts its visible
  * rows by — reproduced here since that comparator lives inline in that
- * function, not exported (same precedent as `formatCost` above).
+ * function, not exported from that module at all.
  */
 function compareVisibleRows(a: PalimpsestRow, b: PalimpsestRow): number {
 	return b.lastTouchedTurn - a.lastTouchedTurn || b.overlapCount - a.overlapCount || a.path.localeCompare(b.path);

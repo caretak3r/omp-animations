@@ -184,8 +184,12 @@ function warmthSparkline(window: readonly number[]): string {
  * sane non-negative number first, same as the ledger's own `normalize()` —
  * every figure this renders is already a sum of normalized buckets, so this
  * is a defensive floor, not a place that hides real data.
+ *
+ * Exported because the Animations Box's cache row renders the same savings
+ * figure in its own idiom: one money format for both surfaces, so `$1.24`
+ * here can never become `$1.2` there.
  */
-function formatCost(amountUsd: number): string {
+export function formatCost(amountUsd: number): string {
 	const safe = Number.isFinite(amountUsd) && amountUsd > 0 ? amountUsd : 0;
 	if (safe === 0) return "$0.00";
 	return safe < 0.01 ? "<$0.01" : `$${safe.toFixed(2)}`;

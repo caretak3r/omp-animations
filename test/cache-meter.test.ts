@@ -20,6 +20,7 @@ import {
 	CACHE_METER_COLORS,
 	CacheMeterWidget,
 	easedHitRate,
+	formatCost,
 	HIT_RATE_EASE_DURATION_MS,
 	INVALIDATION_ALERT_DURATION_MS,
 	INVALIDATION_BLINK_PERIOD_MS,
@@ -1069,6 +1070,34 @@ describe("cache meter panel (slash-command surface)", () => {
 		state.recordUsage(usageSample("anthropic", "claude", { cacheRead: 100 }));
 		const lines = renderCacheMeterPanel(state.snapshot(), idTheme);
 		expect(lines.some(line => line.includes(INVALIDATION_GLYPH))).toBe(false);
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// formatCost (pure, shared)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Exported for the Audit Box's cache row (buv.2): `/cache` and the box row
+// share one money format, so a saving can never read `$1.24` in one surface
+// and `$1.2` in the other.
+describe("formatCost (pure)", () => {
+	it("always spends two decimals once a saving is worth a cent", () => {
+		expect(formatCost(1.238)).toBe("$1.24");
+		expect(formatCost(1.2)).toBe("$1.20");
+		expect(formatCost(0.01)).toBe("$0.01");
+		expect(formatCost(1234.5)).toBe("$1234.50");
+	});
+
+	it("collapses sub-cent savings to a floor marker rather than rounding them away", () => {
+		expect(formatCost(0.004)).toBe("<$0.01");
+		expect(formatCost(1e-9)).toBe("<$0.01");
+	});
+
+	it("renders nothing-saved and unusable numbers as an honest zero", () => {
+		expect(formatCost(0)).toBe("$0.00");
+		expect(formatCost(-5)).toBe("$0.00");
+		expect(formatCost(Number.NaN)).toBe("$0.00");
+		expect(formatCost(Number.POSITIVE_INFINITY)).toBe("$0.00");
 	});
 });
 

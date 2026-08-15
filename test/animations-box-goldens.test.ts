@@ -321,12 +321,15 @@ function makeWidget(samples: readonly SegmentSample[], detail: BoxDetail): Anima
 // ---------------------------------------------------------------------------
 
 describe("AnimationsBoxController + AnimationsBoxWidget — full-box golden frames (Decision 5)", () => {
+	// The cache row carries the ledger's whole contract — hit %, hits/requests,
+	// and the read/write/miss split — at 69 and 120; at 45 the tail sheds
+	// `write` then `read`, keeping `uncached` beside the body.
 	it("detailed mode: exact golden frames at width 69 (real pane), 45 (narrow), and 120 (wide) — five required rows", () => {
 		const widget = driveFullBox("detailed");
 
 		expect(widget.renderFrame(69)).toEqual([
 			"╭───────────────────────────────────────────────────────────────────╮",
-			`${"│ ●  cache    50% hit · 1/1   400 uncached".padEnd(68)}│`,
+			`${"│ ●  cache    50% hit · 1/1   400 uncached · 600 read · 200 write".padEnd(68)}│`,
 			`${"│ ◐  audit    1 read · 1 write · 1 edited   widget.ts".padEnd(68)}│`,
 			"│ ●  limits   78% left · resets 12m · anthropic                     │",
 			"│ ●  tools    3 calls — bash (1)                                    │",
@@ -346,7 +349,7 @@ describe("AnimationsBoxController + AnimationsBoxWidget — full-box golden fram
 
 		expect(widget.renderFrame(120)).toEqual([
 			"╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
-			`${"│ ●  cache    50% hit · 1/1   400 uncached".padEnd(119)}│`,
+			`${"│ ●  cache    50% hit · 1/1   400 uncached · 600 read · 200 write".padEnd(119)}│`,
 			`${"│ ◐  audit    1 read · 1 write · 1 edited   widget.ts".padEnd(119)}│`,
 			"│ ●  limits   78% left · resets 12m · anthropic                                                                        │",
 			"│ ●  tools    3 calls — bash (1)                                                                                       │",
@@ -454,6 +457,51 @@ describe("renderStatusLine — §3 fixture goldens at the spec's 78-col inner wi
 	});
 });
 
+describe("renderStatusLine — the cache row's width ladder (buv.2: one row carries the whole ledger)", () => {
+	function warmedLine() {
+		const state = new CacheMeterState();
+		state.recordUsage({
+			provider: "anthropic",
+			model: "claude",
+			usage: { input: 400, output: 10, cacheRead: 600, cacheWrite: 200, totalTokens: 1210 },
+		});
+		return buildCacheMeterSegment(state, 0, idTheme).line;
+	}
+
+	// The tail sheds one span at a time from the right, so the metric that says
+	// "you are paying full price" survives longest and always sits beside the
+	// body rather than drifting against the border.
+	it("sheds the tail right-to-left — write, then read, then uncached — before touching the body", () => {
+		const line = warmedLine();
+		const at = (width: number) => renderStatusLine(line, width, lineCtx());
+		expect(at(78)).toBe("●  cache    50% hit · 1/1   400 uncached · 600 read · 200 write");
+		expect(at(62)).toBe("●  cache    50% hit · 1/1   400 uncached · 600 read");
+		expect(at(50)).toBe("●  cache    50% hit · 1/1   400 uncached");
+		expect(at(39)).toBe("●  cache    50% hit · 1/1");
+	});
+
+	// Below the body budget the hit state is the last thing standing: compact
+	// panes lose counts, never the answer to "is the cache working".
+	it("keeps the hit state after the body itself starts yielding, and only hard-truncates a lone span", () => {
+		const line = warmedLine();
+		expect(renderStatusLine(line, 24, lineCtx())).toBe("●  cache    50% hit");
+		expect(renderStatusLine(line, 18, lineCtx())).toBe("●  cache    50% h…");
+	});
+
+	// Shedding only ever removes whole trailing spans, so every intermediate
+	// rung is a span-boundary prefix of the widest one — that is what "never
+	// split a label from its value" means mechanically.
+	it("every rung fits its width and is a whole-span prefix of the widest phrase", () => {
+		const line = warmedLine();
+		const widest = renderStatusLine(line, 78, lineCtx());
+		for (const width of [78, 70, 62, 55, 50, 44, 39, 30, 24]) {
+			const rendered = renderStatusLine(line, width, lineCtx());
+			expect(visibleWidth(rendered)).toBeLessThanOrEqual(width);
+			expect(widest.startsWith(rendered)).toBe(true);
+		}
+	});
+});
+
 describe("renderStatusLine + FlashTracker — change-flash frame goldens (D6: flash decays and stops)", () => {
 	// Tagging double: `fg` and `bold` leave visible markers so the goldens pin
 	// exactly which spans sit in which flash phase at each instant.
@@ -476,10 +524,12 @@ describe("renderStatusLine + FlashTracker — change-flash frame goldens (D6: fl
 		// Baseline frame: first observation of every span key — no flash (D6),
 		// pct resting at its bucketed gradient tone.
 		expect(renderStatusLine(buildCacheMeterSegment(state, 0, tagTheme).line, SPEC_INNER, ctxAt(0))).toBe(
-			"<accent:●>  cache    <success:50% hit> · 1/1   400 uncached",
+			"<accent:●>  cache    <success:50% hit> · 1/1   400 uncached · 600 read · 200 write",
 		);
 
-		// A second usage moves pct and hits — both spans enter the bold+accent phase...
+		// A second, fully-cached usage moves pct, hits and the read total — each
+		// enters the bold+accent phase on its own key, tail spans included, while
+		// the untouched write/uncached totals stay at rest.
 		state.recordUsage({
 			provider: "anthropic",
 			model: "claude",
@@ -487,15 +537,15 @@ describe("renderStatusLine + FlashTracker — change-flash frame goldens (D6: fl
 		});
 		const changed = buildCacheMeterSegment(state, 5000, tagTheme).line;
 		expect(renderStatusLine(changed, SPEC_INNER, ctxAt(5000))).toBe(
-			"<accent:●>  cache    «<accent:75% hit>» · «<accent:2/2>»   400 uncached",
+			"<accent:●>  cache    «<accent:75% hit>» · «<accent:2/2>»   400 uncached · «<accent:1.6K read>» · 200 write",
 		);
 		// ...decay to accent alone...
 		expect(renderStatusLine(changed, SPEC_INNER, ctxAt(5000 + FULL_FLASH_BOLD_MS))).toBe(
-			"<accent:●>  cache    <accent:75% hit> · <accent:2/2>   400 uncached",
+			"<accent:●>  cache    <accent:75% hit> · <accent:2/2>   400 uncached · <accent:1.6K read> · 200 write",
 		);
 		// ...and come fully to rest — gradient tone back, no residue (no blinking).
 		expect(renderStatusLine(changed, SPEC_INNER, ctxAt(5000 + FULL_FLASH_MS))).toBe(
-			"<accent:●>  cache    <success:75% hit> · 2/2   400 uncached",
+			"<accent:●>  cache    <success:75% hit> · 2/2   400 uncached · 1.6K read · 200 write",
 		);
 	});
 });

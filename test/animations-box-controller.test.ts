@@ -16,6 +16,7 @@ import type {
 	TurnEndEvent,
 	TurnStartEvent,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
+import { formatNumber } from "@oh-my-pi/pi-utils";
 import { type AnimationsBoxContext, AnimationsBoxController, BOX_WIDGET_KEY } from "../src/animations-box/controller";
 import {
 	BOX_OPTIONAL_STATUS_SEGMENT_IDS,
@@ -36,6 +37,7 @@ import {
 	EXHALE_DURATION_MS,
 	MIN_BREATH_PERIOD_MS,
 } from "../src/breathing-border";
+import { CacheMeterState } from "../src/cache-meter";
 import { resolveGlyph } from "../src/glyph-presets";
 import type { FrameScheduler } from "../src/kit";
 import { DIM_DURATION_MS, RIPPLE_DURATION_MS } from "../src/reflection-ripple";
@@ -341,6 +343,46 @@ describe("AnimationsBoxController — cache-meter state wiring", () => {
 		const cacheRow = frame.find(row => row.includes("cache"));
 		expect(cacheRow).toBeDefined();
 		expect(cacheRow).not.toContain("—     "); // the resting placeholder is gone, even though the other enabled-but-idle segments still show theirs
+		widget.dispose();
+	});
+
+	// buv.2: the box row is the only cache row left, so it must be a view of the
+	// ledger — not a second accounting path. Same events into a bare
+	// `CacheMeterState` must produce exactly the figures the row prints.
+	it("prints the ledger's own totals across several requests — hit %, hits/requests and the read/write/miss split", () => {
+		const scheduler = manualScheduler();
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall);
+
+		const usages = [
+			{ input: 400, cacheRead: 600, cacheWrite: 200 },
+			{ input: 0, cacheRead: 1_000, cacheWrite: 0 },
+			{ input: 120, cacheRead: 800, cacheWrite: 40 },
+		];
+		const ledger = new CacheMeterState();
+		for (const usage of usages) {
+			controller.onMessageEnd(messageEnd(usage), ctx);
+			ledger.recordUsage({
+				provider: "anthropic",
+				model: "claude",
+				usage: {
+					input: usage.input,
+					output: 10,
+					cacheRead: usage.cacheRead,
+					cacheWrite: usage.cacheWrite,
+					totalTokens: usage.input + 10 + usage.cacheRead + usage.cacheWrite,
+				},
+			});
+		}
+		const snapshot = ledger.snapshot();
+		const cacheRow = widget.renderFrame(140).find(row => row.includes("cache")) as string;
+		expect(cacheRow).toContain(`${Math.round(snapshot.warmth * 100)}% hit`);
+		expect(cacheRow).toContain(`${snapshot.hitCount}/${snapshot.requestCount}`);
+		expect(cacheRow).toContain(`${formatNumber(snapshot.missTokens)} uncached`);
+		expect(cacheRow).toContain(`${formatNumber(snapshot.cacheReadTokens)} read`);
+		expect(cacheRow).toContain(`${formatNumber(snapshot.cacheWriteTokens)} write`);
 		widget.dispose();
 	});
 

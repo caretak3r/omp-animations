@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { formatNumber } from "@oh-my-pi/pi-utils";
 import {
 	buildAuditTrailBoxSegment,
 	buildCacheMeterSegment,
@@ -18,7 +19,7 @@ import {
 	type ProbeReading,
 	renderAuditMeterRow,
 } from "../src/audit-trail-box";
-import { CACHE_METER_COLORS, CacheMeterState, renderCacheMeterRow } from "../src/cache-meter";
+import { CACHE_METER_COLORS, CacheMeterState, formatCost, renderCacheMeterRow } from "../src/cache-meter";
 import {
 	CadenceEqualizerState,
 	cadenceEqualizerColors,
@@ -178,6 +179,41 @@ describe("buildCacheMeterSegment — active line", () => {
 		expect(state.snapshot().missTokens).toBe(0);
 		const sample = buildCacheMeterSegment(state, 0, idTheme);
 		expect(sample.line.spans.some(span => span.key === "uncached")).toBe(false);
+	});
+
+	it("spends the rest of the tail on the read/write split, in that order, formatted by the shared formatNumber", () => {
+		const state = warmedState();
+		const snapshot = state.snapshot();
+		const sample = buildCacheMeterSegment(state, 0, idTheme);
+		expect(sample.line.spans.slice(3)).toEqual([
+			{ key: "read", text: `${formatNumber(snapshot.cacheReadTokens)} read`, wideOnly: true },
+			{ key: "write", text: `${formatNumber(snapshot.cacheWriteTokens)} write`, wideOnly: true },
+		]);
+	});
+
+	// buv.2's parity contract: the box row is the ONLY cache row, so every
+	// figure the deleted footer used to carry must trace back to one snapshot.
+	it("carries the whole ledger in one phrase — hit %, saved, hits/requests, miss, read, write — all from a single snapshot", () => {
+		const state = new CacheMeterState();
+		state.recordUsage(
+			usageSample("anthropic", "claude", {
+				input: 400,
+				cacheRead: 600,
+				cacheWrite: 200,
+				cost: { input: 0.3, output: 0.05, cacheRead: 0.02, cacheWrite: 0.01, total: 0.38 },
+			}),
+		);
+		const snapshot = state.snapshot();
+		const sample = buildCacheMeterSegment(state, 0, idTheme);
+		expect(sample.line.spans.map(span => span.key)).toEqual(["pct", "saved", "hits", "uncached", "read", "write"]);
+		expect(sample.line.spans.map(span => span.text)).toEqual([
+			`${Math.round(snapshot.warmth * 100)}% hit`,
+			`saved ${formatCost(snapshot.savedCost as number)}`,
+			`${snapshot.hitCount}/${snapshot.requestCount}`,
+			`${formatNumber(snapshot.missTokens)} uncached`,
+			`${formatNumber(snapshot.cacheReadTokens)} read`,
+			`${formatNumber(snapshot.cacheWriteTokens)} write`,
+		]);
 	});
 });
 

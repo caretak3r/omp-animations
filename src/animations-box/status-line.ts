@@ -50,7 +50,14 @@ export interface PhraseSpan {
 	 * (so a plain list already drops right-to-left — the spec's default).
 	 */
 	readonly priority?: number;
-	/** Wide-width trailing span — the FIRST thing dropped when the line doesn't fit. */
+	/**
+	 * Trailing detail span, kept beside the body under a
+	 * {@link MIN_TAIL_GAP}-column semantic gap. The tail always gives way
+	 * before any body span, and gives way one span at a time (same
+	 * {@link priority} order as the body: highest first, ties rightmost-first),
+	 * so a multi-metric tail sheds its least important figure instead of
+	 * vanishing whole.
+	 */
 	readonly wideOnly?: boolean;
 	/** Separator rendered BEFORE this span (ignored for the first span). Default `" · "`. */
 	readonly sep?: string;
@@ -216,15 +223,25 @@ function phraseWidth(spans: readonly PhraseSpan[]): number {
 	return width;
 }
 
+/** Index of the next span to drop: highest {@link PhraseSpan.priority} wins, ties break rightmost-first. */
+function dropIndex(spans: readonly PhraseSpan[], priorityOf: (span: PhraseSpan) => number): number {
+	let index = 0;
+	for (let i = 1; i < spans.length; i++) {
+		if (priorityOf(spans[i] as PhraseSpan) >= priorityOf(spans[index] as PhraseSpan)) index = i;
+	}
+	return index;
+}
+
 /**
  * Render one status line to exactly ≤ `inner` visible columns.
  *
  * Layout: `dot␣␣label··␣␣phrase`, phrase = body spans joined by their
  * separators plus an optional wide-width tail kept beside the final body
- * indicator. Width degradation (spec §3): the wide tail drops first, then body spans by
- * {@link PhraseSpan.priority} (default: rightmost-first); a final lone span
- * hard-truncates as the safety net. Observes the FULL span list into
- * `ctx.flash` (drops don't reset flash state) before any narrowing.
+ * indicator. Width degradation (spec §3): the wide tail sheds spans first —
+ * one at a time, by {@link PhraseSpan.priority} — then body spans in the same
+ * order (default: rightmost-first); a final lone span hard-truncates as the
+ * safety net. Observes the FULL span list into `ctx.flash` (drops don't reset
+ * flash state) before any narrowing.
  */
 export function renderStatusLine(line: SegmentLine, inner: number, ctx: StatusLineContext): string {
 	ctx.flash?.observe(ctx.segmentId, line.spans, ctx.now);
@@ -237,22 +254,23 @@ export function renderStatusLine(line: SegmentLine, inner: number, ctx: StatusLi
 	if (available <= 0) return truncateToWidth(prefix, inner);
 
 	const body = line.spans.filter(span => span.wideOnly !== true);
-	const tail = line.spans.filter(span => span.wideOnly === true);
 	const priorityOf = (span: PhraseSpan) => span.priority ?? line.spans.indexOf(span);
 
-	// Wide tail survives only when NOTHING else has to give (dropped first).
-	const tailWidth = phraseWidth(tail);
-	const tailGap = body.length > 0 ? MIN_TAIL_GAP : 0;
-	const keepTail = tail.length > 0 && phraseWidth(body) + tailGap + tailWidth <= available;
+	// The wide tail yields before anything in the body, but only as much of it
+	// as the width actually demands: a six-metric cache row must be able to
+	// shed `write` without also losing `uncached`.
+	const tail = line.spans.filter(span => span.wideOnly === true);
+	const bodyWidth = phraseWidth(body);
+	const gap = body.length > 0 ? MIN_TAIL_GAP : 0;
+	while (tail.length > 0 && bodyWidth + gap + phraseWidth(tail) > available) {
+		tail.splice(dropIndex(tail, priorityOf), 1);
+	}
 
+	const tailGap = tail.length > 0 ? gap : 0;
 	const kept = [...body];
-	const bodyBudget = keepTail ? available - tailGap - tailWidth : available;
+	const bodyBudget = available - tailGap - phraseWidth(tail);
 	while (kept.length > 1 && phraseWidth(kept) > bodyBudget) {
-		let dropIndex = 0;
-		for (let i = 1; i < kept.length; i++) {
-			if (priorityOf(kept[i] as PhraseSpan) >= priorityOf(kept[dropIndex] as PhraseSpan)) dropIndex = i;
-		}
-		kept.splice(dropIndex, 1);
+		kept.splice(dropIndex(kept, priorityOf), 1);
 	}
 
 	let plainWidth = 0;
@@ -268,13 +286,12 @@ export function renderStatusLine(line: SegmentLine, inner: number, ctx: StatusLi
 		plainWidth += visibleWidth(sep) + visibleWidth(text);
 	}
 
-	if (!keepTail) return prefix + phrase;
+	if (tail.length === 0) return prefix + phrase;
 
-	const pad = " ".repeat(tailGap);
 	let tailPhrase = "";
 	for (let i = 0; i < tail.length; i++) {
 		const span = tail[i] as PhraseSpan;
 		tailPhrase += (i > 0 ? (span.sep ?? " · ") : "") + colorSpan(span, span.text, line.accent, ctx);
 	}
-	return prefix + phrase + pad + tailPhrase;
+	return prefix + phrase + " ".repeat(tailGap) + tailPhrase;
 }

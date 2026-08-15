@@ -62,11 +62,15 @@ the row dims briefly, then the widget disappears once the ripple settles.
 By default, the plugin draws its signals as one bordered box instead of
 separate rows. The box sits above or below the editor, next to the status
 bar. It shows five fixed summaries for cache use, file trust, rate-limit
-headroom, tool use, and edit hotspots. The tool summary belongs to the box
-alone: it counts every tool call and names the two busiest tool categories.
-It never names reads or writes, because the file summary owns those counts.
-Cadence, Reflection, and Agent Bonsai are optional groups. The border
-breathes with the agent's work rhythm.
+headroom, tool use, and edit hotspots. The cache summary is the only cache
+row in this mode: it shows the hit percentage, the money saved, the hit and
+request counts, and the read, write, and uncached token totals. A narrow pane
+drops those token totals from the right, one at a time, so the uncached total
+stays next to the counts for as long as it fits. The tool summary belongs to
+the box alone: it counts every tool call and names the two busiest tool
+categories. It never names reads or writes, because the file summary owns
+those counts. Cadence, Reflection, and Agent Bonsai are optional groups. The
+border breathes with the agent's work rhythm.
 
 The `display` setting picks how the plugin shows its signals:
 
