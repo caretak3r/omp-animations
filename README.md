@@ -1,12 +1,11 @@
 # @oh-my-pi/animations
 
-`@oh-my-pi/animations` is one [oh-my-pi](https://omp.sh) plugin. It offers
-seven animation signals plus Agent Bonsai from the current agent session.
-The signals share one consolidated [Animations Box](#the-animations-box) by
-default. The seven animation signals can also use separate ambient widgets.
-The plugin uses a vendored `pi-animation` kit (`src/kit/`). Every widget
-respects a shared motion tier. Motion turns off on a non-TTY terminal, under
-`NO_COLOR`, in CI, or when the terminal falls behind on rendering.
+`@oh-my-pi/animations` is one [oh-my-pi](https://omp.sh) plugin.
+The plugin adds optional session signals without an omp core change.
+One controller owns one `AnimationHost`, an Audit Box, and a signal sidecar.
+The package uses a vendored `pi-animation` kit (`src/kit/`).
+Every widget uses the same motion tier.
+Motion stops on a non-TTY terminal, in CI, under `NO_COLOR`, or under render pressure.
 
 ## The animations
 
@@ -41,11 +40,10 @@ Each band tracks the same throughput signal, but at a different speed, so the
 bars move at different rates instead of in lockstep. Each band also keeps a
 peak marker that decays slowly after a burst.
 
-**Palimpsest.** Shows which regions of code the agent keeps re-editing. A
-region gets a faint underline at two touches, amber at three touches, and a
-slow pulse at four or more touches. The widget stays hidden while the agent
-makes steady forward progress, and a region fades from the widget on its own
-after a few turns without a re-touch.
+**Live Files.** Shows paths that active edit and write calls currently own.
+The row includes work from Main and streamed task-agent progress.
+Each path disappears when its matching call ends.
+The row does not preserve edit history or re-edit heat.
 
 **Rate-Limit Tidepool.** Shows how much rate-limit headroom the last response
 reported. A full pool reads as calm water. Falling headroom exposes pebbles,
@@ -57,58 +55,69 @@ headers; every other provider stays invisible.
 interrupts generation to apply a matched rule. The ripple expands outward and
 the row dims briefly, then the widget disappears once the ripple settles.
 
+## Signal extras
+
+The signal sidecar mounts above the editor. It shows a row only when that signal has meaningful state.
+
+- **Recurrence Strip** separates heading progress from a repeated tool orbit.
+- **Context Rewrite Shadow** compares estimated transcript tokens with provider-context tokens.
+- **Compaction Scar** shows cut tokens and immediate file re-reads.
+- **Consent Lock** shows a pending tool approval.
+- **Session Phylogeny** shows the active node, branch depth, and sibling count.
+- **Think/Act Lissajous** shows the balance between thinking text and answer text.
+- **Error Isotope** appears when the same normalized tool error occurs more than once.
+- **Queue Fog** shows that a queued follow-up will continue the session.
+- **Skill Chromatograph** shows skills that the current turn used.
+- **Retry Radar** shows an active automatic retry and model fallback.
+- **Goal Heading** shows the active goal, status, and token budget.
+- **TTFT Split** shows the delay from turn start to the first assistant message.
+- **Memory Backend Tide** shows backend status, working-memory writes, and recall activity.
+
+**Darkroom Title** writes critical state to the terminal title. It does not use a widget row.
+
 ## The Animations Box
 
-By default, the plugin draws its signals as one bordered box instead of
-separate rows. The box sits above or below the editor, next to the status
-bar. It shows five fixed summaries for cache use, file trust, rate-limit
-headroom, tool use, and edit hotspots. The cache summary is the only cache
-row in this mode: it shows the hit percentage, the money saved, the hit and
-request counts, and the read, write, and uncached token totals. A narrow pane
-drops those token totals from the right, one at a time, so the uncached total
-stays next to the counts for as long as it fits. The tool summary belongs to
-the box alone: it counts every tool call and names the two busiest tool
-categories. It never names reads or writes, because the file summary owns
-those counts. Cadence, Reflection, and Agent Bonsai are optional groups. The
-border breathes with the agent's work rhythm.
+The plugin mounts the Audit Box below the editor by default.
+The box holds these rows in order:
 
-The `display` setting picks how the plugin shows its signals:
+1. `files` — active edit and write paths
+2. `context` — context-window fill and turn headroom
+3. `cache` — prompt-cache use and saved cost
+4. `audit` — file trust
+5. `limits` — provider rate-limit headroom
+6. `tools` — tool-call totals
 
-- `box` (default) — one consolidated box.
-- `rows` — separate rows for the seven standalone animations. Agent Bonsai
-  does not render in this mode.
-- `both` — standalone rows and the box together. Use this to compare them.
+Agent Bonsai, Cadence Equalizer, and Reflection Ripple are optional groups in the Audit Box.
+Breathing Border colors the Audit Box border.
 
-Each standalone animation's enable setting (`auditTrailBox`, `cacheMeter`,
-and more) controls its row. In `box` mode, those settings control the matching
-Box summary or optional status row. The `agentBonsai` setting controls its
-Box-only group.
+The signal sidecar is a second `AnimationsBoxWidget` on the same `AnimationHost`.
+It mounts above the editor.
+If no enabled signal has meaningful state, the sidecar returns zero rows and uses zero height.
 
-The tool summary has no setting of its own. It is part of the box, and no
-standalone animation stands behind it.
+The old `display` setting (`rows` / `box` / `both`) is ignored.
+A stale `rows` or `both` value logs one warning and still mounts the two named widgets.
+A stale `box` value does not log a warning.
 
-Three more settings shape the box:
+These settings shape the surfaces:
 
-- `animationsBoxDetail` — `detailed` (default) shows one labeled row per
-  enabled status signal. An idle fixed summary keeps a dim resting row, so
-  the base box height does not change while you work. `simple` composes active
-  status signals into one line. Agent Bonsai remains a separate `agents` group
-  in both modes.
-- `animationsBoxPlacement` — which side of the editor the box mounts on:
-  `aboveEditor` or `belowEditor` (default).
-- `agentBonsai` — shows the `agents` group when a subagent exists. The default
-  is `true`.
+- `animationsBoxDetail` — `detailed` shows one labeled row per enabled signal. `simple` composes active status signals into one row.
+- `animationsBoxPlacement` — places the Audit Box at `aboveEditor` or `belowEditor`. The default is `belowEditor`.
+- `animationsContextQuota` — sets the context quota from `5` through `100`. The default is `80`.
+- `agentBonsai` — shows the `agents` group when a subagent exists. The default is `true`.
+- `cadenceEqualizer` and `reflectionRipple` — control their Audit Box rows. The default is `false`.
+- `liveFiles` and each signal-extra setting — control one approved extra. The default is `true`.
+- `darkroomTitle` — controls terminal-title projection. The default is `true`.
 
-Each box-managed animation's own `Placement` setting (for example
-`cacheMeterPlacement`) applies only to its standalone row. In `box` mode, the
-box placement applies to every signal it holds. Each animation's own
-`AccentColor` setting still colors its signal inside the box. Breathing Border
-has no row of its own inside the box. Its motion becomes the box border, and
-`breathingBorderAccentColor` colors the border.
+The five core Audit Box summaries have no enable setting.
+`liveFiles` is optional because it is part of the approved extra set.
 
-Audit Trail uses one authoritative ledger in Box mode. Its probe alarms update
-the `audit` summary inside the box. It does not mount a duplicate standalone
-row or footer status.
+Each legacy `Placement` setting, such as `cacheMeterPlacement`, does not select a surface.
+`animationsBoxPlacement` controls the Audit Box.
+The signal sidecar stays above the editor.
+
+Audit Trail uses one authoritative ledger.
+Probe alarms update the `audit` row.
+The plugin does not mount a duplicate Audit Trail row or footer status.
 
 ## Install
 
@@ -118,9 +127,9 @@ Install the plugin into an oh-my-pi profile from a local path:
 omp plugin install ./path/to/omp-animations
 ```
 
-The package declares one plugin entry (`package.json#omp.extensions`,
-pointing at `src/registrar.ts`). The registrar reads the plugin's settings and
-mounts only the animations that are enabled.
+The package declares one plugin entry (`package.json#omp.extensions`, pointing
+at `src/registrar.ts`). The registrar reads the plugin settings synchronously.
+It mounts the Audit Box and signal sidecar through one controller.
 
 ## Turn animations on and off
 
@@ -128,21 +137,18 @@ Four kinds of settings control the plugin. The plugin reads all settings
 through the omp plugin settings channel. Each setting also has an `OMP_*`
 environment fallback for scripts and CI:
 
-- `animations` — the shared motion tier for every animation: `off`, `subtle`,
-  or `full`. The default is `subtle`. The environment fallback is
-  `OMP_ANIMATIONS`.
-- One boolean per standalone animation — `auditTrailBox`, `breathingBorder`,
-  `cacheMeter`, `cadenceEqualizer`, `palimpsest`, `rateLimitTidepool`, and
-  `reflectionRipple`. Each defaults to `true`. Each environment fallback
-  follows the pattern `OMP_ANIMATIONS_<ID>`.
-- Three settings for [the Animations Box](#the-animations-box): `display`
-  (`rows` / `box` / `both`, default `box`, environment fallback
-  `OMP_ANIMATIONS_DISPLAY`), `animationsBoxDetail` (`simple` / `detailed`,
-  default `detailed`, environment fallback `OMP_ANIMATIONS_BOX_DETAIL`), and
-  `animationsBoxPlacement` (`aboveEditor` / `belowEditor`, default
-  `belowEditor`, environment fallback `OMP_ANIMATIONS_BOX_PLACEMENT`).
-- `agentBonsai` — enables the Box-only subagent group. It defaults to `true`.
-  Its environment fallback is `OMP_ANIMATIONS_AGENT_BONSAI`.
+- `animations` controls the shared motion tier: `off`, `subtle`, or `full`.
+  The default is `subtle`. The environment fallback is `OMP_ANIMATIONS`.
+- `agentBonsai` and `breathingBorder` default to `true`.
+  `cadenceEqualizer` and `reflectionRipple` default to `false`.
+- `liveFiles` and the signal extras in [Signal extras](#signal-extras) default
+  to `true`. Each environment fallback follows the pattern
+  `OMP_ANIMATIONS_<ID>`.
+- Three settings control [the Animations Box](#the-animations-box):
+  `animationsBoxDetail` (`simple` or `detailed`, default `detailed`),
+  `animationsBoxPlacement` (`aboveEditor` or `belowEditor`, default
+  `belowEditor`), and `animationsContextQuota` (`5` through `100`, default
+  `80`).
 
 Use `omp plugin config` to read and change these settings:
 
@@ -152,8 +158,8 @@ omp plugin config set @oh-my-pi/animations cadenceEqualizer false
 omp plugin config list @oh-my-pi/animations
 ```
 
-A disabled animation never mounts. Its factory does not run, so it registers
-no event listeners.
+An optional setting controls only its row or title projection.
+The shared controller and its two widget registrations remain mounted.
 
 ## Requirements
 
@@ -170,6 +176,28 @@ bun run fix      # biome check --write --unsafe
 bun run check    # biome + tsgo type-check
 bun test         # behavioral test suite
 ```
+
+### Grading a live box
+
+Unit tests prove the box renders what the code says. They cannot tell you the box
+is *wrong* — that only shows when a real session drives it. Two scripts close that
+loop against a running `omp` in tmux:
+
+```bash
+bun run probe -- --session omp-anim --interval 2   # sample until you stop it
+bun run probe -- --once                            # one snapshot
+bun run probe:lint                                 # grade the newest run
+```
+
+`probe` writes each distinct box state to `.frames/run-<timestamp>/`. Sample while the
+session is busy: an idle box hides every bug worth finding.
+
+`probe:lint` grades those frames against the render invariants in
+`scripts/frame-lint.ts` — empty value columns, ASCII placeholders where the box uses
+an em-dash, absolute paths, raw prompt text, mismatched separators, unaligned tails,
+a chip repeated on every row. Each rule cites the issue that paid for it and stays
+after that issue closes, so the next run cannot regress past it. Exit code is 1 when
+anything fires.
 
 ## License
 

@@ -1,24 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import type { ExtensionContext } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
+import { BOX_WIDGET_KEY, SIGNAL_WIDGET_KEY } from "../src/animations-box/controller";
 import { DEFAULT_FRAME_SCHEDULER } from "../src/kit";
-import { ANIMATIONS, createAnimationsPlugin } from "../src/registrar";
+import { createAnimationsPlugin } from "../src/registrar";
 
 /**
- * Boot smoke: end-to-end through the real production entrypoint
- * (`createAnimationsPlugin`, `src/registrar.ts`) rather than a controller
- * constructed directly. `test/registrar.test.ts` already covers wire-time
- * enablement (which `api.on(...)` calls happen), but never actually fires an
- * event or constructs a widget — this file extends that pattern one step
- * further: fire the real lifecycle events, obtain the real widget factory the
- * controller hands the UI, construct the real widget, and prove the whole
- * chain leaves nothing running after teardown.
- *
- * Audit Trail Box is the concrete widget under test: it mounts through a single
- * well-formed `tool_result` event and unconditionally disposes on
- * `session_shutdown` (see `src/audit-trail-box/index.ts`), which keeps the
- * fixture small while still exercising the full mount -> live AnimationHost
- * subscription -> dispose chain through the real production entrypoint.
+ * Boot smoke through the production registrar. The session mounts two widget
+ * factories on one host, starts one scheduler when both widgets subscribe,
+ * and tears the shared host down on shutdown.
  *
  * `createAnimationsPlugin`/`createAuditTrailBoxExtension` accept no injectable
  * scheduler (the registrar always uses `DEFAULT_FRAME_SCHEDULER`, real
@@ -34,15 +24,9 @@ import { ANIMATIONS, createAnimationsPlugin } from "../src/registrar";
  * isn't reachable through the registrar seam.
  */
 
-const noopRead = async (): Promise<Record<string, unknown>> => ({});
-
-/**
- * A flat enable record with exactly one animation on — mirrors `registrar.test.ts`'s `only`.
- * Forces `display: "rows"`: Audit Trail Box is a box-migrated animation (Plan 017), so the
- * default `display: "box"` would mount it headless instead of the row widget this file drives.
- */
-function only(id: string): Record<string, unknown> {
-	return { ...Object.fromEntries(ANIMATIONS.map(a => [a.id, a.id === id])), display: "rows" };
+/** A minimal `session_start` — the single event the Audit Box needs to mount. */
+function sessionStart(): unknown {
+	return { type: "session_start" };
 }
 
 /** Recording `ExtensionAPI` double that actually stores handlers (not just event names) so they can be fired. */
@@ -146,51 +130,51 @@ describe("boot smoke (loads the plugin, mounts a widget, disposes it)", () => {
 		expect(liveTimers).toBe(0);
 	});
 
-	it("real registrar wiring: tool_result mounts, session_shutdown dispose leaves zero live subscriptions/timers", () => {
+	it("mounts both widgets and leaves zero subscriptions or timers after shutdown", () => {
 		const { api, fire } = makeApi();
-		createAnimationsPlugin({ settings: only("auditTrailBox"), env: {}, readPluginSettings: noopRead })(api);
+		createAnimationsPlugin({ settings: {}, env: {} })(api);
 
 		const { ctx, widgetCalls } = makeCtx();
 
 		expect(liveTimers).toBe(0);
-		fire("tool_result", writeToolResult(), ctx);
+		fire("session_start", sessionStart(), ctx);
 
-		// The controller hands the UI a widget *factory*, not a live widget — no
-		// timer exists until the (real) TUI actually invokes it, same as production.
-		expect(widgetCalls).toHaveLength(1);
-		expect(widgetCalls[0].key).toBe("audit-trail-box");
+		// The controller hands the UI two widget factories. No timer exists until
+		// the real TUI invokes a factory.
+		expect(widgetCalls).toHaveLength(2);
+		expect(new Set(widgetCalls.map(call => call.key))).toEqual(new Set([BOX_WIDGET_KEY, SIGNAL_WIDGET_KEY]));
 		expect(liveTimers).toBe(0);
 
-		const factory = widgetCalls[0].content as (
-			tui: typeof noopTui,
-			theme: typeof idTheme,
-		) => { render(width: number): readonly string[]; dispose(): void };
-		const widget = factory(noopTui, idTheme);
+		const widgets = widgetCalls.map(call => {
+			const factory = call.content as (
+				tui: typeof noopTui,
+				theme: typeof idTheme,
+			) => { render(width: number): readonly string[]; dispose(): void };
+			return factory(noopTui, idTheme);
+		});
 
-		// Constructing the widget subscribes it to the shared AnimationHost: exactly
-		// one live subscription/timer for this one mount.
+		// Both widgets subscribe to the same host and therefore start one timer.
 		expect(liveTimers).toBe(1);
 
-		// It is a genuinely live, rendering widget, not a stub.
-		const rows = widget.render(30);
-		expect(rows.length).toBeGreaterThan(0);
-		expect(rows[0]?.length).toBeGreaterThan(0);
+		fire("tool_result", writeToolResult(), ctx);
+		expect(widgets[0]?.render(72).length).toBeGreaterThan(0);
+		expect(widgets[0]?.render(72)[0]?.length).toBeGreaterThan(0);
 
 		fire("session_shutdown", { type: "session_shutdown" }, ctx);
 
-		// The controller's dispose() tears the host all the way down: zero live
-		// timers survive, and the UI was told to clear the widget.
 		expect(liveTimers).toBe(0);
-		expect(widgetCalls.at(-1)?.content).toBeUndefined();
+		expect(widgetCalls.slice(-2).every(call => call.content === undefined)).toBe(true);
 	});
 
-	it("a disabled animation's factory is never invoked — mounting nothing leaks nothing", () => {
+	it("no UI surface: the box never mounts, so nothing leaks", () => {
 		const { api, fire } = makeApi();
-		createAnimationsPlugin({ settings: only("__none__"), env: {}, readPluginSettings: noopRead })(api);
+		createAnimationsPlugin({ settings: {}, env: {} })(api);
 
 		const { ctx, widgetCalls } = makeCtx();
-		fire("tool_result", writeToolResult(), ctx);
-		fire("session_shutdown", { type: "session_shutdown" }, ctx);
+		const headless = { ...ctx, hasUI: false } as ExtensionContext;
+		fire("session_start", sessionStart(), headless);
+		fire("tool_result", writeToolResult(), headless);
+		fire("session_shutdown", { type: "session_shutdown" }, headless);
 
 		expect(widgetCalls).toEqual([]);
 		expect(liveTimers).toBe(0);

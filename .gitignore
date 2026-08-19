@@ -6,3 +6,9 @@ dist/
 # mission-orchestrator scratch (execution artifacts, not repo content)
 .mission/
 .relay/
+
+# audit-box frame captures (probe output, not repo content)
+.frames/
+
+# session reseed documents (handoffSaveToDisk is false; these are written by hand)
+.handoff/

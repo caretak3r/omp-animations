@@ -49,6 +49,15 @@
 		}
 	},
 	"files": {
-		"includes": ["src/**/*.ts", "test/**/*.ts", "types/**/*.ts", "*.ts", "*.json", "!**/node_modules", "!**/dist"]
+		"includes": [
+			"src/**/*.ts",
+			"test/**/*.ts",
+			"types/**/*.ts",
+			"scripts/**/*.ts",
+			"*.ts",
+			"*.json",
+			"!**/node_modules",
+			"!**/dist"
+		]
 	}
 }

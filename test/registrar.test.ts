@@ -4,21 +4,42 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import type { ExtensionContext } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
-import { BOX_WIDGET_KEY } from "../src/animations-box/controller";
-import { BOX_DEFAULTS, BOX_MIGRATED_ANIMATION_IDS, BOX_SETTING_KEYS } from "../src/animations-box/settings";
+import { type ActivityLifecycleScheduler, ActivityTelemetryBus } from "../src/activity-roster/bus";
+import {
+	buildActivityFilesSegment,
+	projectActivityAgents,
+	projectActivityTitleFiles,
+} from "../src/activity-roster/projection";
+import {
+	ACTIVITY_ROSTER_DEFAULTS,
+	ACTIVITY_ROSTER_SETTING_ENV,
+	ACTIVITY_ROSTER_SETTING_KEYS,
+	resolveActivityRosterSettings,
+} from "../src/activity-roster/settings";
+import type { AgentBonsaiSnapshot } from "../src/agent-bonsai";
+import { BOX_WIDGET_KEY, SIGNAL_WIDGET_KEY } from "../src/animations-box/controller";
+import { BOX_DEFAULTS, BOX_SETTING_KEYS } from "../src/animations-box/settings";
+import { animationsEnvKey } from "../src/appearance";
 import { ANIMATIONS, createAnimationsPlugin, readPluginSettingsSync, resolveAnimationsConfig } from "../src/registrar";
+import { SIGNAL_EXTRA_IDS } from "../src/signal-extras";
 
 /**
- * A recording ExtensionAPI double. The registrar and the animation factories touch
- * `on` (event subscription), `setLabel`, `registerCommand` (Audit Trail Box registers
- * `/audit-trail`), and — inside handlers, never at wire time — `logger`. Every
- * `on(event)` at wire time is captured so we can assert exactly which animations
- * subscribed, and likewise every registered command name.
+ * A recording ExtensionAPI double. The registrar and the headless Audit Trail
+ * service touch `on` (event subscription), `setLabel`, `registerCommand`
+ * (`/audit-trail` and `/cache`), and `logger.warn` (the removed-`display` migration notice —
+ * the one logger call that happens at wire time, not inside a handler).
  */
-function makeApi(): { api: ExtensionAPI; events: string[]; labels: string[]; commands: string[] } {
+function makeApi(): {
+	api: ExtensionAPI;
+	events: string[];
+	labels: string[];
+	commands: string[];
+	warnings: string[];
+} {
 	const events: string[] = [];
 	const labels: string[] = [];
 	const commands: string[] = [];
+	const warnings: string[] = [];
 	const api = {
 		on: (event: string) => {
 			events.push(event);
@@ -29,287 +50,331 @@ function makeApi(): { api: ExtensionAPI; events: string[]; labels: string[]; com
 		registerCommand: (name: string) => {
 			commands.push(name);
 		},
-		logger: { error() {}, warn() {}, debug() {}, info() {} },
+		logger: {
+			error() {},
+			warn: (message: string) => {
+				warnings.push(message);
+			},
+			debug() {},
+			info() {},
+		},
 	} as unknown as ExtensionAPI;
-	return { api, events, labels, commands };
+	return { api, events, labels, commands, warnings };
 }
 
 const ALL_IDS = ANIMATIONS.map(a => a.id);
-const noopRead = async (): Promise<Record<string, unknown>> => ({});
 
-/**
- * Mount the registrar with an explicit per-animation enable record and capture
- * subscriptions. Forces `display: "rows"` unless `enabled` overrides it: every test in
- * this file below the `display modes` describe block exercises the per-animation
- * standalone-mount contract, i.e. today's `rows` behavior — `display` now defaults to
- * `"box"` (Plan 017), which would otherwise suppress most of what these tests assert.
- */
-function mount(enabled: Record<string, unknown>): { events: string[]; labels: string[]; commands: string[] } {
-	const { api, events, labels, commands } = makeApi();
-	createAnimationsPlugin({ settings: { display: "rows", ...enabled }, env: {}, readPluginSettings: noopRead })(api);
-	return { events, labels, commands };
+/** Mount the registrar with `settings` passed through unmodified. */
+function mount(settings: Record<string, unknown>): {
+	events: string[];
+	labels: string[];
+	commands: string[];
+	warnings: string[];
+} {
+	const { api, events, labels, commands, warnings } = makeApi();
+	createAnimationsPlugin({ settings, env: {} })(api);
+	return { events, labels, commands, warnings };
 }
 
-/** A flat enable record: only the ids in `on` are true, the rest false. */
-function only(...on: string[]): Record<string, boolean> {
-	const set = new Set(on);
-	return Object.fromEntries(ALL_IDS.map(id => [id, set.has(id)]));
+/** Every animation id set to `value` — the shape a maximal (or empty) legacy settings file had. */
+function allSetTo(value: boolean): Record<string, boolean> {
+	return Object.fromEntries(ALL_IDS.map(id => [id, value]));
 }
 
-describe("animations registrar", () => {
-	it("mounts every default-enabled animation and labels the plugin once", () => {
-		const { events, labels } = mount({});
-		expect(events.length).toBeGreaterThan(0);
-		expect(labels).toContain("oh-my-pi animations");
-	});
+/** Like `makeApi`, but keeps `session_start` handlers so they can be fired against a fake `ExtensionContext`. */
+function makeDrivableApi(): {
+	api: ExtensionAPI;
+	fireSessionStart(): void;
+	widgetCalls: Array<{ key: string; mounted: boolean; placement?: string }>;
+} {
+	const sessionStartHandlers: Array<(event: unknown, ctx: ExtensionContext) => void> = [];
+	const widgetCalls: Array<{ key: string; mounted: boolean; placement?: string }> = [];
+	const api = {
+		on: (event: string, handler: (event: unknown, ctx: ExtensionContext) => void) => {
+			if (event === "session_start") sessionStartHandlers.push(handler);
+		},
+		setLabel: () => {},
+		registerCommand: () => {},
+		logger: { error() {}, warn() {}, debug() {}, info() {} },
+	} as unknown as ExtensionAPI;
+	const ctx = {
+		hasUI: true,
+		cwd: "/tmp/oh-my-pi-animations-registrar-test",
+		model: { id: "root-model" },
+		sessionManager: {
+			getSessionId: () => "registrar-root",
+			getArtifactsDir: () => "/tmp/oh-my-pi-animations-sessions/registrar-root",
+			getSessionFile: () => "/tmp/oh-my-pi-animations-sessions/registrar-root.jsonl",
+			getBranch: () => [],
+		},
+		hasPendingMessages: () => false,
+		ui: {
+			theme: { getSymbolPreset: () => "unicode" as const },
+			setWidget: (key: string, content: unknown, options?: { placement?: string }) =>
+				widgetCalls.push({ key, mounted: content !== undefined, placement: options?.placement }),
+			setStatus: () => {},
+		},
+	} as unknown as ExtensionContext;
+	return {
+		api,
+		fireSessionStart: () => {
+			for (const handler of sessionStartHandlers) handler({ type: "session_start" }, ctx);
+		},
+		widgetCalls,
+	};
+}
 
-	it("the registrar's own label is always the last one set, regardless of the enabled subset", () => {
-		// setLabel is last-write-wins on the shared extension. Before Plan 007, Context
-		// Weather's own mount called pi.setLabel("Context Weather") synchronously, which is
-		// why the registrar sets its own label AFTER the mount loop — so /status shows the
-		// whole suite, not just one animation. Context Weather is unregistered now, but the
-		// ordering guard stays load-bearing for any future animation that calls setLabel.
-		const { labels } = mount(only(...ALL_IDS));
+function makeActivityApi(): {
+	api: ExtensionAPI;
+	fire(event: string, payload: unknown, ctx: ExtensionContext): void;
+} {
+	const handlers = new Map<string, Array<(event: unknown, ctx: ExtensionContext) => void>>();
+	const api = {
+		on: (event: string, handler: (payload: unknown, ctx: ExtensionContext) => void) => {
+			const registered = handlers.get(event);
+			if (registered) registered.push(handler);
+			else handlers.set(event, [handler]);
+		},
+		setLabel: () => {},
+		registerCommand: () => {},
+		logger: { error() {}, warn() {}, debug() {}, info() {} },
+	} as unknown as ExtensionAPI;
+	return {
+		api,
+		fire: (event, payload, ctx) => {
+			for (const handler of handlers.get(event) ?? []) handler(payload, ctx);
+		},
+	};
+}
+
+function activityContext(options: {
+	sessionId: string;
+	hasUI: boolean;
+	artifactsDir: string;
+	sessionFile: string;
+	titles?: string[];
+}): ExtensionContext {
+	const ui = {
+		theme: { getSymbolPreset: () => "unicode" as const },
+		setWidget: () => {},
+		setTitle: (title: string) => options.titles?.push(title),
+	};
+	return {
+		hasUI: options.hasUI,
+		cwd: "/repo",
+		model: { id: options.hasUI ? "root-model" : "child-model" },
+		sessionManager: {
+			getSessionId: () => options.sessionId,
+			getArtifactsDir: () => options.artifactsDir,
+			getSessionFile: () => options.sessionFile,
+			getBranch: () => [],
+		},
+		hasPendingMessages: () => false,
+		...(options.hasUI ? { ui } : {}),
+	} as unknown as ExtensionContext;
+}
+
+describe("animations registrar — one shared host, two plugin widgets", () => {
+	it("subscribes the box once, registers /audit-trail and /cache, and labels the plugin last", () => {
+		const { events, labels, commands } = mount({});
+		expect(events.filter(event => event === "session_start")).toHaveLength(1);
+		expect(commands).toEqual(["audit-trail", "cache"]);
+		// setLabel is last-write-wins on the shared extension, and the registrar sets
+		// its own label after every child factory has run, so /status shows the suite.
 		expect(labels.at(-1)).toBe("oh-my-pi animations");
 	});
 
-	it("leaves ZERO subscriptions when every animation is disabled", () => {
-		const { events, labels, commands } = mount(only());
-		// The core contract: a disabled animation's factory is never invoked, so it
-		// registers no listeners. With all disabled there are no subscriptions at all.
-		expect(events).toEqual([]);
-		// Same contract for slash commands: Audit Trail Box's `/audit-trail` is
-		// registered inside its factory, so disabling it leaves no command behind.
-		expect(commands).toEqual([]);
-		// The registrar itself still identifies the plugin.
-		expect(labels).toContain("oh-my-pi animations");
+	it("no per-animation enable setting changes what mounts — every configuration is one box", () => {
+		const base = mount({}).events.slice().sort();
+		expect(mount(allSetTo(true)).events.slice().sort()).toEqual(base);
+		expect(mount(allSetTo(false)).events.slice().sort()).toEqual(base);
+		// The box-owned optional groups are composition toggles, not mounts.
+		expect(
+			mount({ agentBonsai: false, cadenceEqualizer: true, reflectionRipple: true }).events.slice().sort(),
+		).toEqual(base);
+		expect(mount(allSetTo(false)).commands).toEqual(["audit-trail", "cache"]);
 	});
 
-	it("registers each command-bearing animation's slash command only when that animation is enabled", () => {
-		expect(mount(only("auditTrailBox")).commands).toEqual(["audit-trail"]);
-		expect(mount(only("cacheMeter")).commands).toEqual(["cache"]);
-		expect(mount(only("palimpsest", "reflectionRipple")).commands).toEqual([]);
-		// By default, both command-bearing animations register in ANIMATIONS mount order.
-		expect(mount({}).commands).toEqual(["audit-trail", "cache"]);
+	it("stale ids from an old settings file are inert", () => {
+		// Tool Constellation was deleted (buv.4) and the broader suite's animations were
+		// never copied into this package; a stored `true` for either must resurrect nothing.
+		const stale = mount({ toolConstellation: true, diffBloom: true, contextWeather: true });
+		expect(stale.events.slice().sort()).toEqual(mount({}).events.slice().sort());
+		expect(stale.commands).toEqual(["audit-trail", "cache"]);
+		expect(stale.warnings).toEqual([]);
 	});
 
-	it("mounts exactly the enabled subset — disabled animations contribute no subscriptions", () => {
-		// Each animation's own subscription multiset, captured by mounting it alone.
-		const own = new Map<string, string[]>();
-		for (const a of ANIMATIONS) {
-			own.set(a.id, mount(only(a.id)).events.slice().sort());
+	it("ANIMATIONS contains exactly the legacy appearance entries still in use", () => {
+		expect(ALL_IDS.slice().sort()).toEqual([
+			"auditTrailBox",
+			"breathingBorder",
+			"cacheMeter",
+			"cadenceEqualizer",
+			"rateLimitTidepool",
+			"reflectionRipple",
+		]);
+		for (const id of ["agentFleet", "contextWeather", "diffBloom", "tokenTide", "toolConstellation"]) {
+			expect(ALL_IDS).not.toContain(id);
 		}
-		// A representative subset of the shipped set.
-		const subset = ["breathingBorder", "cadenceEqualizer", "palimpsest"];
-		const got = mount(only(...subset))
-			.events.slice()
-			.sort();
-		const expected = subset.flatMap(id => own.get(id) ?? []).sort();
-		expect(got).toEqual(expected);
-
-		// And a disabled animation's own events are genuinely absent from the subset mount.
-		const disabledId = "reflectionRipple";
-		expect(subset).not.toContain(disabledId);
-		const disabledEvents = own.get(disabledId) ?? [];
-		const gotSet = new Set(got);
-		// reflectionRipple subscribes to at least one event no member of the subset does.
-		expect(disabledEvents.some(e => !gotSet.has(e))).toBe(true);
-	});
-
-	it("composes the full set as the union of each animation's own subscriptions", () => {
-		const all = mount(only(...ALL_IDS))
-			.events.slice()
-			.sort();
-		const union = ALL_IDS.flatMap(id => mount(only(id)).events).sort();
-		expect(all).toEqual(union);
-	});
-
-	it("the excluded animations are not in the registrar's mounted set and register no listeners", () => {
-		// This package ships seven standalone animations; the other animation source
-		// dirs from the broader oh-my-pi-animations suite were deliberately left out
-		// of the copy entirely (see package.json's description and this file's imports).
-		// They are not merely unregistered; their source does not exist in this repo.
-		const excludedIds = [
-			"agentFleet",
-			"compactionVacuum",
-			"contextConstellation",
-			"contextWeather",
-			"costCandle",
-			"diffBloom",
-			"driftBuoy",
-			"fourHands",
-			"goalHorizon",
-			"memoryCrystals",
-			"promptCharge",
-			"sessionBonsai",
-			"sessionStrata",
-			"spinnerPacks",
-			"todoMeteors",
-			"tokenTide",
-		];
-		for (const id of excludedIds) expect(ALL_IDS).not.toContain(id);
-		expect(ALL_IDS.slice().sort()).toEqual(
-			[
-				"auditTrailBox",
-				"breathingBorder",
-				"cacheMeter",
-				"cadenceEqualizer",
-				"palimpsest",
-				"rateLimitTidepool",
-				"reflectionRipple",
-			].sort(),
-		);
-
-		// Trying to "enable" an excluded id (e.g. from a stale stored settings file) mounts
-		// nothing for it — `only()` only recognizes ids that are still in ANIMATIONS, so a
-		// stored `{ diffBloom: true }` is silently inert rather than resurrecting it.
-		const { events, labels } = mount({ ...only(), diffBloom: true, contextWeather: true });
-		expect(events).toEqual([]);
-		expect(labels).toContain("oh-my-pi animations");
 	});
 });
 
-/** Mount with `settings` passed through unmodified — no forced `display`, unlike `mount()` above. */
-function mountRaw(settings: Record<string, unknown>): { events: string[]; labels: string[]; commands: string[] } {
-	const { api, events, labels, commands } = makeApi();
-	createAnimationsPlugin({ settings, env: {}, readPluginSettings: noopRead })(api);
-	return { events, labels, commands };
-}
-
-describe("display modes (Animations Box integration, Plan 017)", () => {
-	it("BOX_MIGRATED_ANIMATION_IDS contains every standalone animation", () => {
-		expect(BOX_MIGRATED_ANIMATION_IDS.slice().sort()).toEqual(ALL_IDS.slice().sort());
+describe("the removed `display` setting", () => {
+	it("a stored `rows` still mounts exactly one box and warns once, naming the setting", () => {
+		const rows = mount({ display: "rows" });
+		expect(rows.events.slice().sort()).toEqual(mount({}).events.slice().sort());
+		expect(rows.warnings).toHaveLength(1);
+		expect(rows.warnings[0]).toContain('setting "display"=rows');
+		expect(rows.warnings[0]).toContain("the Audit Box is the only display mode");
 	});
 
-	it("`display` defaults to 'box' when entirely unstored — mountRaw, not mount(), unmasks the real default", () => {
-		const rows = mountRaw({ display: "rows", ...only(...ALL_IDS) })
-			.events.slice()
-			.sort();
-		const unstored = mountRaw(only(...ALL_IDS))
-			.events.slice()
-			.sort();
-		expect(unstored).not.toEqual(rows);
+	it("`both` — the value that used to duplicate every row — mounts one box, not two surfaces", () => {
+		const both = mount({ display: "both", ...allSetTo(true) });
+		expect(both.events.filter(event => event === "session_start")).toHaveLength(1);
+		expect(both.events.slice().sort()).toEqual(mount({}).events.slice().sort());
+		expect(both.commands).toEqual(["audit-trail", "cache"]);
+		expect(both.warnings).toHaveLength(1);
 	});
 
-	it("box mode mounts only the Box and its headless Audit service", () => {
-		// Agent Bonsai is a Box-owned observer, not another animation subscription.
-		const boxOwn = mountRaw({ display: "box", agentBonsai: false, ...only() });
-		const boxAllEnabled = mountRaw({ display: "box", agentBonsai: false, ...only(...ALL_IDS) });
-		expect(boxAllEnabled.events.slice().sort()).toEqual(boxOwn.events.slice().sort());
-		expect(boxAllEnabled.commands).toEqual(["audit-trail"]);
+	it("an exported OMP_ANIMATIONS_DISPLAY warns against the env source and never throws", () => {
+		const { api, events, warnings } = makeApi();
+		expect(() =>
+			createAnimationsPlugin({ settings: {}, env: { OMP_ANIMATIONS_DISPLAY: "both" } })(api),
+		).not.toThrow();
+		expect(events.filter(event => event === "session_start")).toHaveLength(1);
+		expect(warnings).toHaveLength(1);
+		expect(warnings[0]).toContain("env OMP_ANIMATIONS_DISPLAY=both");
 	});
 
-	it("both mode mounts every non-Audit standalone row alongside the Box and one headless Audit service", () => {
-		const boxOwn = mountRaw({ display: "box", ...only() });
-		const nonAuditRows = mount(only(...ALL_IDS.filter(id => id !== "auditTrailBox")));
-		const bothAllEnabled = mountRaw({ display: "both", ...only(...ALL_IDS) });
+	it("the surviving value `box` stays silent — an up-to-date settings file says nothing", () => {
+		expect(mount({ display: "box" }).warnings).toEqual([]);
+		const { api, warnings } = makeApi();
+		createAnimationsPlugin({ settings: {}, env: { OMP_ANIMATIONS_DISPLAY: "box" } })(api);
+		expect(warnings).toEqual([]);
+	});
+});
 
-		expect(bothAllEnabled.events.slice().sort()).toEqual([...boxOwn.events, ...nonAuditRows.events].sort());
-		expect(bothAllEnabled.commands).toEqual(["audit-trail", "cache"]);
+describe("widgets actually mounted, driven through a real session_start", () => {
+	it("mounts the Audit Box below the editor and signal sidecar above it", () => {
+		const { api, fireSessionStart, widgetCalls } = makeDrivableApi();
+		createAnimationsPlugin({ settings: {}, env: {} })(api);
+		fireSessionStart();
+		expect(widgetCalls).toEqual([
+			{ key: BOX_WIDGET_KEY, mounted: true, placement: BOX_DEFAULTS.placement },
+			{ key: SIGNAL_WIDGET_KEY, mounted: true, placement: "aboveEditor" },
+		]);
 	});
 
-	it("rows mode mounts no box and has no session_start subscription", () => {
-		const rows = mount(only(...ALL_IDS)).events.filter(event => event === "session_start");
-		expect(rows).toEqual([]);
+	it("enabling every animation and a stale `display: both` still mounts only the two named surfaces", () => {
+		const { api, fireSessionStart, widgetCalls } = makeDrivableApi();
+		createAnimationsPlugin({ settings: { display: "both", ...allSetTo(true) }, env: {} })(api);
+		fireSessionStart();
+		expect(widgetCalls.filter(call => call.mounted).map(call => call.key)).toEqual([
+			BOX_WIDGET_KEY,
+			SIGNAL_WIDGET_KEY,
+		]);
 	});
+});
 
-	it("box and both modes each mount the box exactly once", () => {
-		expect(mountRaw({ display: "box", ...only() }).events.filter(e => e === "session_start")).toHaveLength(1);
-		expect(mountRaw({ display: "both", ...only() }).events.filter(e => e === "session_start")).toHaveLength(1);
-	});
-
-	describe("widgets actually mounted, driven through a real session_start", () => {
-		/** Like `makeApi`, but keeps `session_start` handlers so they can be fired against a fake `ExtensionContext`. */
-		function makeDrivableApi(): { api: ExtensionAPI; fireSessionStart(): void; mountedWidgetKeys(): string[] } {
-			const sessionStartHandlers: Array<(event: unknown, ctx: ExtensionContext) => void> = [];
-			const mounted = new Map<string, boolean>();
-			const api = {
-				on: (event: string, handler: (event: unknown, ctx: ExtensionContext) => void) => {
-					if (event === "session_start") sessionStartHandlers.push(handler);
-				},
-				setLabel: () => {},
-				registerCommand: () => {},
-				logger: { error() {}, warn() {}, debug() {}, info() {} },
-			} as unknown as ExtensionAPI;
-			const ctx = {
-				hasUI: true,
-				cwd: "/tmp/oh-my-pi-animations-registrar-test",
-				ui: {
-					theme: { getSymbolPreset: () => "unicode" as const },
-					setWidget: (key: string, content: unknown) => mounted.set(key, content !== undefined),
-					setStatus: () => {},
-				},
-			} as unknown as ExtensionContext;
-			return {
-				api,
-				fireSessionStart: () => {
-					for (const handler of sessionStartHandlers) handler(undefined, ctx);
-				},
-				mountedWidgetKeys: () => [...mounted.entries()].filter(([, isMounted]) => isMounted).map(([key]) => key),
-			};
-		}
-
-		it("box mode mounts exactly one widget: BOX_WIDGET_KEY", () => {
-			const { api, fireSessionStart, mountedWidgetKeys } = makeDrivableApi();
-			createAnimationsPlugin({
-				settings: { display: "box", ...only(...ALL_IDS) },
-				env: {},
-				readPluginSettings: noopRead,
-			})(api);
-			fireSessionStart();
-			expect(mountedWidgetKeys()).toEqual([BOX_WIDGET_KEY]);
+describe("plugin-local activity roster integration", () => {
+	it("projects an exact headless mutation into files, agents, and the root title", () => {
+		const bus = new ActivityTelemetryBus();
+		const rootApi = makeActivityApi();
+		const childApi = makeActivityApi();
+		const titles: string[] = [];
+		const rootContext = activityContext({
+			sessionId: "root-session",
+			hasUI: true,
+			artifactsDir: "/sessions/root-session",
+			sessionFile: "/sessions/root-session.jsonl",
+			titles,
 		});
-
-		it("rows mode mounts nothing on session_start — the box never subscribes", () => {
-			const { api, fireSessionStart, mountedWidgetKeys } = makeDrivableApi();
-			createAnimationsPlugin({
-				settings: { display: "rows", ...only(...ALL_IDS) },
-				env: {},
-				readPluginSettings: noopRead,
-			})(api);
-			fireSessionStart();
-			expect(mountedWidgetKeys()).toEqual([]);
+		const childContext = activityContext({
+			sessionId: "child-session",
+			hasUI: false,
+			artifactsDir: "/sessions/root-session/a1",
+			sessionFile: "/sessions/root-session/a1.jsonl",
 		});
+		createAnimationsPlugin({ settings: {}, env: {}, activityBus: bus })(rootApi.api);
+		createAnimationsPlugin({ settings: {}, env: {}, activityBus: bus })(childApi.api);
+		rootApi.fire("session_start", { type: "session_start" }, rootContext);
+		childApi.fire("session_start", { type: "session_start" }, childContext);
+		childApi.fire(
+			"tool_execution_start",
+			{
+				type: "tool_execution_start",
+				toolCallId: "edit-1",
+				toolName: "edit",
+				args: "[/repo/src/widget.ts#A1B2]\nPUT 218.=218:\n+value",
+			},
+			childContext,
+		);
+
+		const probe = bus.registerSession({
+			sessionId: "root-session",
+			hasUI: true,
+			cwd: "/repo",
+			artifactsDir: "/sessions/root-session",
+		});
+		const roster = probe.snapshot();
+		const inferred: AgentBonsaiSnapshot = {
+			visible: true,
+			hiddenCount: 0,
+			nodes: [
+				{
+					id: "Main",
+					cohortLabel: "M",
+					name: "Main",
+					depth: 0,
+					isLast: false,
+					ancestorsLast: [],
+					status: "running",
+					loadedSkills: [],
+				},
+				{
+					id: "A1",
+					cohortLabel: "A1",
+					name: "child",
+					depth: 1,
+					isLast: true,
+					ancestorsLast: [],
+					status: "running",
+					loadedSkills: [],
+				},
+			],
+		};
+		const files = buildActivityFilesSegment(roster, { entries: [] }, 1);
+		const agents = projectActivityAgents(roster, inferred);
+		expect(files.line.spans.map(span => span.text)).toEqual(["src/widget.ts"]);
+		expect(agents.nodes.map(node => [node.id, node.gist])).toEqual([
+			["main", undefined],
+			["a1", "edit src/widget.ts"],
+		]);
+		expect(projectActivityAgents(undefined, inferred)).toBe(inferred);
+		expect(projectActivityTitleFiles(roster, { entries: [] }).entries).toHaveLength(1);
+		expect(titles.at(-1)).toBe("omp  1 writer");
 	});
 });
 
 describe("resolveAnimationsConfig", () => {
-	it("defaults to tier 'full' and enables every standalone animation", () => {
+	it("resolves a tier and appearance only — there is no enable map left to consult", () => {
 		const cfg = resolveAnimationsConfig({}, {});
+		expect(Object.keys(cfg).sort()).toEqual(["appearance", "tier"]);
 		expect(cfg.tier).toBe("full");
-		expect(ALL_IDS.every(id => cfg.enabled[id])).toBe(true);
+		expect(Object.keys(cfg.appearance).sort()).toEqual(ALL_IDS.slice().sort());
 	});
 
-	it("reads the tier and a stored disable from plugin settings", () => {
-		const cfg = resolveAnimationsConfig({ animations: "subtle", cacheMeter: false }, {});
-		expect(cfg.tier).toBe("subtle");
-		expect(cfg.enabled.cacheMeter).toBe(false);
-		expect(cfg.enabled.palimpsest).toBe(true);
+	it("reads the tier from plugin settings", () => {
+		expect(resolveAnimationsConfig({ animations: "subtle" }, {}).tier).toBe("subtle");
 	});
 
-	it("falls back to env vars when a setting is unstored", () => {
-		const cfg = resolveAnimationsConfig({}, { OMP_ANIMATIONS: "off", OMP_ANIMATIONS_CACHE_METER: "false" });
-		expect(cfg.tier).toBe("off");
-		expect(cfg.enabled.cacheMeter).toBe(false);
-		expect(cfg.enabled.auditTrailBox).toBe(true);
+	it("falls back to the env var when the tier is unstored, and prefers the stored value when both exist", () => {
+		expect(resolveAnimationsConfig({}, { OMP_ANIMATIONS: "off" }).tier).toBe("off");
+		expect(resolveAnimationsConfig({ animations: "full" }, { OMP_ANIMATIONS: "off" }).tier).toBe("full");
 	});
 
-	it("prefers a stored setting over the env fallback", () => {
-		const cfg = resolveAnimationsConfig({ cacheMeter: false }, { OMP_ANIMATIONS_CACHE_METER: "true" });
-		expect(cfg.enabled.cacheMeter).toBe(false);
-	});
-
-	it("drops the deleted toolConstellation key: it never enters the enable map, stored or from env", () => {
-		// Tool Constellation is gone (`omp-animations-buv.4`). A stale settings file or a
-		// stale exported env var must resolve to the same config as a clean one, and must
-		// not resurrect an enable entry the registrar would then look up.
-		const stored = resolveAnimationsConfig({ toolConstellation: true }, {});
-		expect(Object.keys(stored.enabled)).toEqual(ALL_IDS);
-		expect(stored.enabled).toEqual(resolveAnimationsConfig({}, {}).enabled);
-		expect(resolveAnimationsConfig({}, { OMP_ANIMATIONS_TOOL_CONSTELLATION: "true" }).enabled).toEqual(
-			stored.enabled,
-		);
-		expect(mount({ toolConstellation: true }).events).toEqual(mount({}).events);
+	it("ignores a malformed tier instead of throwing", () => {
+		expect(resolveAnimationsConfig({ animations: "sparkly" }, {}).tier).toBe("full");
 	});
 });
 
@@ -378,76 +443,146 @@ describe("readPluginSettingsSync", () => {
 	});
 
 	it("wires end to end through the production factory (not the settings-injection seam)", () => {
-		// This exercises exactly the code path `export default createAnimationsPlugin()` uses —
-		// only `cwd`/`home` are supplied, so `settings` resolves via the real readPluginSettingsSync.
-		// `display: "rows"` keeps this test on the per-animation standalone-mount contract it was
-		// written against — see `mount()`'s own doc above.
+		// Exercises exactly the path `export default createAnimationsPlugin()` uses: only
+		// `cwd`/`home` are supplied, so `settings` resolves via the real readPluginSettingsSync
+		// and the stored box placement has to survive all the way to the host's setWidget.
 		const { home, cwd } = isolatedRoots();
-		writeProjectOverrides(cwd, { animations: "subtle", cacheMeter: false, display: "rows" });
-		const { api, events } = makeApi();
+		writeProjectOverrides(cwd, { animations: "subtle", [BOX_SETTING_KEYS.placement]: "aboveEditor" });
+		const { api, fireSessionStart, widgetCalls } = makeDrivableApi();
 		createAnimationsPlugin({ cwd, home, env: {} })(api);
+		fireSessionStart();
+		expect(widgetCalls).toEqual([
+			{ key: BOX_WIDGET_KEY, mounted: true, placement: "aboveEditor" },
+			{ key: SIGNAL_WIDGET_KEY, mounted: true, placement: "aboveEditor" },
+		]);
+	});
+});
 
-		const soloEvents = (id: string): string[] => {
-			const solo = makeApi();
-			createAnimationsPlugin({
-				settings: { display: "rows", ...only(id) },
-				env: {},
-				readPluginSettings: noopRead,
-			})(solo.api);
-			return solo.events;
+describe("activity roster lifecycle settings", () => {
+	it("resolves stored values over env with compact and 300 seconds as defaults", () => {
+		expect(resolveActivityRosterSettings({}, {})).toEqual(ACTIVITY_ROSTER_DEFAULTS);
+		expect(
+			resolveActivityRosterSettings(
+				{ agentRosterDetail: "verbose", agentRosterRetentionSeconds: 12.5 },
+				{
+					OMP_ANIMATIONS_AGENT_ROSTER_DETAIL: "compact",
+					OMP_ANIMATIONS_AGENT_ROSTER_RETENTION_SECONDS: "90",
+				},
+			),
+		).toEqual({ detail: "verbose", retentionMs: 12_500 });
+		expect(
+			resolveActivityRosterSettings(
+				{},
+				{
+					OMP_ANIMATIONS_AGENT_ROSTER_DETAIL: "verbose",
+					OMP_ANIMATIONS_AGENT_ROSTER_RETENTION_SECONDS: "90",
+				},
+			),
+		).toEqual({ detail: "verbose", retentionMs: 90_000 });
+	});
+
+	it("notifies completion and expiry transitions with one root timer", () => {
+		let now = 0;
+		let pending: { delayMs: number; tick: () => void } | undefined;
+		const scheduled = (): { delayMs: number; tick: () => void } | undefined => pending;
+		const scheduler: ActivityLifecycleScheduler = {
+			now: () => now,
+			schedule: (delayMs, tick) => {
+				pending = { delayMs, tick };
+				return () => {
+					if (pending?.tick === tick) pending = undefined;
+				};
+			},
 		};
+		const bus = new ActivityTelemetryBus({ scheduler, completionFlashMs: 1_200 });
+		const root = bus.registerSession({
+			sessionId: "root",
+			hasUI: true,
+			cwd: "/repo",
+			artifactsDir: "/sessions/root",
+			retentionMs: 300_000,
+			detail: "verbose",
+		});
+		const child = bus.registerSession({
+			sessionId: "child",
+			hasUI: false,
+			cwd: "/repo",
+			sessionFile: "/sessions/root/a1.jsonl",
+		});
+		let changes = 0;
+		root.subscribe(() => changes++);
+		child.startTool({ toolCallId: "write", toolName: "write", args: { path: "/repo/a.ts" } });
+		child.endTool({ toolCallId: "write", toolName: "write", isError: false });
+		child.complete();
+		const completionChanges = changes;
+		expect(scheduled()?.delayMs).toBe(1_201);
+		expect(root.snapshot().detail).toBe("verbose");
 
-		// cacheMeter is disabled by stored settings. Every other animation defaults
-		// to enabled. Compare the complete subscription multiset because event names
-		// are shared across factories.
-		expect(soloEvents("cacheMeter").length).toBeGreaterThan(0);
-		const expected = ALL_IDS.filter(id => id !== "cacheMeter")
-			.flatMap(soloEvents)
-			.sort();
-		expect(events.slice().sort()).toEqual(expected);
+		now = 1_201;
+		const completionTick = scheduled()?.tick;
+		pending = undefined;
+		completionTick?.();
+		expect(root.snapshot().agents.find(agent => agent.id === "a1")?.phase).toBe("recent");
+		expect(root.snapshot().operations).toEqual([]);
+		expect(changes).toBeGreaterThan(completionChanges);
+		expect(scheduled()?.delayMs).toBe(298_800);
+
+		now = 300_001;
+		const expiryTick = scheduled()?.tick;
+		pending = undefined;
+		expiryTick?.();
+		expect(root.snapshot().agents.map(agent => agent.id)).toEqual(["main"]);
+		expect(scheduled()).toBeUndefined();
 	});
 });
 
 describe("package.json#omp.settings — this package's native default", () => {
-	it("ships tier 'subtle' and exactly the shipped animations with per-entry defaults", async () => {
+	it("ships tier 'subtle', the box settings, and independently optional signal extras", async () => {
 		const pkg = await Bun.file(path.join(import.meta.dir, "..", "package.json")).json();
-		const settings = pkg.omp.settings as Record<string, { default?: unknown }>;
+		const settings = pkg.omp.settings as Record<string, { default?: unknown; env?: string }>;
 
 		expect(settings.animations?.default).toBe("subtle");
-		expect(settings[BOX_SETTING_KEYS.display]?.default).toBe(BOX_DEFAULTS.display);
 		expect(settings[BOX_SETTING_KEYS.detail]?.default).toBe(BOX_DEFAULTS.detail);
 		expect(settings[BOX_SETTING_KEYS.placement]?.default).toBe(BOX_DEFAULTS.placement);
 
-		for (const id of ALL_IDS) expect(settings[id]?.default).toBe(true);
+		// The removed display mode is gone from the advertised surface entirely.
+		expect(settings.display).toBeUndefined();
 
-		const excludedIds = [
-			"agentFleet",
-			"contextConstellation",
-			"contextWeather",
-			"costCandle",
-			"diffBloom",
-			"driftBuoy",
-			"fourHands",
-			"goalHorizon",
-			"memoryCrystals",
-			"promptCharge",
-			"sessionBonsai",
-			"sessionStrata",
-			"todoMeteors",
-			"tokenTide",
-		];
-		for (const id of excludedIds) expect(settings[id]).toBeUndefined();
+		// Core summaries have no enable toggle. Palimpsest is fully removed.
+		for (const id of ["auditTrailBox", "cacheMeter", "palimpsest", "rateLimitTidepool"]) {
+			expect(settings[id]).toBeUndefined();
+		}
+		// Optional groups and the border chrome keep their original keys and env vars.
+		expect(settings.agentBonsai).toMatchObject({ default: true, env: "OMP_ANIMATIONS_AGENT_BONSAI" });
+		expect(settings.breathingBorder).toMatchObject({ default: true, env: "OMP_ANIMATIONS_BREATHING_BORDER" });
+		expect(settings.cadenceEqualizer).toMatchObject({ default: false, env: "OMP_ANIMATIONS_CADENCE_EQUALIZER" });
+		expect(settings.reflectionRipple).toMatchObject({ default: false, env: "OMP_ANIMATIONS_REFLECTION_RIPPLE" });
+		expect(settings[ACTIVITY_ROSTER_SETTING_KEYS.detail]).toMatchObject({
+			default: ACTIVITY_ROSTER_DEFAULTS.detail,
+			env: ACTIVITY_ROSTER_SETTING_ENV.detail,
+		});
+		expect(settings[ACTIVITY_ROSTER_SETTING_KEYS.retentionSeconds]).toMatchObject({
+			default: ACTIVITY_ROSTER_DEFAULTS.retentionMs / 1_000,
+			env: ACTIVITY_ROSTER_SETTING_ENV.retentionSeconds,
+		});
 
-		// Exactly the tier setting + the 3 Animations Box settings + Agent Bonsai's
-		// Box-only toggle, then each standalone animation's enable and appearance keys.
+		for (const id of SIGNAL_EXTRA_IDS) {
+			expect(settings[id]).toMatchObject({ default: true, env: animationsEnvKey(id) });
+		}
+
 		const appearanceKeys = [...ALL_IDS.map(id => `${id}Placement`), ...ALL_IDS.map(id => `${id}AccentColor`)];
-		const boxKeys = Object.values(BOX_SETTING_KEYS);
 		expect(Object.keys(settings).sort()).toEqual(
-			["animations", "agentBonsai", ...boxKeys, ...ALL_IDS, ...appearanceKeys].sort(),
+			[
+				"animations",
+				...Object.values(BOX_SETTING_KEYS),
+				"agentBonsai",
+				...Object.values(ACTIVITY_ROSTER_SETTING_KEYS),
+				"breathingBorder",
+				"cadenceEqualizer",
+				"reflectionRipple",
+				...SIGNAL_EXTRA_IDS,
+				...appearanceKeys,
+			].sort(),
 		);
-		const orderedAnimationKeys = ALL_IDS.flatMap(id => [id, `${id}Placement`, `${id}AccentColor`]);
-		const animationKeySet = new Set(orderedAnimationKeys);
-		expect(ALL_IDS).toEqual([...ALL_IDS].sort());
-		expect(Object.keys(settings).filter(key => animationKeySet.has(key))).toEqual(orderedAnimationKeys);
 	});
 });
