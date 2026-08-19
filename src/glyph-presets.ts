@@ -1,9 +1,9 @@
 /**
- * Terminal symbol-preset-aware glyph lookup for this plugin's keeper segments.
+ * Terminal symbol-preset-aware glyph lookup for this plugin's rows and chrome.
  *
  * Mirrors the host's own three-tier symbol preset system (`unicode`/`nerd`/`ascii`,
  * default `unicode`, read at runtime via `ExtensionContext.ui.theme.getSymbolPreset()`)
- * instead of the hardcoded Unicode literals scattered across this package's keepers.
+ * instead of the hardcoded Unicode literals once scattered across this package.
  * `unicode` values are byte-identical to what shipped before this module existed — zero
  * visual regression for the default, live-in-production posture. `nerd` aliases
  * `unicode` exactly for v1: none of these glyphs were ever true Nerd Font private-use
@@ -13,8 +13,8 @@
  * asserted golden-test surface a wider substitute would break.
  *
  * `GlyphKey` is a flat, extensible union backed by a `Record<SymbolPreset,
- * Record<GlyphKey, string>>` table. Extend by adding more union members and table rows
- * — never restructure the shape (Phase 2 builds on this for the other keepers).
+ * Record<GlyphKey, string>>` table. Extend by adding more union members and table
+ * rows — never restructure the shape.
  */
 import type { SymbolPreset } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 
@@ -60,7 +60,7 @@ export type GlyphKey =
 	| "reflectionRipple.ring.3"
 	| "reflectionRipple.ring.4";
 
-/** Breathing border's `GLYPH_RAMP`, the Animations Box's badge literals, and every other keeper's own badge/status/ramp glyphs — the original hardcoded values, unchanged. */
+/** The border ramp, the Animations Box's badge literals, and every row's own badge/status/ramp glyphs — the original hardcoded values, unchanged. */
 const UNICODE_GLYPHS: Record<GlyphKey, string> = {
 	"border.ramp.0": "·",
 	"border.ramp.1": "─",
@@ -181,7 +181,7 @@ const BORDER_RAMP_KEYS = [
 	"border.ramp.3",
 ] as const satisfies readonly GlyphKey[];
 
-/** The breathing border's dimmest-to-heaviest ramp, resolved for one preset — feeds `breathing-border/breath.ts`'s `brightnessGlyph` bucket lookup. */
+/** The breathing border's dimmest-to-heaviest ramp, resolved for one preset — the `border.ramp.*` rows of the table above, in bucket order. */
 export function resolveGlyphRamp(preset: SymbolPreset): readonly string[] {
 	return BORDER_RAMP_KEYS.map(key => resolveGlyph(key, preset));
 }

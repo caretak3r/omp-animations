@@ -4,18 +4,23 @@ import type { MotionPolicy } from "./motion-policy";
 /**
  * Clock/scheduler seam so tests drive frames deterministically without real
  * timers. `start` begins a repeating tick every `intervalMs` and returns a stop
- * function; `now` supplies the monotonic time used to derive elapsed-ms.
+ * function; `now` supplies the single time base every reading in the plugin
+ * shares. That base is wall-clock epoch ms, not `performance.now`: elapsed-ms
+ * deltas do not care, but absolute provider instants do — a rate-limit
+ * `resetAtMs` parsed out of an RFC3339 header is epoch ms, and subtracting a
+ * process-relative clock from it renders an epoch-sized ETA
+ * (`resets 29779368m`) on every real session.
  */
 export interface FrameScheduler {
-	/** Monotonic clock in milliseconds. */
+	/** Wall-clock milliseconds since the Unix epoch. */
 	now(): number;
 	/** Begin ticking every `intervalMs`. Returns a function that stops the tick. */
 	start(intervalMs: number, tick: () => void): () => void;
 }
 
-/** Default scheduler backed by `performance.now` + `setInterval`/`clearInterval`. */
+/** Default scheduler backed by `Date.now` + `setInterval`/`clearInterval`. */
 export const DEFAULT_FRAME_SCHEDULER: FrameScheduler = {
-	now: () => performance.now(),
+	now: () => Date.now(),
 	start(intervalMs, tick) {
 		const id = setInterval(tick, intervalMs);
 		return () => clearInterval(id);

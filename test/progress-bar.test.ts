@@ -67,7 +67,15 @@ describe("renderProgressBar", () => {
 		for (const ch of bar) expect(ch.charCodeAt(0)).toBeLessThan(128);
 	});
 
-	it("nerd preset is identical to unicode", () => {
+	it("keeps the default unicode bar on the whole-cell glyph alphabet at every percentage", () => {
+		for (let percentage = 0; percentage <= 100; percentage++) {
+			const bar = renderProgressBar(percentage / 100, idTheme, "accent", "dim", "unicode");
+			expect(bar).not.toMatch(/[\u2589-\u258f]/u);
+			expect(bar.slice(1, -1)).toHaveLength(PROGRESS_BAR_CELLS);
+		}
+	});
+
+	it("nerd preset matches unicode at exact whole-cell ratios", () => {
 		expect(renderProgressBar(0.6, idTheme, "accent", "dim", "nerd")).toBe(
 			renderProgressBar(0.6, idTheme, "accent", "dim", "unicode"),
 		);
@@ -78,7 +86,7 @@ describe("renderProgressBar", () => {
 	});
 });
 
-describe("renderProgressBar — eighth-block sub-cell resolution (unicode/nerd only)", () => {
+describe("renderProgressBar — eighth-block sub-cell resolution (nerd opt-in only)", () => {
 	// Test all 8 sub-cell states at specific ratios
 	const eighthsCases: Array<{ ratio: number; expected: string; desc: string }> = [
 		{ ratio: 0.0125, expected: `[▏${"░".repeat(9)}]`, desc: "1/8 in first cell" },
@@ -92,23 +100,23 @@ describe("renderProgressBar — eighth-block sub-cell resolution (unicode/nerd o
 
 	for (const { ratio, expected, desc } of eighthsCases) {
 		it(`renders ${desc} at ratio ${ratio}`, () => {
-			expect(renderProgressBar(ratio, idTheme, "accent")).toBe(expected);
+			expect(renderProgressBar(ratio, idTheme, "accent", "dim", "nerd")).toBe(expected);
 		});
 	}
 
 	it("renders 7 full + 6/8 partial at ratio 0.78", () => {
 		// 0.78 * 10 = 7.8 → floor=7, (0.8 * 8) = 6.4 → round=6 → ▊
-		expect(renderProgressBar(0.78, idTheme, "accent")).toBe(`[${"█".repeat(7)}▊${"░".repeat(2)}]`);
+		expect(renderProgressBar(0.78, idTheme, "accent", "dim", "nerd")).toBe(`[${"█".repeat(7)}▊${"░".repeat(2)}]`);
 	});
 
 	it("renders 5 full + 4/8 partial at ratio 0.55", () => {
 		// 0.55 * 10 = 5.5 → floor=5, (0.5 * 8) = 4.0 → round=4 → ▌
-		expect(renderProgressBar(0.55, idTheme, "accent")).toBe(`[${"█".repeat(5)}▌${"░".repeat(4)}]`);
+		expect(renderProgressBar(0.55, idTheme, "accent", "dim", "nerd")).toBe(`[${"█".repeat(5)}▌${"░".repeat(4)}]`);
 	});
 
 	it("carries eighths=8 to next full cell", () => {
 		// 0.09375 * 10 = 0.9375 → floor=0, (0.9375 * 8) = 7.5 → round=8 → carry → 1 full, 0 eighths
-		expect(renderProgressBar(0.09375, idTheme, "accent")).toBe(`[█${"░".repeat(9)}]`);
+		expect(renderProgressBar(0.09375, idTheme, "accent", "dim", "nerd")).toBe(`[█${"░".repeat(9)}]`);
 	});
 
 	it("exact whole-cell ratios render byte-identical to pre-eighths (all full or empty, no partial)", () => {
@@ -120,10 +128,9 @@ describe("renderProgressBar — eighth-block sub-cell resolution (unicode/nerd o
 		expect(renderProgressBar(1.0, idTheme, "accent")).toBe(`[${"█".repeat(10)}]`);
 	});
 
-	it("nerd preset uses eighths (identical to unicode)", () => {
-		expect(renderProgressBar(0.78, idTheme, "accent", "dim", "nerd")).toBe(
-			renderProgressBar(0.78, idTheme, "accent", "dim", "unicode"),
-		);
+	it("keeps eighths reachable through the nerd preset", () => {
+		expect(renderProgressBar(0.78, idTheme, "accent", "dim", "nerd")).toBe(`[${"█".repeat(7)}▊${"░".repeat(2)}]`);
+		expect(renderProgressBar(0.78, idTheme, "accent", "dim", "unicode")).toBe(`[${"█".repeat(8)}${"░".repeat(2)}]`);
 	});
 });
 
