@@ -1,13 +1,11 @@
 /**
- * Pure math for the breathing border: an inhale/exhale luminance envelope, a
- * traveling pulse position derived from the same envelope phase, an exhale
- * decay curve for the post-`agent_end` wind-down, and brightness->glyph/token
- * bucketing. Every function is a deterministic function of its numeric
+ * Pure math for the breathing border: an inhale/exhale luminance envelope, an
+ * exhale decay curve for the post-`agent_end` wind-down, cadence modulation
+ * from turn duration, and brightness->token bucketing for the Audit Box's
+ * border chrome. Every function is a deterministic function of its numeric
  * inputs — no wall-clock reads — so frames are byte-stable given an injected
  * clock.
  */
-import type { SymbolPreset } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
-import { resolveGlyphRamp } from "../glyph-presets";
 
 /** Default full inhale+exhale cycle while the agent is actively working. */
 export const BASE_BREATH_PERIOD_MS = 8000;
@@ -17,9 +15,6 @@ export const MIN_BREATH_PERIOD_MS = 4000;
 export const MAX_BREATH_PERIOD_MS = 12_000;
 /** Duration of the single wind-down exhale fired on `agent_end`. */
 export const EXHALE_DURATION_MS = 2000;
-
-/** The resting border character; always used for the non-pulsing span of a row. */
-export const BORDER_CHAR = "─";
 
 /**
  * Map a recent turn's wall-clock duration to a breath period: quicker turns
@@ -57,30 +52,6 @@ export function exhaleEnvelope(elapsedSinceEndMs: number, durationMs: number): n
 	if (durationMs <= 0 || elapsedSinceEndMs >= durationMs) return 0;
 	if (elapsedSinceEndMs <= 0) return 1;
 	return (1 + Math.cos(Math.PI * (elapsedSinceEndMs / durationMs))) / 2;
-}
-
-/**
- * Column index (0..width-1) of the traveling pulse for the `full` tier,
- * reusing the same envelope phase so the pulse is brightest mid-lap and
- * fades in/out at the lap's start/end.
- */
-export function pulsePosition(elapsedMs: number, periodMs: number, width: number): number {
-	if (width <= 0 || periodMs <= 0) return 0;
-	const phase = (((elapsedMs % periodMs) + periodMs) % periodMs) / periodMs;
-	return Math.min(width - 1, Math.floor(phase * width));
-}
-
-/**
- * Bucket a 0..1 brightness into a border-weight glyph, dimmest to heaviest, resolved
- * for `preset` via `../glyph-presets.ts` (`GLYPH_RAMP`'s original hardcoded values live
- * there now as the `unicode` tier). Non-finite input (e.g. `NaN`) falls back to the
- * dimmest glyph rather than an out-of-bounds lookup. Defaults to `"unicode"` — today's
- * hardcoded ramp — for every caller that doesn't yet thread a live preset through.
- */
-export function brightnessGlyph(brightness: number, preset: SymbolPreset = "unicode"): string {
-	const ramp = resolveGlyphRamp(preset);
-	const idx = Math.min(ramp.length - 1, Math.max(0, Math.floor(brightness * ramp.length)));
-	return ramp[idx] ?? ramp[0];
 }
 
 export type BorderBrightnessToken = "borderMuted" | "border" | "borderAccent";

@@ -59,8 +59,8 @@ export class BreathingBorderState {
 
 	/**
 	 * Advance past a finished exhale. Returns `true` exactly once, on the
-	 * `exhaling` -> `idle` transition — the caller's cue to tear the animated
-	 * mount down to the static widget (zero further frame-clock subscriptions).
+	 * `exhaling` -> `idle` transition — the caller's cue that the border has
+	 * gone perfectly still and every later frame is the same resting border.
 	 */
 	settleIfDone(now: number): boolean {
 		if (this.#phase !== "exhaling") return false;

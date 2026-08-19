@@ -54,8 +54,8 @@ export class ReflectionRippleState {
 
 	/**
 	 * Advance past a finished ripple. Returns `true` exactly once, on the
-	 * `rippling` -> `idle` transition — the caller's cue to tear the animated
-	 * mount down to a static widget (zero further frame-clock subscriptions).
+	 * `rippling` -> `idle` transition — the Audit Box's cue that the line has
+	 * gone quiet and no longer needs per-frame ripple math.
 	 */
 	settleIfDone(now: number): boolean {
 		if (this.#phase !== "rippling") return false;
