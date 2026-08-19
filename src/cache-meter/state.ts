@@ -9,7 +9,7 @@
  * reported uncached input, never a cache write, so a freshly warmed prefix is
  * never mistaken for either reuse or a miss. Ported from the coding-agent's
  * own cache-meter prototype (`packages/coding-agent/src/cache-meter/state.ts`)
- * — its token accounting is sound, only its static widget wasn't.
+ * — its token accounting is sound, only its static row wasn't.
  *
  * Totals are kept both session-wide and per provider+model, because a session
  * that switches models mid-stream has one cache lineage per model: folding
@@ -25,7 +25,7 @@
  *   that has never shown a derivable rate reports `undefined` savings, not a
  *   fabricated zero.
  * - **Invalidation attribution** — a bare `invalidationCount` says something
- *   broke but not what. `recordEvent` lets the controller mark the last thing
+ *   broke but not what. `recordEvent` lets the Audit Box mark the last thing
  *   that happened (a compaction, an auto-compaction, a session switch); this
  *   module also detects a provider/model switch on its own. A cache
  *   invalidation is then credited to whichever of those happened most
@@ -47,7 +47,7 @@ export interface CacheUsageSample {
 	readonly totalTokens: number;
 	/**
 	 * Dollar cost for this request. `Usage.cost` (`@oh-my-pi/pi-catalog`) is a
-	 * required field on every real host sample — the controller always
+	 * required field on every real host sample — the Audit Box always
 	 * supplies it — but stays optional here so this type keeps its own
 	 * "minimal, dependency-free" contract rather than assuming the caller has
 	 * a full `Usage`.
@@ -72,7 +72,7 @@ export interface CacheCttlSample {
 	readonly ephemeral1h?: number;
 }
 
-/** One finalized assistant response, as the controller adapts it off `message_end`. */
+/** One finalized assistant response, as the Audit Box adapts it off `message_end`. */
 export interface CacheRequestSample {
 	readonly provider: string;
 	readonly model: string;
@@ -93,9 +93,12 @@ export const MIN_CACHE_FOOTPRINT = 2_048;
  * Pure, value-only port of the host's own `detectCacheInvalidation`
  * (`@oh-my-pi/pi-coding-agent`'s `modes/components/cache-invalidation-marker.ts`,
  * verified in the installed package). That module cannot be imported here as a
- * value — see `src/index.ts`'s header comment for the darwin-arm64
- * native-binding blocker this whole package works around — so its semantics
- * are reproduced by hand and must be kept in sync by hand too.
+ * value: it pulls in the theme singleton at module load, and that value import
+ * throws on darwin-arm64 without a built native `.node` for this platform —
+ * the same blocker this whole package works around by staying on `import type`
+ * for `@oh-my-pi/pi-coding-agent` internals (see `src/index.ts`'s header
+ * comment). So its semantics are reproduced by hand here as a pure local
+ * function, and must be kept in sync by hand too.
  *
  * Flags only a demonstrably warm -> cold transition: `prev` must have actually
  * read a meaningful prefix back from cache, and `current` collapsed to zero
@@ -120,8 +123,8 @@ export function detectCacheInvalidation(
 /**
  * What most recently happened that could plausibly explain a cache
  * invalidation. `"model-switch"` is detected internally by {@link
- * CacheMeterState.recordUsage}; the other causes are reported by the
- * controller via {@link CacheMeterState.recordEvent}. `"unattributed"` is
+ * CacheMeterState.recordUsage}; the other causes are reported by the Audit
+ * Box via {@link CacheMeterState.recordEvent}. `"unattributed"` is
  * never stored as an event — it's only ever the attribution result when no
  * event is recent enough to credit.
  */
@@ -338,7 +341,7 @@ export class CacheMeterState {
 	 * user-visible invalidation.
 	 *
 	 * `atMs` timestamps the sample for invalidation attribution and cost
-	 * bookkeeping; it defaults to wall-clock time but the controller always
+	 * bookkeeping; it defaults to wall-clock time but the Audit Box always
 	 * passes its scheduler clock so callers stay deterministic under test.
 	 */
 	recordUsage(sample: CacheRequestSample, atMs: number = Date.now()): { recorded: boolean; invalidated: boolean } {

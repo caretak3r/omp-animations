@@ -1,6 +1,21 @@
+/**
+ * Audit Trail — one authoritative working-set ledger and nothing else.
+ *
+ * There is no standalone row: the Audit Box is this signal's only visual
+ * surface, and it draws {@link renderAuditMeterRow} from the very
+ * {@link AuditLedgerState} the registrar injects here. This factory exists for
+ * the parts the box cannot own — the {@link AuditTrailService} that turns tool
+ * results into ledger transitions, the off-path disk-divergence probe it
+ * schedules, and the `/audit-trail` panel plus its `remedy` sub-command.
+ *
+ * Evidence is gathered from tool results (`read`/`write`/`edit`, plus the
+ * narrow set of `bash` invocations that dump a file), turn boundaries,
+ * compactions and session teardown — never by asking the user to label
+ * anything.
+ */
 import { isAbsolute, resolve } from "node:path";
 import type { ExtensionContext, ExtensionFactory } from "@oh-my-pi/pi-coding-agent";
-import type { ExtensionCommandContext, WidgetPlacement } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
+import type { ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
 import type {
 	BashToolResultEvent,
 	EditToolResultEvent,
@@ -9,20 +24,17 @@ import type {
 	WriteToolResultEvent,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 import type { AccentColor } from "../appearance";
-import type { MotionSetting } from "../kit";
-import { type AuditTrailBoxContext, AuditTrailBoxController } from "./controller";
 import { hashContent, type ProbeSource } from "./probe";
 import { formatRemedyPlan } from "./remedy";
+import { auditColors, renderAuditPanel } from "./render";
 import { AuditTrailService } from "./service";
 import { AuditLedgerState, type TouchObservation } from "./state";
-import { auditColors, renderAuditPanel } from "./widget";
 
-export * from "./controller";
 export * from "./probe";
 export * from "./remedy";
+export * from "./render";
 export * from "./service";
 export * from "./state";
-export * from "./widget";
 
 /** The slash command this extension registers. */
 export const AUDIT_TRAIL_COMMAND = "audit-trail";
@@ -177,7 +189,7 @@ function asString(value: unknown): string | undefined {
  * cannot do it — `CustomToolResultEvent.toolName` is a bare `string`, so a
  * plain `switch` leaves the union unnarrowed — and the core dropped its
  * `isToolResultEventType` helper from the published surface. Same predicate
- * idiom Diff Bloom's controller uses for `edit`.
+ * idiom Diff Bloom uses for `edit`.
  */
 function isReadResult(event: ToolResultEvent): event is ReadToolResultEvent {
 	return event.toolName === "read";
@@ -197,7 +209,7 @@ function isBashResult(event: ToolResultEvent): event is BashToolResultEvent {
 
 /**
  * Everything the ledger should learn from one tool result. Pure: no clock, no
- * filesystem, no controller — which is what makes the adapter's per-tool
+ * filesystem, no service — which is what makes the adapter's per-tool
  * quirks (partial reads, multi-file edits, pruned snapshots, shell dumps)
  * testable one case at a time.
  *
@@ -213,105 +225,58 @@ export function auditTouchesFromToolResult(event: ToolResultEvent, cwd: string):
 	return [];
 }
 
-function readMotionSetting(options: AuditTrailBoxExtensionOptions): MotionSetting {
-	const value = options.motionSetting;
-	return value === "off" || value === "subtle" || value === "full" ? value : "full";
-}
-
-function toAuditContext(ctx: ExtensionContext, options: AuditTrailBoxExtensionOptions): AuditTrailBoxContext {
-	return {
-		hasUI: ctx.hasUI,
-		isTTY: process.stdout.isTTY === true,
-		env: Bun.env,
-		motionSetting: readMotionSetting(options),
-		theme: ctx.ui.theme,
-		glyphPreset: ctx.ui.theme.getSymbolPreset(),
-		setWidget: (key, content, widgetOptions) => ctx.ui.setWidget(key, content, widgetOptions),
-	};
-}
-
 /**
- * Audit Trail service: the authoritative working-set ledger, off-path disk
- * probe, `/audit-trail` panel, and remedy command. A standalone row is optional;
- * the canonical Audit Box consumes the same injected state without replaying
- * audit events.
- *
- * Evidence is gathered from tool results (`read`/`write`/`edit`, plus the
- * narrow set of `bash` invocations that dump a file), turn boundaries,
- * compactions and session teardown — never by asking the user to label
- * anything.
+ * Everything the registrar injects. All optional: with nothing passed the
+ * service owns a private ledger, probes the real filesystem, and paints the
+ * `/audit-trail` panel in the built-in palette.
  */
 export interface AuditTrailBoxExtensionOptions {
-	/** Motion tier injected by the registrar; defaults to "full" when unset. */
-	motionSetting?: MotionSetting;
-	/** Widget placement injected by the registrar; defaults to "belowEditor" when unset. */
-	placement?: WidgetPlacement;
 	/** Accent override for the primary accent slot (the box badge); defaults to the built-in palette when unset. */
 	accentColor?: AccentColor;
 	/** Filesystem seam for the divergence probe. Defaults to the real one; tests inject a fake. */
 	probeSource?: ProbeSource;
 	/** Shared authoritative ledger consumed by the Audit Box. */
 	state?: AuditLedgerState;
-	/** Keep the service and command but mount no standalone widget. */
-	headless?: boolean;
 	/** Called after the authoritative ledger changes, including asynchronous probe results. */
 	onChange?: () => void;
 }
 
+/**
+ * Wires the ledger into the session: tool results and turn boundaries feed
+ * {@link AuditTrailService}, and `/audit-trail` prints the panel it owns. The
+ * Audit Box draws the row from the same {@link AuditLedgerState}, so this
+ * factory mounts no widget of its own.
+ */
 export function createAuditTrailBoxExtension(options: AuditTrailBoxExtensionOptions = {}): ExtensionFactory {
 	return api => {
 		const state = options.state ?? new AuditLedgerState();
-		const controller = options.headless
-			? undefined
-			: new AuditTrailBoxController({
-					placement: options.placement,
-					accentColor: options.accentColor,
-					probeSource: options.probeSource,
-					state,
-					onChange: options.onChange,
-				});
-		const service = options.headless
-			? new AuditTrailService({ probeSource: options.probeSource, state, onChange: options.onChange })
-			: undefined;
+		const service = new AuditTrailService({ probeSource: options.probeSource, state, onChange: options.onChange });
 
 		api.on("tool_result", (event, ctx) => {
 			if (!ctx.hasUI) return;
 			for (const touch of auditTouchesFromToolResult(event, ctx.cwd)) {
-				if (controller !== undefined) {
-					const audit = toAuditContext(ctx, options);
-					if (touch.kind === "read") controller.noteRead(touch.path, touch.observed, audit);
-					else controller.noteWrite(touch.path, touch.observed, audit);
-				} else if (touch.kind === "read") {
-					service?.noteRead(touch.path, touch.observed);
-				} else {
-					service?.noteWrite(touch.path, touch.observed);
-				}
+				if (touch.kind === "read") service.noteRead(touch.path, touch.observed);
+				else service.noteWrite(touch.path, touch.observed);
 			}
 		});
 
 		api.on("turn_end", (_event, ctx) => {
 			if (!ctx.hasUI) return;
-			if (controller !== undefined) controller.noteTurn(toAuditContext(ctx, options));
-			else service?.noteTurn();
+			service.noteTurn();
 		});
 
 		const noteRecovery = (ctx: ExtensionContext): void => {
 			if (!ctx.hasUI) return;
-			if (controller !== undefined) controller.noteRecovery(toAuditContext(ctx, options));
-			else service?.noteRecovery();
+			service.noteRecovery();
 		};
 		api.on("session_compact", (_event, ctx) => noteRecovery(ctx));
 		api.on("auto_compaction_end", (_event, ctx) => noteRecovery(ctx));
 
 		api.on("session_switch", (_event, ctx) => {
 			if (!ctx.hasUI) return;
-			if (controller !== undefined) controller.noteSessionSwitch(toAuditContext(ctx, options));
-			else service?.noteSessionSwitch();
+			service.noteSessionSwitch();
 		});
-		api.on("session_shutdown", (_event, ctx) => {
-			if (controller !== undefined) controller.dispose(toAuditContext(ctx, options));
-			else service?.noteSessionSwitch();
-		});
+		api.on("session_shutdown", () => service.noteSessionSwitch());
 
 		api.registerCommand(AUDIT_TRAIL_COMMAND, {
 			description: "Working-set audit: the tracked paths, or `remedy` for what to re-read before touching it again",
@@ -327,20 +292,16 @@ export function createAuditTrailBoxExtension(options: AuditTrailBoxExtensionOpti
 					: null,
 			handler: async (args, ctx: ExtensionCommandContext) => {
 				if (!ctx.hasUI) return;
-				const audit = toAuditContext(ctx, options);
 				if (args.trim().toLowerCase() === "remedy") {
-					const plan = controller !== undefined ? await controller.remedy(audit) : await service?.remedy();
-					if (plan === undefined) return;
+					const plan = await service.remedy();
 					ctx.ui.notify(formatRemedyPlan(plan).join("\n"), plan.mustReread.length > 0 ? "warning" : "info");
 					return;
 				}
-				const panel =
-					controller !== undefined
-						? controller.panel(audit)
-						: renderAuditPanel(state.snapshot(), audit.theme, {
-								colors: auditColors(options.accentColor),
-								preset: audit.glyphPreset,
-							});
+				const theme = ctx.ui.theme;
+				const panel = renderAuditPanel(state.snapshot(), theme, {
+					colors: auditColors(options.accentColor),
+					preset: theme.getSymbolPreset(),
+				});
 				ctx.ui.notify(panel.join("\n"), "info");
 			},
 		});

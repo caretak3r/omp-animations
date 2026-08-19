@@ -6,7 +6,7 @@
  * the user to label anything. The model is deliberately free of I/O: reads,
  * writes and disk probes all arrive as plain method calls carrying
  * already-computed hashes, which keeps the whole classifier deterministic and
- * unit-testable, and leaves hashing/scheduling to the controller.
+ * unit-testable, and leaves hashing/scheduling to {@link AuditTrailService}.
  *
  * Five signal families feed the classifier, matching the bead's design:
  * - `ledger`    — read/write accounting: repeated reads of one path, or a path
@@ -262,7 +262,7 @@ function freeze(record: MutableRecord): PathRecord {
  *
  * Every method is a plain state transition — no timers, no filesystem, no
  * randomness — so the whole classifier can be driven turn by turn in tests. The
- * controller adapts `tool_call`/`tool_result` events into {@link noteRead} /
+ * extension adapts `tool_result` events into {@link noteRead} /
  * {@link noteWrite}, drives {@link noteProbe} off the frame clock, and clears
  * the tracker on session teardown via {@link noteSessionSwitch}.
  */

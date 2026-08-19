@@ -1,13 +1,12 @@
 /**
  * Audit Trail Box — the pure renderers.
  *
- * Three surfaces, one snapshot, no duplicated state:
- * - {@link renderAuditMeterRow} is the compact glyph+counts line. It takes an
- *   explicit width and degrades in tiers, ending at a single count, so the same
- *   function serves both the ambient widget (which is handed a real width) and
- *   the footer status line (whose width the controller supplies).
- * - {@link renderAuditPanel} is the risk-sorted table behind the slash command.
- * - {@link renderAuditOffText} is the static one-liner for the `off` motion tier.
+ * Two surfaces, one snapshot, no duplicated state:
+ * - {@link renderAuditMeterRow} is the compact glyph+counts line the Audit Box
+ *   draws for this signal. It takes an explicit width and degrades in tiers,
+ *   ending at a single count, so the box can hand it whatever column budget is
+ *   left after the other signals have taken theirs.
+ * - {@link renderAuditPanel} is the risk-sorted table behind `/audit-trail`.
  *
  * Everything here is a pure function of an {@link AuditSnapshot} plus a phase —
  * no wall-clock reads, no filesystem, no state of its own.
@@ -15,8 +14,6 @@
 import type { SymbolPreset, Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import { type AccentColor, accentToThemeColor } from "../appearance";
 import { resolveGlyph } from "../glyph-presets";
-import type { AnimatedWidgetOptions, FrameScheduler, MotionPolicy } from "../kit";
-import { AnimatedWidget } from "../kit";
 import { hyperlinkPath } from "../osc8-hyperlink";
 import type { RenderTier } from "../terminal-capabilities";
 import type { AuditSnapshot, LedgerMetrics, PathStatus } from "./state";
@@ -54,9 +51,9 @@ export const AUDIT_TRAIL_BOX_COLORS: AuditTrailBoxColors = {
 };
 
 /**
- * The palette with the accent slot applied. Shared by the widget and the
- * controller's status line so an accent override lands on both surfaces from one
- * place; the semantic risk ramp is deliberately not overridable.
+ * The palette with the accent slot applied. Shared by the Audit Box row and the
+ * `/audit-trail` panel so an accent override lands on both from one place; the
+ * semantic risk ramp is deliberately not overridable.
  */
 export function auditColors(accentColor?: AccentColor): AuditTrailBoxColors {
 	return accentColor === undefined
@@ -85,7 +82,7 @@ export function badgePulseGlyph(preset: SymbolPreset = "unicode"): string {
 	return resolveGlyph("auditTrail.badgePulse", preset);
 }
 
-/** Full period of the alarm pulse, in ms. Slow on purpose — an ambient row that strobes is a row people turn off. */
+/** Full period of the alarm pulse, in ms. Slow on purpose — a box row that strobes is a box people turn off. */
 export const PULSE_PERIOD_MS = 1_200;
 
 /** Rows the panel prints before collapsing to a remainder count. */
@@ -274,81 +271,4 @@ export function renderAuditPanel(
 		),
 	);
 	return lines;
-}
-
-/**
- * Static one-line fallback for the motion-`off` tier: no color, no phase, no
- * frame clock — just the counts that matter, leading with risk.
- */
-export function renderAuditOffText(snapshot: AuditSnapshot, preset: SymbolPreset = "unicode"): string {
-	const badge = badgeGlyph(preset);
-	const top = topRiskStatus(snapshot);
-	if (top === undefined) return `${badge} ${IDLE_TEXT}`;
-	const cells = STATUS_RISK_ORDER.filter(status => snapshot.counts[status] > 0).map(
-		status => `${snapshot.counts[status]} ${status}`,
-	);
-	return `${badge} ${snapshot.paths.length} tracked · ${cells.join(", ")}`;
-}
-
-/** Minimal clock seam the widget needs — shared with the controller so the pulse phase and probe timestamps agree. */
-export type AuditTrailBoxClock = Pick<FrameScheduler, "now">;
-
-/** Minimal state seam the widget needs. */
-export interface AuditTrailBoxWidgetState {
-	snapshot(): AuditSnapshot;
-}
-
-export interface AuditTrailBoxWidgetOptions extends AnimatedWidgetOptions {
-	state: AuditTrailBoxWidgetState;
-	theme: AuditTrailBoxTheme;
-	/** Same clock the controller stamps probe ticks with — NOT the host's mount-relative elapsed-ms. */
-	clock: AuditTrailBoxClock;
-	/** Accent override for the primary accent slot (the box badge); `undefined` keeps the built-in palette. */
-	accentColor?: AccentColor;
-	/** The host's live symbol preset; `undefined` keeps the `"unicode"` default (see `../glyph-presets.ts`). */
-	glyphPreset?: SymbolPreset;
-}
-
-/**
- * Ambient widget for the working-set meter. A thin renderer over the shared
- * {@link AuditLedgerState}: each frame it takes a snapshot and draws the compact
- * row at the current width and live {@link MotionPolicy} tier. Reads the injected
- * {@link AuditTrailBoxClock} rather than `this.elapsedMs` for the same reason as
- * every other feature in the suite — the host's frame ticks drive repaint
- * cadence, not the pulse phase, so mounting after the first tracked path does
- * not skew it. The {@link AnimatedWidget} base owns the subscribe-on-mount /
- * unsubscribe-on-dispose lifecycle.
- */
-export class AuditTrailBoxWidget extends AnimatedWidget {
-	#state: AuditTrailBoxWidgetState;
-	#theme: AuditTrailBoxTheme;
-	#policy: MotionPolicy;
-	#clock: AuditTrailBoxClock;
-	#colors: AuditTrailBoxColors;
-	#glyphPreset: SymbolPreset;
-
-	constructor(options: AuditTrailBoxWidgetOptions) {
-		super(options);
-		this.#state = options.state;
-		this.#theme = options.theme;
-		this.#policy = options.policy;
-		this.#clock = options.clock;
-		this.#colors = auditColors(options.accentColor);
-		this.#glyphPreset = options.glyphPreset ?? "unicode";
-	}
-
-	renderFrame(width: number): readonly string[] {
-		const tier = this.#policy.tier === "full" ? "full" : "subtle";
-		return [
-			renderAuditMeterRow(
-				this.#state.snapshot(),
-				width,
-				this.#clock.now(),
-				this.#theme,
-				tier,
-				this.#colors,
-				this.#glyphPreset,
-			),
-		];
-	}
 }

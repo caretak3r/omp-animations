@@ -1,26 +1,26 @@
 /**
- * Cache Meter — the pure renderers plus the animated widget.
+ * Cache Meter — the pure renderers behind the Audit Box's cache row and the
+ * `/cache` panel.
  *
- * One row renderer serves every surface: the ambient widget (a real,
- * shrinking terminal width), the `off`-tier static line, and the `/cache`
- * panel behind the slash command. It degrades in tiers, widest first: `full`
- * (money + sparkline + spelled-out READ/WRITE/MISS) -> `wide` (the same
- * money + sparkline, but abbreviated counts — the tier most real terminal
- * panes actually land on) -> `counts` (abbreviated counts, no money) -> a
- * single headline percentage -> the bare badge — copied from Audit Trail
- * Box's `renderAuditMeterRow` width-tiering approach
- * (`../audit-trail-box/widget`). Only `full`/`wide` carry the money/warmth
- * work below; `counts`, `headline`, and `bare` are exactly what they were
- * before it — `wide` in fact reuses their exact abbreviated cells rather
- * than rebuilding them, so there's only one place that text can drift.
+ * One row renderer serves both surfaces: the box's `cache` row (a real,
+ * shrinking terminal width) and the panel's own per-group lines reuse the
+ * same cells and the same money format. It degrades in tiers, widest first:
+ * `full` (money + sparkline + spelled-out READ/WRITE/MISS) -> `wide` (the
+ * same money + sparkline, but abbreviated counts — the tier most real
+ * terminal panes actually land on) -> `counts` (abbreviated counts, no
+ * money) -> a single headline percentage -> the bare badge — copied from
+ * Audit Trail Box's `renderAuditMeterRow` width-tiering approach. Only
+ * `full`/`wide` carry the money/warmth work below; `counts`, `headline`, and
+ * `bare` are exactly what they were before it — `wide` in fact reuses their
+ * exact abbreviated cells rather than rebuilding them, so there's only one
+ * place that text can drift.
  *
- * The percentage that eases and the badge that alerts both track something
- * that just changed, not a lifetime total — see `state.ts`'s `warmth` doc for
- * why a lagging cumulative `hitRate` was replaced there. Concretely:
- * - The hit-fraction percentage eases toward `warmth` (not `hitRate`) after
- *   each recorded request ({@link easedHitRate}, unchanged mechanism — only
- *   its input changed) instead of snapping, so a session with a handful of
- *   huge requests reads as a settling motion rather than a jump-cut.
+ * The percentage drawn and the badge that alerts both track something that
+ * just changed, not a lifetime total — see `state.ts`'s `warmth` doc for why
+ * a lagging cumulative `hitRate` was replaced there. Concretely:
+ * - `displayWarmth` is a caller-supplied `[0, 1]` value defaulting to the
+ *   snapshot's live `warmth` (not `hitRate`), so a session with a handful of
+ *   huge requests reads as the current window rather than a stuck average.
  * - `full`/`wide`'s leading cell is the running dollar savings figure
  *   (`SAVED $1.24`) when one is derivable — the number a human actually acts
  *   on — with the hit fraction demoted to just after the sparkline. When no
@@ -31,17 +31,15 @@
  *   glyph already is current warmth, so the bar said the same thing twice at
  *   the cost of ten columns it doesn't have to spend. The sparkline alone
  *   carries both "warm right now" and the shape of how it got there.
- * - The badge briefly alerts (color + an optional blink in the `full` motion
- *   tier) when a cache invalidation is detected — the one ledger event that
- *   isn't just "the numbers went up," and so the one thing worth a distinct
- *   visual cue.
+ * - The badge briefly alerts (color, plus an optional blink the caller opts
+ *   into by passing `"full"`) when a cache invalidation is detected — the one
+ *   ledger event that isn't just "the numbers went up," and so the one thing
+ *   worth a distinct visual cue.
  */
 import type { SymbolPreset, Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import { formatAge, formatNumber } from "@oh-my-pi/pi-utils";
 import { type AccentColor, accentToThemeColor } from "../appearance";
 import { resolveGlyph } from "../glyph-presets";
-import type { AnimatedWidgetOptions, FrameScheduler, MotionPolicy } from "../kit";
-import { AnimatedWidget } from "../kit";
 import type { CacheEventCause, CacheInvalidationRecord, CacheMeterSnapshot } from "./state";
 
 /** The slice of {@link Theme} the renderers need — just foreground coloring. */
@@ -85,7 +83,7 @@ export function cacheMeterColors(accentColor?: AccentColor): CacheMeterColors {
 export function badgeGlyph(preset: SymbolPreset = "unicode"): string {
 	return resolveGlyph("cacheMeter.badge", preset);
 }
-/** Hollow badge shown on the off-beat of the invalidation blink (`full` motion tier only), resolved for `preset`. */
+/** Hollow badge shown on the off-beat of the invalidation blink (`"full"` tier only), resolved for `preset`. */
 export function badgePulseGlyph(preset: SymbolPreset = "unicode"): string {
 	return resolveGlyph("cacheMeter.badgePulse", preset);
 }
@@ -131,10 +129,10 @@ function paint(cells: readonly Cell[], theme: CacheMeterTheme): string {
 
 /**
  * `alerted` is true while a just-detected invalidation is still within its
- * flash window (the caller — the widget, or the static/panel surfaces, which
- * always pass false — decides that); the badge's color reflects it steadily,
- * and the `full` motion tier additionally blinks the glyph between filled and
- * hollow, mirroring Audit Trail Box's alarm-pulse badge.
+ * flash window (the caller decides that; the `/cache` panel always passes
+ * false); the badge's color reflects it steadily, and the `"full"` tier
+ * additionally blinks the glyph between filled and hollow, mirroring Audit
+ * Trail Box's alarm-pulse badge.
  */
 function badgeCell(
 	alerted: boolean,
@@ -205,18 +203,16 @@ function summarizeInvalidationCauses(invalidations: readonly CacheInvalidationRe
 
 /**
  * Render one compact, width-aware cache-ledger row. `displayWarmth` is the
- * value actually drawn for the percentage that tracks the live window — the
- * widget passes its eased value ({@link easedHitRate} fed `warmth` instead of
- * `hitRate`, see the widget class); every other caller defaults to the
- * snapshot's true current `warmth`. `elapsedMs`/`tier` only drive the
+ * value actually drawn for the percentage that tracks the live window;
+ * callers that have no smoothed value of their own leave it at the default —
+ * the snapshot's true current `warmth`. `elapsedMs`/`tier` only drive the
  * invalidation badge's blink phase.
  *
  * `full` and `wide` carry the money/warmth work; `counts`, `headline`, and
  * `bare` are untouched — `counts` in fact reuses the exact same abbreviated
  * cell objects `wide` builds, so there's only one place that text can drift
- * — and the value that flows into every tier's own `pct` text is still
- * `displayWarmth`, exactly as it was `displayHitRate` before (the rename is
- * the only change there).
+ * — and the value that flows into every tier's own `pct` text is
+ * `displayWarmth`.
  */
 export function renderCacheMeterRow(
 	snapshot: CacheMeterSnapshot,
@@ -281,31 +277,9 @@ export function renderCacheMeterRow(
 	return paint([badge], theme);
 }
 
-/**
- * Static one-line fallback for the motion-`off` tier: plain text, no color,
- * no phase. Cost and savings only ever appear when there's a real dollar
- * figure to show — a session with no cost telemetry (or a $0 one) stays as
- * quiet as it always has.
- */
-export function renderCacheMeterOffText(snapshot: CacheMeterSnapshot, preset: SymbolPreset = "unicode"): string {
-	const badge = badgeGlyph(preset);
-	if (snapshot.promptTokens === 0) return `${badge} ${IDLE_TEXT}`;
-	const pct = `${(snapshot.hitRate * 100).toFixed(1)}%`;
-	const parts = [
-		`${badge} HIT ${pct} (${snapshot.hitCount}/${snapshot.requestCount})`,
-		`R ${formatNumber(snapshot.cacheReadTokens)}`,
-		`W ${formatNumber(snapshot.cacheWriteTokens)}`,
-		`M ${formatNumber(snapshot.missTokens)}`,
-	];
-	if (snapshot.costTotal > 0) parts.push(formatCost(snapshot.costTotal));
-	if (snapshot.savedCost !== undefined) parts.push(`saved ${formatCost(snapshot.savedCost)}`);
-	if (snapshot.invalidationCount > 0) parts.push(`${invalidationGlyph(preset)}${snapshot.invalidationCount}`);
-	return parts.join(" ");
-}
-
 export interface CacheMeterPanelOptions {
 	readonly colors?: CacheMeterColors;
-	/** Reference instant for the invalidation timeline's relative ages; defaults to `Date.now()`. The controller passes its scheduler clock so tests stay deterministic. */
+	/** Reference instant for the invalidation timeline's relative ages; defaults to `Date.now()`. The box passes its scheduler clock so tests stay deterministic. */
 	readonly now?: number;
 	/** The host's live symbol preset (see `../glyph-presets.ts`). Defaults to `"unicode"`. */
 	readonly preset?: SymbolPreset;
@@ -403,9 +377,9 @@ export function renderCacheMeterPanel(
 
 	const totalPct = `${(snapshot.hitRate * 100).toFixed(1)}%`;
 	// Money and TTL only join the totals line when there's a real figure —
-	// same "don't clutter, don't fabricate" rule as the off-tier text. Causes
-	// ride along after the count so `invalidations N` stays intact for anyone
-	// already matching on that substring.
+	// same "don't clutter, don't fabricate" rule the row itself follows for
+	// `SAVED`. Causes ride along after the count so `invalidations N` stays
+	// intact for anyone already matching on that substring.
 	const spentSuffix = snapshot.costTotal > 0 ? ` · SPENT ${formatCost(snapshot.costTotal)}` : "";
 	const savedSuffix = snapshot.savedCost !== undefined ? ` · SAVED ${formatCost(snapshot.savedCost)}` : "";
 	const cttlSuffix =
@@ -421,140 +395,4 @@ export function renderCacheMeterPanel(
 		),
 	);
 	return lines;
-}
-
-/** Ease-out cubic: fast start, slow settle — reads as the percentage "catching up" rather than snapping. */
-function easeOutCubic(t: number): number {
-	const clamped = Math.min(1, Math.max(0, t));
-	return 1 - (1 - clamped) ** 3;
-}
-
-/** Duration of the percentage ease after each recorded request — named for its original use (hit rate), now reused as-is for `warmth`. */
-export const HIT_RATE_EASE_DURATION_MS = 600;
-
-/** How long the badge stays alerted after a detected invalidation. */
-export const INVALIDATION_ALERT_DURATION_MS = 1_200;
-
-/**
- * Interpolate a displayed `[0, 1]` value from `from` toward `to`, easing out
- * over `durationMs` — the widget feeds it `warmth`, not `hitRate`, despite
- * the name; the interpolation itself has never cared what it's easing. Pure
- * function of its numeric inputs — no wall-clock reads — so it is testable
- * without a widget or a frame clock at all.
- */
-export function easedHitRate(
-	from: number,
-	to: number,
-	elapsedMs: number,
-	durationMs: number = HIT_RATE_EASE_DURATION_MS,
-): number {
-	if (durationMs <= 0) return to;
-	return from + (to - from) * easeOutCubic(elapsedMs / durationMs);
-}
-
-/** Minimal clock seam the widget needs — shared with the controller so ease/alert timestamps agree. */
-export type CacheMeterClock = Pick<FrameScheduler, "now">;
-
-/** Minimal state seam the widget needs. */
-export interface CacheMeterWidgetState {
-	snapshot(): CacheMeterSnapshot;
-}
-
-export interface CacheMeterWidgetOptions extends AnimatedWidgetOptions {
-	state: CacheMeterWidgetState;
-	theme: CacheMeterTheme;
-	/** Same clock the controller/scheduler use — NOT the host's mount-relative elapsed-ms. */
-	clock: CacheMeterClock;
-	/** Accent override for the primary accent slot (the badge); `undefined` keeps the built-in palette. */
-	accentColor?: AccentColor;
-	/** The host's live symbol preset; `undefined` keeps the `"unicode"` default (see `../glyph-presets.ts`). */
-	glyphPreset?: SymbolPreset;
-}
-
-/**
- * Ambient widget for the session cache ledger. Each frame it takes a snapshot,
- * advances the hit-rate ease and the invalidation-alert window
- * ({@link onFrame}), then draws the row at the current width and live
- * {@link MotionPolicy} tier. Reads the injected {@link CacheMeterClock} rather
- * than `this.elapsedMs` for the same reason as every other widget in this kit:
- * the host's relative elapsed-ms is anchored to whenever the host's first
- * subscriber attached, not to any particular ledger event, so ease/alert phase
- * math needs its own shared clock seam. The {@link AnimatedWidget} base owns
- * the subscribe-on-mount / unsubscribe-on-dispose lifecycle.
- */
-export class CacheMeterWidget extends AnimatedWidget {
-	#state: CacheMeterWidgetState;
-	#theme: CacheMeterTheme;
-	#policy: MotionPolicy;
-	#clock: CacheMeterClock;
-	#colors: CacheMeterColors;
-	#glyphPreset: SymbolPreset;
-
-	#easeFrom: number;
-	#easeTarget: number;
-	#easeStartMs: number;
-	#lastInvalidationCount: number;
-	#alertUntilMs: number | undefined;
-
-	constructor(options: CacheMeterWidgetOptions) {
-		super(options);
-		this.#state = options.state;
-		this.#theme = options.theme;
-		this.#policy = options.policy;
-		this.#clock = options.clock;
-		this.#colors = cacheMeterColors(options.accentColor);
-		this.#glyphPreset = options.glyphPreset ?? "unicode";
-
-		const snapshot = this.#state.snapshot();
-		this.#easeFrom = snapshot.warmth;
-		this.#easeTarget = snapshot.warmth;
-		this.#easeStartMs = this.#clock.now();
-		this.#lastInvalidationCount = snapshot.invalidationCount;
-	}
-
-	onFrame(_elapsedMs: number): void {
-		const now = this.#clock.now();
-		const snapshot = this.#state.snapshot();
-		if (snapshot.warmth !== this.#easeTarget) {
-			// Re-target from wherever the displayed percentage currently sits, not from
-			// the old target — a second update mid-ease continues smoothly instead of
-			// jumping back.
-			this.#easeFrom = this.#displayWarmth(now);
-			this.#easeTarget = snapshot.warmth;
-			this.#easeStartMs = now;
-		}
-		if (snapshot.invalidationCount > this.#lastInvalidationCount) {
-			this.#alertUntilMs = now + INVALIDATION_ALERT_DURATION_MS;
-		}
-		this.#lastInvalidationCount = snapshot.invalidationCount;
-	}
-
-	renderFrame(width: number): readonly string[] {
-		if (this.#policy.tier === "off") {
-			// Defensive: a live tier change can leave this widget mounted with no frame
-			// subscription (see AnimatedWidget#syncToTier) — render() may still be
-			// invoked (e.g. on resize), so this must degrade to the static line too.
-			return [renderCacheMeterOffText(this.#state.snapshot(), this.#glyphPreset)];
-		}
-		const now = this.#clock.now();
-		const tier = this.#policy.tier === "full" ? "full" : "subtle";
-		const alerted = this.#alertUntilMs !== undefined && now < this.#alertUntilMs;
-		return [
-			renderCacheMeterRow(
-				this.#state.snapshot(),
-				width,
-				now,
-				this.#theme,
-				tier,
-				this.#displayWarmth(now),
-				alerted,
-				this.#colors,
-				this.#glyphPreset,
-			),
-		];
-	}
-
-	#displayWarmth(now: number): number {
-		return easedHitRate(this.#easeFrom, this.#easeTarget, now - this.#easeStartMs);
-	}
 }

@@ -17,9 +17,9 @@ export interface AuditTrailServiceOptions {
 }
 
 /**
- * Nonvisual owner of the audit ledger, divergence probe, and remedy path.
- * Presentation controllers may observe its injected state but never duplicate
- * or replay audit events.
+ * Sole owner of the audit ledger, divergence probe, and remedy path. The Audit
+ * Box reads the same injected {@link AuditLedgerState} to draw its row and never
+ * receives a second copy of the audit events.
  */
 export class AuditTrailService {
 	readonly state: AuditLedgerState;
