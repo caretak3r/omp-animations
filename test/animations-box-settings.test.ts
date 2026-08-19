@@ -1,71 +1,56 @@
 import { describe, expect, it } from "bun:test";
 import {
 	BOX_DEFAULTS,
-	BOX_MIGRATED_ANIMATION_IDS,
 	BOX_OPTIONAL_SEGMENT_IDS,
 	BOX_OPTIONAL_STATUS_SEGMENT_IDS,
 	BOX_REQUIRED_SEGMENT_IDS,
 	BOX_SEGMENT_IDS,
 	BOX_SETTING_ENV,
 	BOX_SETTING_KEYS,
+	REMOVED_DISPLAY_ENV,
+	REMOVED_DISPLAY_KEY,
 	resolveAnimationsBoxConfig,
 	resolveAnimationsBoxConfigFromSources,
 } from "../src/animations-box/settings";
 import { animationsEnvKey } from "../src/appearance";
-import { ANIMATIONS } from "../src/registrar";
-
-const ALL_ANIMATION_IDS = ANIMATIONS.map(a => a.id);
 
 describe("Audit Box segment groups", () => {
-	it("pins the immutable required-summary order and deterministic optional-animation order", () => {
+	it("pins the Audit summary order and deterministic optional-animation order", () => {
 		expect(BOX_REQUIRED_SEGMENT_IDS).toEqual([
+			"contextGauge",
 			"cacheMeter",
 			"auditTrailBox",
 			"rateLimitTidepool",
 			"toolActivity",
-			"palimpsest",
+			"filesLive",
 		]);
 		expect(BOX_OPTIONAL_SEGMENT_IDS).toEqual(["cadenceEqualizer", "reflectionRipple", "agentBonsai"]);
 		expect(BOX_SEGMENT_IDS).toEqual([...BOX_REQUIRED_SEGMENT_IDS, ...BOX_OPTIONAL_STATUS_SEGMENT_IDS]);
-	});
-
-	it("covers every registrar status animation except border chrome, plus the box-owned tally, exactly once", () => {
-		// `toolActivity` has no standalone animation: Tool Constellation was deleted and
-		// the box owns the tally outright (`omp-animations-buv.4`).
-		const expected = [...ALL_ANIMATION_IDS.filter(id => id !== "breathingBorder"), "toolActivity"];
-		expect(expected.sort()).toEqual([...BOX_SEGMENT_IDS].sort());
 		expect(new Set(BOX_SEGMENT_IDS).size).toBe(BOX_SEGMENT_IDS.length);
-	});
-
-	it("migrates the complete standalone registrar set", () => {
-		expect([...BOX_MIGRATED_ANIMATION_IDS].sort()).toEqual(ALL_ANIMATION_IDS.sort());
-		expect(BOX_MIGRATED_ANIMATION_IDS).toHaveLength(ALL_ANIMATION_IDS.length);
 	});
 });
 
 describe("resolveAnimationsBoxConfig — defaults and validation", () => {
-	it("defaults to the box, detailed mode, no status animations, and Agent Bonsai enabled", () => {
+	it("defaults to detailed mode, no status animations, Agent Bonsai on, and a breathing border", () => {
 		const config = resolveAnimationsBoxConfig({});
-		expect(config.display).toBe(BOX_DEFAULTS.display);
-		expect(config.detail).toBe(BOX_DEFAULTS.detail);
-		expect(config.placement).toBe(BOX_DEFAULTS.placement);
-		for (const id of BOX_SEGMENT_IDS) expect(config.enabled[id]).toBe(true);
-		expect(config.optional).toEqual({
-			cadenceEqualizer: false,
-			reflectionRipple: false,
-			agentBonsai: true,
+		expect(config).toEqual({
+			detail: BOX_DEFAULTS.detail,
+			placement: BOX_DEFAULTS.placement,
+			optional: { cadenceEqualizer: false, reflectionRipple: false, agentBonsai: true },
+			breathingBorder: true,
+			contextQuota: BOX_DEFAULTS.contextQuota,
 		});
 	});
 
-	it("accepts each valid display/detail/placement value", () => {
-		expect(resolveAnimationsBoxConfig({ [BOX_SETTING_KEYS.display]: "rows" }).display).toBe("rows");
-		expect(resolveAnimationsBoxConfig({ [BOX_SETTING_KEYS.display]: "both" }).display).toBe("both");
+	it("accepts each valid detail/placement value", () => {
 		expect(resolveAnimationsBoxConfig({ [BOX_SETTING_KEYS.detail]: "simple" }).detail).toBe("simple");
+		expect(resolveAnimationsBoxConfig({ [BOX_SETTING_KEYS.detail]: "detailed" }).detail).toBe("detailed");
 		expect(resolveAnimationsBoxConfig({ [BOX_SETTING_KEYS.placement]: "aboveEditor" }).placement).toBe("aboveEditor");
+		expect(resolveAnimationsBoxConfig({ [BOX_SETTING_KEYS.placement]: "belowEditor" }).placement).toBe("belowEditor");
 	});
 
 	it("falls back to the default on an invalid or malformed value rather than throwing", () => {
-		expect(resolveAnimationsBoxConfig({ [BOX_SETTING_KEYS.display]: "nonsense" }).display).toBe(BOX_DEFAULTS.display);
+		expect(resolveAnimationsBoxConfig({ [BOX_SETTING_KEYS.detail]: "nonsense" }).detail).toBe(BOX_DEFAULTS.detail);
 		expect(resolveAnimationsBoxConfig({ [BOX_SETTING_KEYS.placement]: 42 }).placement).toBe(BOX_DEFAULTS.placement);
 	});
 
@@ -73,33 +58,40 @@ describe("resolveAnimationsBoxConfig — defaults and validation", () => {
 		expect(resolveAnimationsBoxConfig({ [BOX_SETTING_KEYS.detail]: "off" }).detail).toBe(BOX_DEFAULTS.detail);
 	});
 
-	it("resolves standalone enable booleans and optional box toggles independently", () => {
+	it("required summaries have no enable key: a stored false for one changes nothing", () => {
 		const config = resolveAnimationsBoxConfig({
 			cacheMeter: false,
-			cadenceEqualizer: "true",
-			reflectionRipple: false,
+			auditTrailBox: false,
+			rateLimitTidepool: false,
+			toolActivity: false,
+			palimpsest: false,
 		});
-		expect(config.enabled.cacheMeter).toBe(false);
-		expect(config.enabled.cadenceEqualizer).toBe(true);
-		expect(config.enabled.reflectionRipple).toBe(false);
-		expect(config.optional).toEqual({ cadenceEqualizer: true, reflectionRipple: false, agentBonsai: true });
+		expect(config).toEqual(resolveAnimationsBoxConfig({}));
 	});
 
 	it("ignores a stray animationsBoxOnly key entirely — the subset key was dropped, not just renamed", () => {
-		const config = resolveAnimationsBoxConfig({ animationsBoxOnly: "cacheMeter" });
-		for (const id of BOX_SEGMENT_IDS) expect(config.enabled[id]).toBe(true);
+		expect(resolveAnimationsBoxConfig({ animationsBoxOnly: "cacheMeter" })).toEqual(resolveAnimationsBoxConfig({}));
 	});
 
 	it("ignores a stored toolConstellation key — the deleted animation's setting changes nothing", () => {
 		// Tool Constellation was deleted in `omp-animations-buv.4`; the manifest key went
 		// with it. A settings file left over from an older install must resolve identically
-		// to one that never had the key, and must never disable the box-owned `tools` row.
+		// to one that never had the key.
 		expect(resolveAnimationsBoxConfig({ toolConstellation: false })).toEqual(resolveAnimationsBoxConfig({}));
-		expect(resolveAnimationsBoxConfig({ toolConstellation: false }).enabled.toolActivity).toBe(true);
 	});
 
 	it("ignores the deleted OMP_ANIMATIONS_TOOL_CONSTELLATION env fallback", () => {
 		expect(resolveAnimationsBoxConfigFromSources({}, { [animationsEnvKey("toolConstellation")]: "false" })).toEqual(
+			resolveAnimationsBoxConfigFromSources({}, {}),
+		);
+	});
+
+	it("ignores the removed display setting and its env fallback", () => {
+		expect(resolveAnimationsBoxConfig({ [REMOVED_DISPLAY_KEY]: "rows" })).toEqual(resolveAnimationsBoxConfig({}));
+		expect(resolveAnimationsBoxConfigFromSources({ [REMOVED_DISPLAY_KEY]: "both" }, {})).toEqual(
+			resolveAnimationsBoxConfigFromSources({}, {}),
+		);
+		expect(resolveAnimationsBoxConfigFromSources({}, { [REMOVED_DISPLAY_ENV]: "rows" })).toEqual(
 			resolveAnimationsBoxConfigFromSources({}, {}),
 		);
 	});
@@ -110,42 +102,50 @@ describe("resolveAnimationsBoxConfig — defaults and validation", () => {
 		expect(resolveAnimationsBoxConfig({ breathingBorder: "false" }).breathingBorder).toBe(false);
 		expect(resolveAnimationsBoxConfig({ breathingBorder: "true" }).breathingBorder).toBe(true);
 	});
+
+	it("clamps contextQuota into the 5–100 band and falls back on garbage", () => {
+		expect(resolveAnimationsBoxConfig({ [BOX_SETTING_KEYS.contextQuota]: 50 }).contextQuota).toBe(50);
+		expect(resolveAnimationsBoxConfig({ [BOX_SETTING_KEYS.contextQuota]: 1 }).contextQuota).toBe(5);
+		expect(resolveAnimationsBoxConfig({ [BOX_SETTING_KEYS.contextQuota]: 0 }).contextQuota).toBe(5);
+		expect(resolveAnimationsBoxConfig({ [BOX_SETTING_KEYS.contextQuota]: -20 }).contextQuota).toBe(5);
+		expect(resolveAnimationsBoxConfig({ [BOX_SETTING_KEYS.contextQuota]: 400 }).contextQuota).toBe(100);
+		expect(resolveAnimationsBoxConfig({ [BOX_SETTING_KEYS.contextQuota]: "nonsense" }).contextQuota).toBe(
+			BOX_DEFAULTS.contextQuota,
+		);
+		expect(resolveAnimationsBoxConfig({ [BOX_SETTING_KEYS.contextQuota]: null }).contextQuota).toBe(
+			BOX_DEFAULTS.contextQuota,
+		);
+	});
+
+	it("accepts a string quota, since env fallbacks arrive as strings", () => {
+		expect(resolveAnimationsBoxConfig({ [BOX_SETTING_KEYS.contextQuota]: "65" }).contextQuota).toBe(65);
+	});
 });
 
 describe("resolveAnimationsBoxConfigFromSources — stored > env > default precedence", () => {
 	it("prefers stored settings over env, and env over the default, per key", () => {
 		const config = resolveAnimationsBoxConfigFromSources(
-			{ [BOX_SETTING_KEYS.display]: "rows" },
-			{ [BOX_SETTING_ENV.display]: "both", [BOX_SETTING_ENV.detail]: "simple" },
+			{ [BOX_SETTING_KEYS.detail]: "detailed" },
+			{ [BOX_SETTING_ENV.detail]: "simple", [BOX_SETTING_ENV.placement]: "aboveEditor" },
 		);
-		expect(config.display).toBe("rows"); // stored wins over env
-		expect(config.detail).toBe("simple"); // env wins over default (nothing stored)
-		expect(config.placement).toBe(BOX_DEFAULTS.placement); // neither set — default
+		expect(config.detail).toBe("detailed"); // stored wins over env
+		expect(config.placement).toBe("aboveEditor"); // env wins over default (nothing stored)
+		expect(resolveAnimationsBoxConfigFromSources({}, {}).placement).toBe(BOX_DEFAULTS.placement);
 	});
 
-	it("uses the manifest's literal env var names for display/detail/placement", () => {
-		expect(BOX_SETTING_ENV.display).toBe("OMP_ANIMATIONS_DISPLAY");
-		expect(BOX_SETTING_ENV.detail).toBe("OMP_ANIMATIONS_BOX_DETAIL");
-		expect(BOX_SETTING_ENV.placement).toBe("OMP_ANIMATIONS_BOX_PLACEMENT");
-		expect(BOX_SETTING_KEYS.display).toBe("display");
-	});
-
-	it("resolves each segment's enable boolean through the SAME key/env pair its standalone row already uses", () => {
-		const config = resolveAnimationsBoxConfigFromSources(
-			{ cacheMeter: false },
-			{ [animationsEnvKey("cadenceEqualizer")]: "false" },
-		);
-		expect(config.enabled.cacheMeter).toBe(false); // stored
-		expect(config.enabled.cadenceEqualizer).toBe(false); // env
-		expect(config.enabled.palimpsest).toBe(true); // neither — default
-	});
-
-	it("a stored false beats an env true for the same segment", () => {
-		const config = resolveAnimationsBoxConfigFromSources(
-			{ cacheMeter: false },
-			{ [animationsEnvKey("cacheMeter")]: "true" },
-		);
-		expect(config.enabled.cacheMeter).toBe(false);
+	it("uses the manifest's literal keys and env var names, and no longer carries a display key", () => {
+		expect(BOX_SETTING_KEYS).toEqual({
+			detail: "animationsBoxDetail",
+			placement: "animationsBoxPlacement",
+			contextQuota: "animationsContextQuota",
+		});
+		expect(BOX_SETTING_ENV).toEqual({
+			detail: "OMP_ANIMATIONS_BOX_DETAIL",
+			placement: "OMP_ANIMATIONS_BOX_PLACEMENT",
+			contextQuota: "OMP_ANIMATIONS_CONTEXT_QUOTA",
+		});
+		expect(REMOVED_DISPLAY_KEY).toBe("display");
+		expect(REMOVED_DISPLAY_ENV).toBe("OMP_ANIMATIONS_DISPLAY");
 	});
 
 	it("defaults env to Bun.env and never throws on an empty pluginSettings record", () => {
@@ -162,24 +162,21 @@ describe("resolveAnimationsBoxConfigFromSources — stored > env > default prece
 		);
 		expect(stored.breathingBorder).toBe(false); // stored wins over env
 	});
+
+	it("reads the quota from env when nothing is stored, and lets a stored value win", () => {
+		expect(resolveAnimationsBoxConfigFromSources({}, { [BOX_SETTING_ENV.contextQuota]: "60" }).contextQuota).toBe(60);
+		expect(
+			resolveAnimationsBoxConfigFromSources(
+				{ [BOX_SETTING_KEYS.contextQuota]: 90 },
+				{ [BOX_SETTING_ENV.contextQuota]: "60" },
+			).contextQuota,
+		).toBe(90);
+	});
 });
 
 describe("optional animation toggles", () => {
 	it("contains only optional animation ids, so required summaries cannot become user-toggleable", () => {
-		const config = resolveAnimationsBoxConfig({
-			cacheMeter: false,
-			auditTrailBox: false,
-			rateLimitTidepool: false,
-			toolActivity: false,
-			palimpsest: false,
-		});
-		expect(Object.keys(config.optional)).toEqual([...BOX_OPTIONAL_SEGMENT_IDS]);
-		for (const id of BOX_REQUIRED_SEGMENT_IDS) expect(config.enabled[id]).toBe(false);
-		expect(config.optional).toEqual({
-			cadenceEqualizer: false,
-			reflectionRipple: false,
-			agentBonsai: true,
-		});
+		expect(Object.keys(resolveAnimationsBoxConfig({}).optional)).toEqual([...BOX_OPTIONAL_SEGMENT_IDS]);
 	});
 
 	it("round-trips cadence and reflection independently from booleans and string forms", () => {
@@ -229,14 +226,5 @@ describe("optional animation toggles", () => {
 			},
 		);
 		expect(stored.optional).toEqual({ cadenceEqualizer: false, reflectionRipple: true, agentBonsai: true });
-	});
-
-	it("is independent of display; callers still gate whether the box itself mounts", () => {
-		const config = resolveAnimationsBoxConfig({
-			[BOX_SETTING_KEYS.display]: "rows",
-			cadenceEqualizer: true,
-			reflectionRipple: false,
-		});
-		expect(config.optional).toEqual({ cadenceEqualizer: true, reflectionRipple: false, agentBonsai: true });
 	});
 });

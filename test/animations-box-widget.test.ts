@@ -221,6 +221,14 @@ describe("AnimationsBoxWidget — detailed grouped rows", () => {
 		}
 	});
 
+	it("does not prepend a blank separator when an all-optional sidecar becomes visible", () => {
+		const width = 40;
+		const rows = makeWidget({ samples: [], optionalSamples: [CADENCE], detail: "detailed" }).render(width);
+		expect(rows).toHaveLength(3);
+		expect(rows[1]).toContain("cadence");
+		expect(rows[1]).not.toBe(`│ ${" ".repeat(width - BOX_BORDER_COLS)} │`);
+	});
+
 	it("does not add a trailing blank row when no optional animation is visible", () => {
 		const width = 40;
 		const rows = makeWidget({ samples: [ACTIVE, RESTING], detail: "detailed" }).render(width);

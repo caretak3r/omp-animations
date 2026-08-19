@@ -144,6 +144,8 @@ export interface StatusLineContext {
 /** Dot column (1) + gap (2) + label gutter (7) + gap (2) — the phrase starts at column 12. */
 export const STATUS_LINE_PREFIX_COLS = 12;
 const LABEL_COLS = 7;
+/** Preferred column for a wide tail, measured within the rendered status line. */
+const TAIL_START_COL = 45;
 /** Minimum spaces between the phrase body and a right-aligned wide tail. */
 const MIN_TAIL_GAP = 3;
 
@@ -236,12 +238,12 @@ function dropIndex(spans: readonly PhraseSpan[], priorityOf: (span: PhraseSpan) 
  * Render one status line to exactly ≤ `inner` visible columns.
  *
  * Layout: `dot␣␣label··␣␣phrase`, phrase = body spans joined by their
- * separators plus an optional wide-width tail kept beside the final body
- * indicator. Width degradation (spec §3): the wide tail sheds spans first —
- * one at a time, by {@link PhraseSpan.priority} — then body spans in the same
- * order (default: rightmost-first); a final lone span hard-truncates as the
- * safety net. Observes the FULL span list into `ctx.flash` (drops don't reset
- * flash state) before any narrowing.
+ * separators plus an optional wide-width tail aligned at
+ * {@link TAIL_START_COL}. Width degradation (spec §3): the wide tail sheds
+ * spans first, one at a time by {@link PhraseSpan.priority}, then body spans
+ * in the same order (default: rightmost-first). A final lone span
+ * hard-truncates as the safety net. The function observes the full span list
+ * into `ctx.flash` before narrowing, so dropped spans do not reset flash state.
  */
 export function renderStatusLine(line: SegmentLine, inner: number, ctx: StatusLineContext): string {
 	ctx.flash?.observe(ctx.segmentId, line.spans, ctx.now);
@@ -261,7 +263,7 @@ export function renderStatusLine(line: SegmentLine, inner: number, ctx: StatusLi
 	// shed `write` without also losing `uncached`.
 	const tail = line.spans.filter(span => span.wideOnly === true);
 	const bodyWidth = phraseWidth(body);
-	const gap = body.length > 0 ? MIN_TAIL_GAP : 0;
+	const gap = body.length > 0 ? Math.max(MIN_TAIL_GAP, TAIL_START_COL - STATUS_LINE_PREFIX_COLS - bodyWidth) : 0;
 	while (tail.length > 0 && bodyWidth + gap + phraseWidth(tail) > available) {
 		tail.splice(dropIndex(tail, priorityOf), 1);
 	}

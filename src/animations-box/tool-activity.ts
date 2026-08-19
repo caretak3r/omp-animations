@@ -3,8 +3,8 @@
  *
  * The only surviving piece of the deleted Tool Constellation
  * (`omp-animations-buv.4`): a box-owned counter behind the required `tools`
- * row. No star field, no comet, no per-tool particle, no standalone widget —
- * just the tally semantics the row needs.
+ * row. No star field, no comet, no per-tool particle — just the tally
+ * semantics the row needs.
  *
  * Division of labour with the `audit` row is deliberate: the audit ledger is
  * the authoritative owner of file read/write metrics and already prints

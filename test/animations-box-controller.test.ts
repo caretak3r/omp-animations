@@ -17,10 +17,16 @@ import type {
 	TurnStartEvent,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 import { formatNumber } from "@oh-my-pi/pi-utils";
-import { type AnimationsBoxContext, AnimationsBoxController, BOX_WIDGET_KEY } from "../src/animations-box/controller";
+import {
+	type AnimationsBoxContext,
+	AnimationsBoxController,
+	BOX_WIDGET_KEY,
+	SIGNAL_WIDGET_KEY,
+} from "../src/animations-box/controller";
 import {
 	BOX_OPTIONAL_STATUS_SEGMENT_IDS,
 	BOX_REQUIRED_SEGMENT_IDS,
+	type BoxRequiredSegmentId,
 	resolveAnimationsBoxConfig,
 } from "../src/animations-box/settings";
 import type { AnimationsBoxWidget } from "../src/animations-box/widget";
@@ -47,6 +53,18 @@ const idTheme = { fg: (_color: string, text: string) => text };
 // Color-tagging theme for tests that need to assert which border token the box chose.
 const taggedTheme = { fg: (color: string, text: string) => `${color}:${text}` };
 const noopTui = { requestComponentRender: () => {} };
+const REQUIRED_SEGMENT_LABELS = {
+	filesLive: "files",
+	contextGauge: "context",
+	cacheMeter: "cache",
+	auditTrailBox: "audit",
+	rateLimitTidepool: "limits",
+	toolActivity: "tools",
+} satisfies Readonly<Record<BoxRequiredSegmentId, string>>;
+
+function requiredSegmentLabels(): string[] {
+	return BOX_REQUIRED_SEGMENT_IDS.map(id => REQUIRED_SEGMENT_LABELS[id]);
+}
 
 /** Manual frame scheduler: deterministic `now()`, never ticks on its own. */
 function manualScheduler(): FrameScheduler & { advance(ms: number): void } {
@@ -183,8 +201,8 @@ function ttsrTriggered(ruleNames: readonly string[]): TtsrTriggeredEvent {
 	} as unknown as TtsrTriggeredEvent;
 }
 
-function toolCall(toolName: string): ToolCallEvent {
-	return { type: "tool_call", toolCallId: "tc-1", toolName, input: {} } as unknown as ToolCallEvent;
+function toolCall(toolName: string, input: Record<string, unknown> = {}, toolCallId = "tc-1"): ToolCallEvent {
+	return { type: "tool_call", toolCallId, toolName, input } as unknown as ToolCallEvent;
 }
 
 function readResult(path: string): ToolResultEvent {
@@ -211,7 +229,7 @@ function writeResult(path: string): ToolResultEvent {
 	} as unknown as ToolResultEvent;
 }
 
-/** An `edit` tool result carrying one parseable hunk header — feeds both Audit Trail's ledger and Palimpsest's span ledger from the same event. */
+/** An `edit` result with a resolved path — the Audit Trail records the completed write. */
 function editResult(path: string): ToolResultEvent {
 	return {
 		type: "tool_result",
@@ -251,7 +269,7 @@ describe("AnimationsBoxController — mount lifecycle", () => {
 		expect(calls).toEqual([]);
 	});
 
-	it("mounts exactly once under the namespaced widget key, even across repeated mount() calls", () => {
+	it("mounts the Audit Box and signal sidecar exactly once across repeated mount() calls", () => {
 		const { ctx, calls } = recordingContext();
 		const controller = new AnimationsBoxController({
 			scheduler: manualScheduler(),
@@ -259,9 +277,10 @@ describe("AnimationsBoxController — mount lifecycle", () => {
 		});
 		controller.mount(ctx);
 		controller.mount(ctx);
-		expect(calls).toHaveLength(1);
-		expect(calls[0]?.key).toBe(BOX_WIDGET_KEY);
+		expect(calls).toHaveLength(2);
+		expect(calls.map(call => call.key)).toEqual([BOX_WIDGET_KEY, SIGNAL_WIDGET_KEY]);
 		expect(BOX_WIDGET_KEY).toBe("oh-my-pi-animations-box");
+		expect(SIGNAL_WIDGET_KEY).toBe("oh-my-pi-animation-signals");
 	});
 
 	it("defaults placement to belowEditor, and honors an explicit override", () => {
@@ -270,7 +289,7 @@ describe("AnimationsBoxController — mount lifecycle", () => {
 			scheduler: manualScheduler(),
 			initialConfig: resolveAnimationsBoxConfig({}),
 		}).mount(ctx);
-		expect(calls[0]?.options).toEqual({ placement: "belowEditor" });
+		expect(calls.map(call => call.options)).toEqual([{ placement: "belowEditor" }, { placement: "aboveEditor" }]);
 
 		const { ctx: ctx2, calls: calls2 } = recordingContext();
 		new AnimationsBoxController({
@@ -278,7 +297,7 @@ describe("AnimationsBoxController — mount lifecycle", () => {
 			placement: "aboveEditor",
 			initialConfig: resolveAnimationsBoxConfig({}),
 		}).mount(ctx2);
-		expect(calls2[0]?.options).toEqual({ placement: "aboveEditor" });
+		expect(calls2.map(call => call.options)).toEqual([{ placement: "aboveEditor" }, { placement: "aboveEditor" }]);
 	});
 
 	it("dispose tears down the mount and clears the widget; is idempotent", () => {
@@ -290,8 +309,11 @@ describe("AnimationsBoxController — mount lifecycle", () => {
 		controller.mount(ctx);
 		controller.dispose(ctx);
 		controller.dispose(ctx);
-		expect(calls).toHaveLength(2);
-		expect(calls[1]).toEqual({ key: BOX_WIDGET_KEY, content: undefined, options: { placement: "belowEditor" } });
+		expect(calls).toHaveLength(4);
+		expect(calls.slice(2)).toEqual([
+			{ key: BOX_WIDGET_KEY, content: undefined, options: { placement: "belowEditor" } },
+			{ key: SIGNAL_WIDGET_KEY, content: undefined, options: { placement: "aboveEditor" } },
+		]);
 	});
 
 	it("exposes the initial config unchanged via the read-only accessor", () => {
@@ -349,7 +371,7 @@ describe("AnimationsBoxController — cache-meter state wiring", () => {
 	// buv.2: the box row is the only cache row left, so it must be a view of the
 	// ledger — not a second accounting path. Same events into a bare
 	// `CacheMeterState` must produce exactly the figures the row prints.
-	it("prints the ledger's own totals across several requests — hit %, hits/requests and the read/write/miss split", () => {
+	it("prints the ledger's own totals across several requests — hit %, hits/requests and uncached/reused/stored", () => {
 		const scheduler = manualScheduler();
 		const { ctx, calls } = recordingContext();
 		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
@@ -377,12 +399,11 @@ describe("AnimationsBoxController — cache-meter state wiring", () => {
 			});
 		}
 		const snapshot = ledger.snapshot();
-		const cacheRow = widget.renderFrame(140).find(row => row.includes("cache")) as string;
-		expect(cacheRow).toContain(`${Math.round(snapshot.warmth * 100)}% hit`);
-		expect(cacheRow).toContain(`${snapshot.hitCount}/${snapshot.requestCount}`);
+		const rows = widget.renderFrame(120).join("\n");
+		const cacheRow = rows.split("\n").find(row => row.includes("cache")) as string;
 		expect(cacheRow).toContain(`${formatNumber(snapshot.missTokens)} uncached`);
-		expect(cacheRow).toContain(`${formatNumber(snapshot.cacheReadTokens)} read`);
-		expect(cacheRow).toContain(`${formatNumber(snapshot.cacheWriteTokens)} write`);
+		expect(cacheRow).toContain(`${formatNumber(snapshot.cacheReadTokens)} reused`);
+		expect(cacheRow).toContain(`${formatNumber(snapshot.cacheWriteTokens)} stored`);
 		widget.dispose();
 	});
 
@@ -440,7 +461,7 @@ describe("AnimationsBoxController — cache-meter state wiring", () => {
 
 		controller.onSessionSwitch(undefined, ctx);
 		// The mount itself is untouched — setWidget was never called again for a teardown.
-		expect(calls).toHaveLength(1);
+		expect(calls).toHaveLength(2);
 
 		const afterSwitch = buildWidget(calls[0] as SetWidgetCall);
 		const restingCacheRow = afterSwitch.renderFrame(69).find(row => row.includes("cache"));
@@ -546,7 +567,7 @@ describe("AnimationsBoxController — cadence equalizer state wiring", () => {
 		widget.dispose();
 	});
 
-	it("onMessageEnd clears the tracked message (rate settles to idle) but never reverts the segment to resting — hasStreamed latches permanently", () => {
+	it("returns to the resting cadence row when no measurable sample was recorded", () => {
 		const scheduler = manualScheduler();
 		const { ctx, calls } = recordingContext();
 		const controller = new AnimationsBoxController({
@@ -559,8 +580,8 @@ describe("AnimationsBoxController — cadence equalizer state wiring", () => {
 		controller.onMessageStart(assistantMessageStart({ output: 100, timestamp: 0, duration: 1_000 }), ctx);
 		controller.onMessageEnd(messageEnd({ input: 100 }), ctx);
 		const cadenceRow = widget.renderFrame(69).find(row => row.includes("cadence"));
-		expect(cadenceRow).toContain("--"); // idle rate reads "--", not the resting "—"
-		expect(cadenceRow).not.toContain("—"); // the enabled-but-idle resting placeholder is gone for good
+		expect(cadenceRow).toContain("—");
+		expect(cadenceRow).not.toContain("peak 0");
 		widget.dispose();
 	});
 
@@ -678,7 +699,7 @@ describe("AnimationsBoxController — audit trail state wiring", () => {
 		activeWidget.dispose();
 
 		controller.onSessionSwitch(undefined, ctx);
-		expect(calls).toHaveLength(1); // the mount itself is untouched
+		expect(calls).toHaveLength(2); // both mounts are untouched
 
 		const afterSwitch = buildWidget(calls[0] as SetWidgetCall);
 		const restingAuditRow = afterSwitch.renderFrame(69).find(row => row.includes("audit"));
@@ -779,7 +800,7 @@ describe("AnimationsBoxController — rate-limit tidepool state wiring", () => {
 		activeWidget.dispose();
 
 		controller.onSessionSwitch(undefined, ctx);
-		expect(calls).toHaveLength(1); // the mount itself is untouched
+		expect(calls).toHaveLength(2); // both mounts are untouched
 
 		const afterSwitch = buildWidget(calls[0] as SetWidgetCall);
 		expect(afterSwitch.renderFrame(69).find(row => row.includes("limits"))).toContain("—");
@@ -860,8 +881,8 @@ describe("AnimationsBoxController — tool activity state wiring", () => {
 	});
 });
 
-describe("AnimationsBoxController — palimpsest state wiring", () => {
-	it("the mounted widget starts on the resting row before any region crosses GLOW_THRESHOLD", () => {
+describe("AnimationsBoxController — live file state wiring", () => {
+	it("starts on the resting row before any write is active", () => {
 		const { ctx, calls } = recordingContext();
 		const controller = new AnimationsBoxController({
 			scheduler: manualScheduler(),
@@ -869,62 +890,83 @@ describe("AnimationsBoxController — palimpsest state wiring", () => {
 		});
 		controller.mount(ctx);
 		const widget = buildWidget(calls[0] as SetWidgetCall);
-		const filesRow = widget.renderFrame(69).find(row => row.includes("files"));
-		expect(filesRow).toContain("—");
+		expect(widget.renderFrame(69).find(row => row.includes("files"))).toContain("—");
 		widget.dispose();
 	});
 
-	it("a second onToolResult(edit) touch on the same region flips the segment to its active row, and onTurnEnd fades it back out", () => {
-		const scheduler = manualScheduler();
+	it("shows an edit path only while the matching tool call is in flight", () => {
 		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		const controller = new AnimationsBoxController({
+			scheduler: manualScheduler(),
+			initialConfig: resolveAnimationsBoxConfig({}),
+		});
 		controller.mount(ctx);
 		const widget = buildWidget(calls[0] as SetWidgetCall);
 
-		controller.onToolResult(editResult("/repo/src/foo.ts"), ctx);
-		const oneTouchRow = widget.renderFrame(69).find(row => row.includes("files"));
-		expect(oneTouchRow).toContain("—"); // one touch alone doesn't cross GLOW_THRESHOLD
+		controller.onToolCall(toolCall("edit", { path: "/repo/src/foo.ts" }, "tc-edit"), ctx);
+		expect(widget.renderFrame(80).find(row => row.includes("files"))).toContain("src/foo.ts");
 
 		controller.onToolResult(editResult("/repo/src/foo.ts"), ctx);
-		const twoTouchRow = widget.renderFrame(69).find(row => row.includes("files"));
-		expect(twoTouchRow).not.toContain("—     ");
-
-		// FADE_AFTER_TURNS turns without a re-touch and the region ages back out.
-		for (let turn = 1; turn <= 3; turn++) controller.onTurnEnd(turnEnd(turn), ctx);
-		const fadedRow = widget.renderFrame(69).find(row => row.includes("files"));
-		expect(fadedRow).toContain("—");
+		expect(widget.renderFrame(80).find(row => row.includes("files"))).toContain("—");
 		widget.dispose();
 	});
 
-	it("ignores tool_result when hasUI is false", () => {
-		const scheduler = manualScheduler();
+	it("shows parallel writer paths and removes each path with its own result", () => {
 		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		const controller = new AnimationsBoxController({
+			scheduler: manualScheduler(),
+			initialConfig: resolveAnimationsBoxConfig({}),
+		});
 		controller.mount(ctx);
 		const widget = buildWidget(calls[0] as SetWidgetCall);
 
-		controller.onToolResult(editResult("/repo/src/foo.ts"), { hasUI: false, cwd: "/repo" });
-		controller.onToolResult(editResult("/repo/src/foo.ts"), { hasUI: false, cwd: "/repo" });
-		const filesRow = widget.renderFrame(69).find(row => row.includes("files"));
-		expect(filesRow).toContain("—");
+		controller.onToolCall(toolCall("edit", { path: "/repo/src/foo.ts" }, "tc-edit"), ctx);
+		controller.onToolCall(toolCall("write", { path: "/repo/src/bar.ts" }, "tc-write"), ctx);
+		const parallel = widget.renderFrame(100).find(row => row.includes("files"));
+		expect(parallel).toContain("src/foo.ts");
+		expect(parallel).toContain("src/bar.ts");
+
+		controller.onToolResult(editResult("/repo/src/foo.ts"), ctx);
+		const oneWriter = widget.renderFrame(100).find(row => row.includes("files"));
+		expect(oneWriter).not.toContain("src/foo.ts");
+		expect(oneWriter).toContain("src/bar.ts");
+		controller.onToolResult(writeResult("/repo/src/bar.ts"), ctx);
 		widget.dispose();
 	});
 
-	it("one edit tool_result feeds both Audit Trail's ledger and Palimpsest's span ledger from the same event", () => {
-		const scheduler = manualScheduler();
+	it("ignores tool calls when the UI is unavailable", () => {
 		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		const controller = new AnimationsBoxController({
+			scheduler: manualScheduler(),
+			initialConfig: resolveAnimationsBoxConfig({}),
+		});
 		controller.mount(ctx);
 		const widget = buildWidget(calls[0] as SetWidgetCall);
 
-		controller.onToolResult(editResult("/repo/src/foo.ts"), ctx);
-		controller.onToolResult(editResult("/repo/src/foo.ts"), ctx);
+		controller.onToolCall(toolCall("edit", { path: "/repo/src/foo.ts" }, "tc-edit"), {
+			hasUI: false,
+			cwd: "/repo",
+		});
+		expect(widget.renderFrame(69).find(row => row.includes("files"))).toContain("—");
+		widget.dispose();
+	});
 
-		const frame = widget.renderFrame(69);
-		const auditRow = frame.find(row => row.includes("audit"));
-		const filesRow = frame.find(row => row.includes("files"));
-		expect(auditRow).not.toContain("—     ");
-		expect(filesRow).not.toContain("—     ");
+	it("moves an edit from live activity into the Audit Trail when the result arrives", () => {
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({
+			scheduler: manualScheduler(),
+			initialConfig: resolveAnimationsBoxConfig({}),
+		});
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall);
+
+		controller.onToolCall(toolCall("edit", { path: "/repo/src/foo.ts" }, "tc-edit"), ctx);
+		expect(widget.renderFrame(80).find(row => row.includes("files"))).toContain("src/foo.ts");
+
+		controller.onToolResult(editResult("/repo/src/foo.ts"), ctx);
+		const settled = widget.renderFrame(80);
+		expect(settled.find(row => row.includes("files"))).toContain("—");
+		expect(settled.find(row => row.includes("audit"))).not.toContain("—     ");
 		widget.dispose();
 	});
 });
@@ -1048,14 +1090,13 @@ describe("AnimationsBoxController — grouped Audit Box composition", () => {
 				auditTrailBox: false,
 				rateLimitTidepool: false,
 				toolActivity: false,
-				palimpsest: false,
 			}),
 		});
 		controller.mount(ctx);
 		const widget = buildWidget(calls[0] as SetWidgetCall);
 
 		const frame = widget.renderFrame(69);
-		const expectedLabels = ["cache", "audit", "limits", "tools", "files"];
+		const expectedLabels = requiredSegmentLabels();
 		expect(expectedLabels).toHaveLength(BOX_REQUIRED_SEGMENT_IDS.length);
 		expect(frame).toHaveLength(BOX_REQUIRED_SEGMENT_IDS.length + 2);
 		for (let i = 0; i < expectedLabels.length; i++) {
@@ -1079,7 +1120,7 @@ describe("AnimationsBoxController — grouped Audit Box composition", () => {
 
 		const width = 69;
 		const frame = widget.renderFrame(width);
-		const expectedLabels = ["cache", "audit", "limits", "tools", "files", "cadence", "reflect"];
+		const expectedLabels = [...requiredSegmentLabels(), "cadence", "reflect"];
 		expect(expectedLabels).toHaveLength(BOX_REQUIRED_SEGMENT_IDS.length + BOX_OPTIONAL_STATUS_SEGMENT_IDS.length);
 		expect(frame).toHaveLength(expectedLabels.length + 3);
 		for (let i = 0; i < BOX_REQUIRED_SEGMENT_IDS.length; i++) {

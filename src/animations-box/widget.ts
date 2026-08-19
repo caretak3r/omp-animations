@@ -1,16 +1,15 @@
 /**
  * Animations Box — the bordered widget itself.
  *
- * ONE widget hosts required summaries and optional animations. The border
+ * Each instance hosts required and optional sample groups. The Audit Box uses
+ * both groups. The signal sidecar uses only the optional group. The border
  * costs 2 rows and 4 columns (`"│ "` + `" │"`). Each content line uses
- * `width - 4` columns and is then padded or truncated to the target width.
+ * `width - 4` columns and is padded or truncated to the target width.
  *
- * `simple` draws one composed row from active segments. An idle segment has
- * no variants and contributes nothing. `detailed` always draws the required
- * summaries first. If at least one optional animation is visible, the widget
- * adds one blank separator and then draws the optional rows. An idle segment
- * still draws its dim resting line (`○ label   —`), so runtime activity does
- * not change the height.
+ * `simple` draws one composed row from active segments. `detailed` draws the
+ * required rows, then one separator only when both groups have rows, then the
+ * optional rows. An idle required segment still draws its dim resting line.
+ * A sidecar with no meaningful optional rows returns zero rows.
  *
  * `status-line.ts` renders the plain spans that each segment source emits.
  * This widget applies dot tone, span tones, gradient percentages, and change
@@ -21,12 +20,11 @@
  * The border chrome itself breathes (Decision 2): every glyph of the top
  * row, bottom row, and side pipes is colored uniformly, per frame, via
  * `#resolveBorderColor` — the live envelope from `getBorderBrightness`
- * bucketed through the breathing-border keeper's own `brightnessToken`
- * classification and this widget's accent-aware palette. `undefined` (motion
- * tier `off`, checked directly against this widget's own `policy`, or
- * `breathingBorder` disabled in config, reported by `getBorderBrightness`
- * itself) falls back to the plain, uncolored chrome — the widget's
- * pre-dxi.5 behavior, unchanged.
+ * bucketed through `../breathing-border`'s `brightnessToken` classification
+ * and this widget's accent-aware palette. `undefined` (motion tier `off`,
+ * checked directly against this widget's own `policy`, or `breathingBorder`
+ * disabled in config, reported by `getBorderBrightness` itself) falls back to
+ * the plain, uncolored chrome.
  */
 
 import type { SymbolPreset, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
@@ -67,7 +65,7 @@ function colorize(theme: BoxTheme, color: ThemeColor | undefined, text: string):
 	return color === undefined ? text : theme.fg(color, text);
 }
 
-/** Resolve a raw {@link brightnessToken} classification through the configured palette — a local copy of `../breathing-border/widget.ts`'s own private `resolveBorderColor`, not exported from that module's barrel (same "not exported from that barrel" precedent `segments.ts` documents for `formatCost`/`compareVisibleRows`). */
+/** Resolve a raw {@link brightnessToken} classification through the configured palette. The palette slots come from `../breathing-border/colors.ts`; picking one per token is this widget's job, because it owns the chrome. */
 function colorForToken(token: BorderBrightnessToken, colors: BreathingBorderColors): ThemeColor {
 	if (token === "borderMuted") return colors.muted;
 	if (token === "border") return colors.base;
@@ -97,7 +95,7 @@ function contentLine(
 	return `${pipe} ${cell(text, inner)} ${pipe}`;
 }
 
-/** Controller-owned composition groups. The widget alone decides how those groups are separated on screen. */
+/** Composition groups the box controller builds each frame. The widget alone decides how those groups are separated on screen. */
 export interface AnimationsBoxSampleGroups {
 	readonly required: readonly SegmentSample[];
 	readonly optional: readonly SegmentSample[];
@@ -115,16 +113,15 @@ export interface AnimationsBoxWidgetOptions extends AnimatedWidgetOptions {
 	/** Live detail level. Re-read every call — the controller updates its backing value on settings changes, not just at construction. */
 	getDetail: () => BoxDetail;
 	/**
-	 * Live border brightness for this frame (Decision 2): the breathing-border
-	 * keeper's own `0..1` envelope, re-read every call same as `getDetail`.
+	 * Live border brightness for this frame (Decision 2): the breathing
+	 * border's `0..1` envelope, re-read every call same as `getDetail`.
 	 * `undefined` means `breathingBorder` is disabled in config — this
 	 * widget's cue to fall back to the plain, uncolored chrome. Motion tier
 	 * `off` is a separate, harder override this widget checks itself against
-	 * its own `policy` (mirroring the standalone `BreathingBorderWidget`'s own
-	 * tier check), so the seam never needs to encode that case.
+	 * its own `policy`, so the seam never needs to encode that case.
 	 */
 	getBorderBrightness: (nowMs: number) => number | undefined;
-	/** Accent override for the border's peak brightness — the existing `breathingBorderAccentColor` setting; `undefined` keeps the breathing-border keeper's built-in palette. */
+	/** Accent override for the border's peak brightness — the existing `breathingBorderAccentColor` setting; `undefined` keeps the palette `../breathing-border/colors.ts` ships. */
 	accentColor?: AccentColor;
 	/** Host glyph preset for the semantic status dots (detailed mode). Mirrors the controller's mount-captured preset; defaults to `unicode`. */
 	preset?: SymbolPreset;
@@ -223,7 +220,7 @@ export class AnimationsBoxWidget extends AnimatedWidget {
 				);
 			};
 			for (const sample of groups.required) appendSample(sample);
-			if (groups.optional.length > 0 || bonsaiRows.length > 0) {
+			if (groups.required.length > 0 && (groups.optional.length > 0 || bonsaiRows.length > 0)) {
 				rows.push(contentLine("", inner, width, theme, borderColor));
 			}
 			for (const sample of groups.optional) appendSample(sample);
@@ -258,13 +255,12 @@ export class AnimationsBoxWidget extends AnimatedWidget {
 	}
 
 	/**
-	 * Border color for this frame. `undefined` (the plain, pre-dxi.5 chrome)
-	 * when the motion tier is `off` — a hard override, exactly mirroring the
-	 * standalone `BreathingBorderWidget`'s own tier check — or when
-	 * `getBorderBrightness` reports `breathingBorder` is disabled. Otherwise
-	 * the live envelope buckets through the SAME `brightnessToken`
-	 * classification the standalone widget uses, resolved through this
-	 * widget's own accent-aware palette.
+	 * Border color for this frame. `undefined` — the plain, uncolored chrome —
+	 * when the motion tier is `off`, a hard override applied before anything
+	 * else, or when `getBorderBrightness` reports `breathingBorder` is
+	 * disabled. Otherwise the live envelope buckets through
+	 * `../breathing-border`'s `brightnessToken` classification, resolved
+	 * through this widget's own accent-aware palette.
 	 */
 	#resolveBorderColor(now: number): ThemeColor | undefined {
 		if (this.#policy.tier === "off") return undefined;

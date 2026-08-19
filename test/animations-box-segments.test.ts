@@ -4,7 +4,6 @@ import {
 	buildAuditTrailBoxSegment,
 	buildCacheMeterSegment,
 	buildCadenceEqualizerSegment,
-	buildPalimpsestSegment,
 	buildRateLimitTidepoolSegment,
 	buildReflectionRippleSegment,
 	buildToolActivitySegment,
@@ -28,7 +27,6 @@ import {
 	renderEqualizerText,
 } from "../src/cadence-equalizer";
 import { MAX_REFERENCE_RATE } from "../src/cadence-equalizer/scale";
-import { GLOW_THRESHOLD, PALIMPSEST_COLORS, PalimpsestState } from "../src/palimpsest";
 import { RateLimitTidepoolState, refillLevel, renderTidepoolRow, TIDEPOOL_COLORS } from "../src/rate-limit-tidepool";
 import { REFLECTION_RIPPLE_COLORS, ReflectionRippleState, renderReflectionRippleRow } from "../src/reflection-ripple";
 
@@ -181,19 +179,19 @@ describe("buildCacheMeterSegment — active line", () => {
 		expect(sample.line.spans.some(span => span.key === "uncached")).toBe(false);
 	});
 
-	it("spends the rest of the tail on the read/write split, in that order, formatted by the shared formatNumber", () => {
+	it("labels the reusable and stored token split without colliding with file operations", () => {
 		const state = warmedState();
 		const snapshot = state.snapshot();
 		const sample = buildCacheMeterSegment(state, 0, idTheme);
 		expect(sample.line.spans.slice(3)).toEqual([
-			{ key: "read", text: `${formatNumber(snapshot.cacheReadTokens)} read`, wideOnly: true },
-			{ key: "write", text: `${formatNumber(snapshot.cacheWriteTokens)} write`, wideOnly: true },
+			{ key: "read", text: `${formatNumber(snapshot.cacheReadTokens)} reused`, wideOnly: true },
+			{ key: "write", text: `${formatNumber(snapshot.cacheWriteTokens)} stored`, wideOnly: true },
 		]);
 	});
 
 	// buv.2's parity contract: the box row is the ONLY cache row, so every
 	// figure the deleted footer used to carry must trace back to one snapshot.
-	it("carries the whole ledger in one phrase — hit %, saved, hits/requests, miss, read, write — all from a single snapshot", () => {
+	it("carries the whole ledger in one phrase — hit %, saved, hits/requests, uncached, reused, stored", () => {
 		const state = new CacheMeterState();
 		state.recordUsage(
 			usageSample("anthropic", "claude", {
@@ -211,8 +209,8 @@ describe("buildCacheMeterSegment — active line", () => {
 			`saved ${formatCost(snapshot.savedCost as number)}`,
 			`${snapshot.hitCount}/${snapshot.requestCount}`,
 			`${formatNumber(snapshot.missTokens)} uncached`,
-			`${formatNumber(snapshot.cacheReadTokens)} read`,
-			`${formatNumber(snapshot.cacheWriteTokens)} write`,
+			`${formatNumber(snapshot.cacheReadTokens)} reused`,
+			`${formatNumber(snapshot.cacheWriteTokens)} stored`,
 		]);
 	});
 });
@@ -335,10 +333,16 @@ describe("buildCadenceEqualizerSegment — active line", () => {
 		expect(sample.line.spans[0]).toEqual({ key: "rate", text: "42 t/s" });
 	});
 
-	it("rate span falls back to the keeper's own idle convention ('--') once hasStreamed is true but nothing is currently sampled", () => {
+	it("rate span uses the box-wide em-dash once cadence exists but nothing is currently sampled", () => {
 		const state = warmedCadenceState();
 		const sample = buildCadenceEqualizerSegment(state, true, null, 0, idTheme);
-		expect(sample.line.spans[0]).toEqual({ key: "rate", text: "--" });
+		expect(sample.line.spans[0]).toEqual({ key: "rate", text: "—" });
+	});
+
+	it("stays idle when message_start arrives before the first measurable sample", () => {
+		const sample = buildCadenceEqualizerSegment(new CadenceEqualizerState(), true, null, 0, idTheme);
+		expect(sample.active).toBe(false);
+		expect(sample.line.spans).toEqual(IDLE_SPANS);
 	});
 
 	it("peak span is 'peak <N>', the highest band-peak amplitude denormalized back through MAX_REFERENCE_RATE", () => {
@@ -704,97 +708,6 @@ describe("buildToolActivitySegment — active line", () => {
 		const agent = buildToolActivitySegment(stateWith("task"), 0, idTheme);
 		expect(bash.line.accent).toBe(agent.line.accent);
 		expect(bash.line.accent).not.toBe("dim");
-	});
-});
-
-describe("buildPalimpsestSegment — priority", () => {
-	it("derives its priority from palimpsest's position in BOX_SEGMENT_IDS, never a hardcoded literal", () => {
-		const sample = buildPalimpsestSegment(new PalimpsestState(), 0, idTheme);
-		expect(sample.priority).toBe(BOX_SEGMENT_IDS.indexOf("palimpsest") + 1);
-	});
-
-	it("id is always palimpsest", () => {
-		expect(buildPalimpsestSegment(new PalimpsestState(), 0, idTheme).id).toBe("palimpsest");
-	});
-});
-
-describe("buildPalimpsestSegment — resting line (Decision 5: enabled-but-idle, never absent)", () => {
-	it("is inactive with empty variants before any region clears GLOW_THRESHOLD", () => {
-		const sample = buildPalimpsestSegment(new PalimpsestState(), 0, idTheme);
-		expect(sample.active).toBe(false);
-		expect(sample.variants).toEqual([]);
-	});
-
-	it("stays inactive with a single touch — GLOW_THRESHOLD requires at least a second touch of the same region", () => {
-		const state = new PalimpsestState();
-		state.applySpans("/repo/src/foo.ts", [{ start: 1, end: 5 }]);
-		expect(GLOW_THRESHOLD).toBe(2);
-		const sample = buildPalimpsestSegment(state, 0, idTheme);
-		expect(sample.active).toBe(false);
-	});
-
-	it("still renders a full resting line: idle dot, label 'files', ember accent, lone dim em-dash", () => {
-		const sample = buildPalimpsestSegment(new PalimpsestState(), 0, idTheme);
-		expect(sample.line).toEqual({
-			dot: "idle",
-			label: "files",
-			accent: PALIMPSEST_COLORS.ember,
-			spans: IDLE_SPANS,
-		});
-	});
-});
-
-describe("buildPalimpsestSegment — active line", () => {
-	function thrashedState(): PalimpsestState {
-		const state = new PalimpsestState();
-		state.applySpans("/repo/src/foo.ts", [{ start: 1, end: 5 }]);
-		state.applySpans("/repo/src/foo.ts", [{ start: 1, end: 5 }]); // second touch crosses GLOW_THRESHOLD
-		return state;
-	}
-
-	it("is active once a region crosses GLOW_THRESHOLD, narrowing path ×N -> basename ×N -> ×N", () => {
-		const state = thrashedState();
-		const sample = buildPalimpsestSegment(state, 0, idTheme);
-		expect(sample.active).toBe(true);
-		expect(sample.variants).toEqual(["/repo/src/foo.ts ×2", "foo.ts ×2", "×2"]);
-	});
-
-	it("collapses the ladder when the path is already a bare filename (path and basename coincide)", () => {
-		const state = new PalimpsestState();
-		state.applySpans("foo.ts", [{ start: 1, end: 5 }]);
-		state.applySpans("foo.ts", [{ start: 1, end: 5 }]);
-		const sample = buildPalimpsestSegment(state, 0, idTheme);
-		expect(sample.variants).toEqual(["foo.ts ×2", "×2"]);
-	});
-
-	it("picks the most recently re-touched region as hottest when several are visible", () => {
-		const state = new PalimpsestState();
-		state.applySpans("/repo/a.ts", [{ start: 1, end: 5 }]);
-		state.applySpans("/repo/a.ts", [{ start: 1, end: 5 }]); // a.ts thrashes at turn 0
-		state.advanceTurn(1);
-		state.applySpans("/repo/b.ts", [{ start: 1, end: 5 }]);
-		state.applySpans("/repo/b.ts", [{ start: 1, end: 5 }]); // b.ts thrashes at turn 1, more recent
-
-		const sample = buildPalimpsestSegment(state, 0, idTheme);
-		expect(sample.line.spans[0]).toEqual({ key: "hot", text: "b.ts ×2" });
-		expect(sample.line.spans[1]).toEqual({ key: "count", text: "2 hot files" });
-	});
-
-	it("hot span is '<basename> ×<overlap>', count span pluralizes the hot-file tally", () => {
-		const state = thrashedState();
-		const sample = buildPalimpsestSegment(state, 0, idTheme);
-		expect(sample.line.dot).toBe("live");
-		expect(sample.line.spans).toEqual([
-			{ key: "hot", text: "foo.ts ×2" },
-			{ key: "count", text: "1 hot file" },
-		]);
-	});
-
-	it("keeps the ember accent, honoring an accent override", () => {
-		const state = thrashedState();
-		const colors = { ...PALIMPSEST_COLORS, ember: "syntaxString" as const };
-		const sample = buildPalimpsestSegment(state, 0, idTheme, colors);
-		expect(sample.line.accent).toBe("syntaxString");
 	});
 });
 

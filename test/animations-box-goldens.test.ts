@@ -17,18 +17,20 @@ import type {
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
 import type {
 	AfterProviderResponseEvent,
+	ContextUsage,
 	MessageEndEvent,
 	MessageStartEvent,
 	ToolCallEvent,
 	ToolResultEvent,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 import { visibleWidth } from "@oh-my-pi/pi-tui";
+import { ContextGaugeState } from "../src/animations-box/context-gauge";
 import { type AnimationsBoxContext, AnimationsBoxController } from "../src/animations-box/controller";
 import {
 	buildAuditTrailBoxSegment,
 	buildCacheMeterSegment,
 	buildCadenceEqualizerSegment,
-	buildPalimpsestSegment,
+	buildContextGaugeSegment,
 	buildRateLimitTidepoolSegment,
 	buildReflectionRippleSegment,
 	buildToolActivitySegment,
@@ -55,7 +57,7 @@ import { AuditLedgerState, POISON_STREAK_TICKS } from "../src/audit-trail-box";
 import { CacheMeterState } from "../src/cache-meter";
 import { CadenceEqualizerState } from "../src/cadence-equalizer";
 import { AnimationHost, composeSegments, type FrameScheduler, MotionPolicy, segment } from "../src/kit";
-import { PalimpsestState } from "../src/palimpsest";
+import { buildLiveFilesSegment, LiveFilesState } from "../src/live-files";
 import { RateLimitTidepoolState } from "../src/rate-limit-tidepool";
 import { ReflectionRippleState } from "../src/reflection-ripple";
 
@@ -82,7 +84,16 @@ interface SetWidgetCall {
 	options?: ExtensionWidgetOptions;
 }
 
-function recordingContext(): { ctx: AnimationsBoxContext; calls: SetWidgetCall[] } {
+/**
+ * The host reading the full-box goldens are pinned against: a 200K window at
+ * 120K used, which is 60% of the window and 75% of the default 80% quota —
+ * far enough into the `warning` band to prove the row escalates on the host's
+ * thresholds rather than on its own ceiling.
+ */
+const FULL_BOX_USAGE: ContextUsage = { tokens: 120_000, contextWindow: 200_000, percent: 60 };
+
+/** Absent `usage`, `getContextUsage()` reports nothing and the gauge holds its resting row. */
+function recordingContext(usage?: ContextUsage): { ctx: AnimationsBoxContext; calls: SetWidgetCall[] } {
 	const calls: SetWidgetCall[] = [];
 	const ctx: AnimationsBoxContext = {
 		hasUI: true,
@@ -90,6 +101,7 @@ function recordingContext(): { ctx: AnimationsBoxContext; calls: SetWidgetCall[]
 		env: {},
 		cwd: "/repo",
 		glyphPreset: "unicode",
+		getContextUsage: () => usage,
 		setWidget: (key, content, options) => {
 			calls.push({ key, content, options });
 		},
@@ -202,15 +214,13 @@ function toolCall(toolName: string, toolCallId: string): ToolCallEvent {
 }
 
 /**
- * Drive the controller through its real event handlers + one scheduler tick
- * to build a representative "5 of 7 active" scene: cache meter, cadence,
- * audit trail, rate-limit tidepool and tool activity go active; palimpsest
- * and reflection ripple stay on their resting rows — matching Decision 5's own
- * detailed-mode mock's activation pattern.
+ * Drive the controller through its real event handlers and one scheduler tick
+ * to build a representative scene. Context, cache, cadence, audit, limits,
+ * and tools are active. Live Files and Reflection Ripple stay idle.
  */
 function driveFullBox(detail: BoxDetail): AnimationsBoxWidget {
 	const scheduler = manualScheduler();
-	const { ctx, calls } = recordingContext();
+	const { ctx, calls } = recordingContext(FULL_BOX_USAGE);
 	const controller = new AnimationsBoxController({
 		scheduler,
 		initialConfig: resolveAnimationsBoxConfig({ animationsBoxDetail: detail }),
@@ -241,11 +251,12 @@ function driveFullBox(detail: BoxDetail): AnimationsBoxWidget {
 /** One fresh, idle `*State` per segment, in grouped priority order — every segment resting. */
 function restingSamples(): SegmentSample[] {
 	return [
+		buildContextGaugeSegment(new ContextGaugeState(), 0, idTheme),
 		buildCacheMeterSegment(new CacheMeterState(), 0, idTheme),
 		buildAuditTrailBoxSegment(new AuditLedgerState(), 0, idTheme),
 		buildRateLimitTidepoolSegment(new RateLimitTidepoolState(), 0, idTheme),
 		buildToolActivitySegment(new ToolActivityState(), 0, idTheme),
-		buildPalimpsestSegment(new PalimpsestState(), 0, idTheme),
+		buildLiveFilesSegment(new LiveFilesState(), BOX_SEGMENT_IDS.indexOf("filesLive") + 1),
 		buildCadenceEqualizerSegment(new CadenceEqualizerState(), false, null, 0, idTheme),
 		buildReflectionRippleSegment(new ReflectionRippleState(), 0, idTheme),
 	];
@@ -277,19 +288,29 @@ function activeSamples(): SegmentSample[] {
 	toolActivityState.record("write");
 	toolActivityState.record("bash");
 
-	const palimpsestState = new PalimpsestState();
-	palimpsestState.applySpans("/repo/src/foo.ts", [{ start: 1, end: 5 }]);
-	palimpsestState.applySpans("/repo/src/foo.ts", [{ start: 1, end: 5 }]); // second touch crosses GLOW_THRESHOLD
+	const liveFilesState = new LiveFilesState(() => 0);
+	liveFilesState.onToolCall({ toolCallId: "edit-1", toolName: "edit", input: { path: "/repo/src/foo.ts" } }, "/repo");
 
 	const reflectionRippleState = new ReflectionRippleState();
 	reflectionRippleState.applyTrigger(["myRule"], 0);
 
+	// Two growing turns are the minimum that publishes a burn rate, so the
+	// active gauge carries its full span ladder including the turn forecast.
+	const contextGaugeState = new ContextGaugeState();
+	contextGaugeState.observe({ tokens: 100_000, contextWindow: 200_000, percent: 50 });
+	contextGaugeState.noteTurn();
+	contextGaugeState.observe({ tokens: 110_000, contextWindow: 200_000, percent: 55 });
+	contextGaugeState.noteTurn();
+	contextGaugeState.observe(FULL_BOX_USAGE);
+	contextGaugeState.noteTurn();
+
 	return [
+		buildContextGaugeSegment(contextGaugeState, 0, idTheme),
 		buildCacheMeterSegment(cacheMeterState, 0, idTheme),
 		buildAuditTrailBoxSegment(auditState, 0, idTheme),
 		buildRateLimitTidepoolSegment(tidepoolState, 0, idTheme),
 		buildToolActivitySegment(toolActivityState, 0, idTheme),
-		buildPalimpsestSegment(palimpsestState, 0, idTheme),
+		buildLiveFilesSegment(liveFilesState, BOX_SEGMENT_IDS.indexOf("filesLive") + 1),
 		buildCadenceEqualizerSegment(new CadenceEqualizerState(), true, 100, 0, idTheme),
 		buildReflectionRippleSegment(reflectionRippleState, 0, idTheme),
 	];
@@ -321,16 +342,16 @@ function makeWidget(samples: readonly SegmentSample[], detail: BoxDetail): Anima
 // ---------------------------------------------------------------------------
 
 describe("AnimationsBoxController + AnimationsBoxWidget — full-box golden frames (Decision 5)", () => {
-	// The cache row carries the ledger's whole contract — hit %, hits/requests,
-	// and the read/write/miss split — at 69 and 120; at 45 the tail sheds
-	// `write` then `read`, keeping `uncached` beside the body.
-	it("detailed mode: exact golden frames at width 69 (real pane), 45 (narrow), and 120 (wide) — five required rows", () => {
+	// Context and cache lead the detailed rows and shed right-side detail as
+	// the pane narrows. Live Files closes the required block.
+	it("detailed mode: exact golden frames at width 69 (real pane), 45 (narrow), and 120 (wide) — six required rows", () => {
 		const widget = driveFullBox("detailed");
 
 		expect(widget.renderFrame(69)).toEqual([
 			"╭───────────────────────────────────────────────────────────────────╮",
-			`${"│ ●  cache    50% hit · 1/1   400 uncached · 600 read · 200 write".padEnd(68)}│`,
-			`${"│ ◐  audit    1 read · 1 write · 1 edited   widget.ts".padEnd(68)}│`,
+			`${"│ ◐  context  [████████░░] 75% quota · 120K/200K   160K quota".padEnd(68)}│`,
+			`${"│ ●  cache    50% hit · 1/1                    400 uncached".padEnd(68)}│`,
+			`${"│ ◐  audit    1 read · 1 write · 1 edited      widget.ts".padEnd(68)}│`,
 			"│ ●  limits   78% left · resets 12m · anthropic                     │",
 			"│ ●  tools    3 calls — bash (1)                                    │",
 			"│ ○  files    —                                                     │",
@@ -339,7 +360,8 @@ describe("AnimationsBoxController + AnimationsBoxWidget — full-box golden fram
 
 		expect(widget.renderFrame(45)).toEqual([
 			"╭───────────────────────────────────────────╮",
-			`${"│ ●  cache    50% hit · 1/1   400 uncached".padEnd(44)}│`,
+			`${"│ ◐  context  [████████░░] 75% quota".padEnd(44)}│`,
+			`${"│ ●  cache    50% hit · 1/1".padEnd(44)}│`,
 			"│ ◐  audit    1 read · 1 write · 1 edited   │",
 			"│ ●  limits   78% left · resets 12m         │",
 			"│ ●  tools    3 calls — bash (1)            │",
@@ -349,8 +371,9 @@ describe("AnimationsBoxController + AnimationsBoxWidget — full-box golden fram
 
 		expect(widget.renderFrame(120)).toEqual([
 			"╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
-			`${"│ ●  cache    50% hit · 1/1   400 uncached · 600 read · 200 write".padEnd(119)}│`,
-			`${"│ ◐  audit    1 read · 1 write · 1 edited   widget.ts".padEnd(119)}│`,
+			`${"│ ◐  context  [████████░░] 75% quota · 120K/200K   160K quota".padEnd(119)}│`,
+			`${"│ ●  cache    50% hit · 1/1                    400 uncached · 600 reused · 200 stored".padEnd(119)}│`,
+			`${"│ ◐  audit    1 read · 1 write · 1 edited      widget.ts".padEnd(119)}│`,
 			"│ ●  limits   78% left · resets 12m · anthropic                                                                        │",
 			"│ ●  tools    3 calls — bash (1)                                                                                       │",
 			"│ ○  files    —                                                                                                        │",
@@ -360,24 +383,28 @@ describe("AnimationsBoxController + AnimationsBoxWidget — full-box golden fram
 		widget.dispose();
 	});
 
+	// Simple mode is one shared row, so the context gauge's variants compete with
+	// every other summary for the same budget: at 120 both it and the cache meter
+	// get their widest form, at 69 the cache meter drops to its middle one, and at
+	// 45 the bar itself sheds — the percentage is the last thing standing.
 	it("simple mode: exact golden frames at width 69 (real pane), 45 (narrow), and 120 (wide) — required segments only", () => {
 		const widget = driveFullBox("simple");
 
 		expect(widget.renderFrame(69)).toEqual([
 			"╭───────────────────────────────────────────────────────────────────╮",
-			"│ ▤ H 50.0% (1/1) ▅ R 600 W 200 M 400 · ▣ 1✎\uFE0E · 78% · 3 calls        │",
+			"│ [████████░░] 75% quota · ▤ 50.0% · ▣ 1✎\uFE0E · 78% · 3 calls           │",
 			"╰───────────────────────────────────────────────────────────────────╯",
 		]);
 
 		expect(widget.renderFrame(45)).toEqual([
 			"╭───────────────────────────────────────────╮",
-			"│ ▤ 50.0% · ▣ 1✎\uFE0E · 78% · 3 calls — bash (1) │",
+			"│ 75% quota · ▤ · ▣ 1✎\uFE0E · 78% · 3 calls      │",
 			"╰───────────────────────────────────────────╯",
 		]);
 
 		expect(widget.renderFrame(120)).toEqual([
 			"╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
-			"│ ▤ HIT 50.0% (1/1) ▅ READ 600 WRITE 200 MISS 400 · ▣ 1✎\uFE0E r/w 1/1 ×1.0 ↻0% · ≈≈≈≈≈≈≈≈∘∘ 78% anthropic · 3 calls         │",
+			"│ [████████░░] 75% quota · ▤ HIT 50.0% (1/1) ▅ READ 600 WRITE 200 MISS 400 · ▣ 1✎\uFE0E r/w 1/1 ×1.0 ↻0% · 78% · 3 calls     │",
 			"╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
 		]);
 
@@ -431,7 +458,7 @@ describe("renderStatusLine — §3 fixture goldens at the spec's 78-col inner wi
 	});
 
 	it("idle form: an untouched segment renders the lone dim em-dash under the idle dot", () => {
-		const { line } = buildPalimpsestSegment(new PalimpsestState(), 0, idTheme);
+		const { line } = buildLiveFilesSegment(new LiveFilesState(), 1);
 		expect(renderStatusLine(line, SPEC_INNER, lineCtx())).toBe("○  files    —");
 	});
 
@@ -441,7 +468,9 @@ describe("renderStatusLine — §3 fixture goldens at the spec's 78-col inner wi
 		state.noteWrite("/repo/src/widget.ts", 0);
 		const { line } = buildAuditTrailBoxSegment(state, 0, idTheme);
 		expect(line.dot).toBe("notable");
-		expect(renderStatusLine(line, SPEC_INNER, lineCtx())).toBe("◐  audit    1 read · 1 write · 1 edited   widget.ts");
+		expect(renderStatusLine(line, SPEC_INNER, lineCtx())).toBe(
+			"◐  audit    1 read · 1 write · 1 edited      widget.ts",
+		);
 	});
 
 	it("alert form: an on-disk divergence escalates to the alert dot with the poisoned span beside it", () => {
@@ -469,14 +498,14 @@ describe("renderStatusLine — the cache row's width ladder (buv.2: one row carr
 	}
 
 	// The tail sheds one span at a time from the right, so the metric that says
-	// "you are paying full price" survives longest and always sits beside the
-	// body rather than drifting against the border.
-	it("sheds the tail right-to-left — write, then read, then uncached — before touching the body", () => {
+	// "you are paying full price" survives longest and stays on the shared tail
+	// column.
+	it("sheds the tail right-to-left — stored, then reused, then uncached — before touching the body", () => {
 		const line = warmedLine();
 		const at = (width: number) => renderStatusLine(line, width, lineCtx());
-		expect(at(78)).toBe("●  cache    50% hit · 1/1   400 uncached · 600 read · 200 write");
-		expect(at(62)).toBe("●  cache    50% hit · 1/1   400 uncached · 600 read");
-		expect(at(50)).toBe("●  cache    50% hit · 1/1   400 uncached");
+		expect(at(78)).toBe("●  cache    50% hit · 1/1                    400 uncached · 600 reused");
+		expect(at(62)).toBe("●  cache    50% hit · 1/1                    400 uncached");
+		expect(at(50)).toBe("●  cache    50% hit · 1/1");
 		expect(at(39)).toBe("●  cache    50% hit · 1/1");
 	});
 
@@ -524,12 +553,12 @@ describe("renderStatusLine + FlashTracker — change-flash frame goldens (D6: fl
 		// Baseline frame: first observation of every span key — no flash (D6),
 		// pct resting at its bucketed gradient tone.
 		expect(renderStatusLine(buildCacheMeterSegment(state, 0, tagTheme).line, SPEC_INNER, ctxAt(0))).toBe(
-			"<accent:●>  cache    <success:50% hit> · 1/1   400 uncached · 600 read · 200 write",
+			"<accent:●>  cache    <success:50% hit> · 1/1                    400 uncached · 600 reused",
 		);
 
-		// A second, fully-cached usage moves pct, hits and the read total — each
-		// enters the bold+accent phase on its own key, tail spans included, while
-		// the untouched write/uncached totals stay at rest.
+		// A second, fully-cached usage moves pct, hits, and the reused total.
+		// Each enters the bold+accent phase. Uncached stays at rest, and the
+		// lower-priority stored span yields at this width.
 		state.recordUsage({
 			provider: "anthropic",
 			model: "claude",
@@ -537,15 +566,15 @@ describe("renderStatusLine + FlashTracker — change-flash frame goldens (D6: fl
 		});
 		const changed = buildCacheMeterSegment(state, 5000, tagTheme).line;
 		expect(renderStatusLine(changed, SPEC_INNER, ctxAt(5000))).toBe(
-			"<accent:●>  cache    «<accent:75% hit>» · «<accent:2/2>»   400 uncached · «<accent:1.6K read>» · 200 write",
+			"<accent:●>  cache    «<accent:75% hit>» · «<accent:2/2>»                    400 uncached · «<accent:1.6K reused>»",
 		);
 		// ...decay to accent alone...
 		expect(renderStatusLine(changed, SPEC_INNER, ctxAt(5000 + FULL_FLASH_BOLD_MS))).toBe(
-			"<accent:●>  cache    <accent:75% hit> · <accent:2/2>   400 uncached · <accent:1.6K read> · 200 write",
+			"<accent:●>  cache    <accent:75% hit> · <accent:2/2>                    400 uncached · <accent:1.6K reused>",
 		);
 		// ...and come fully to rest — gradient tone back, no residue (no blinking).
 		expect(renderStatusLine(changed, SPEC_INNER, ctxAt(5000 + FULL_FLASH_MS))).toBe(
-			"<accent:●>  cache    <success:75% hit> · 2/2   400 uncached · 1.6K read · 200 write",
+			"<accent:●>  cache    <success:75% hit> · 2/2                    400 uncached · 1.6K reused",
 		);
 	});
 });
@@ -638,14 +667,11 @@ describe("kit composeSegments — degradation ladder at 45/69/120 in simple mode
 		return BOX_SEGMENT_IDS.indexOf(id) + 1;
 	}
 
-	// At the maintainer's real pane (69) and the wide surface (120), every segment's
-	// narrowest variant still fits — nothing is dropped. At 45 the combined narrowest
-	// widths no longer fit, so the composer drops the two lowest-priority segments
-	// (reflectionRipple, priority 7, then cadenceEqualizer, priority 6) and keeps the
-	// five required summaries.
+	// Live Files carries a path and deliberately sits at the end of the required
+	// block, so narrow simple rows shed it before higher-priority summaries.
 	const LADDER: Record<number, readonly BoxSegmentId[]> = {
-		69: BOX_SEGMENT_IDS,
-		45: BOX_SEGMENT_IDS.slice(0, -2),
+		69: BOX_SEGMENT_IDS.slice(0, -1),
+		45: BOX_SEGMENT_IDS.slice(0, -3),
 		120: BOX_SEGMENT_IDS,
 	};
 
@@ -661,11 +687,12 @@ describe("kit composeSegments — degradation ladder at 45/69/120 in simple mode
 		}
 	});
 
-	it("the lowest-priority segments (reflectionRipple, then cadenceEqualizer) are the first to drop as width tightens", () => {
-		expect(LADDER[69]).toContain("reflectionRipple");
+	it("sheds the lowest-priority segments first as width tightens", () => {
 		expect(LADDER[120]).toContain("reflectionRipple");
-		expect(LADDER[45]).not.toContain("reflectionRipple");
-		expect(LADDER[45]).not.toContain("cadenceEqualizer");
-		expect(LADDER[45]).toContain("palimpsest");
+		expect(LADDER[69]).not.toContain("reflectionRipple");
+		expect(LADDER[69]).toContain("cadenceEqualizer");
+		expect(LADDER[45]).not.toContain("filesLive");
+		expect(LADDER[45]).toContain("toolActivity");
+		expect(LADDER[45]).toContain("contextGauge");
 	});
 });
