@@ -1,17 +1,14 @@
+/**
+ * Pure renderers for the Audit Box's `cadence` row: the multi-band throughput
+ * meter's glyph variants (widest first) plus the static numeric fallback the
+ * box uses when it has no room or no motion. Every function here is a pure
+ * function of a band/peak snapshot taken from `./state`: deterministic, with no
+ * wall-clock reads and no lifecycle of its own.
+ */
 import type { SymbolPreset, Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import { type AccentColor, accentToThemeColor } from "../appearance";
-import type { AnimatedWidgetOptions, MotionPolicy } from "../kit";
-import { AnimatedWidget } from "../kit";
 import { renderSparkline } from "../render-sparkline";
-import {
-	BUCKET_THEME_COLOR,
-	MAX_REFERENCE_RATE,
-	normalizeAmplitude,
-	type RateBucket,
-	rateBucket,
-	waveGlyph,
-} from "./scale";
-import type { CadenceEqualizerState } from "./state";
+import { BUCKET_THEME_COLOR, MAX_REFERENCE_RATE, type RateBucket, rateBucket, waveGlyph } from "./scale";
 
 /** The slice of {@link Theme} the renderer needs — just foreground coloring. */
 export type CadenceEqualizerTheme = Pick<Theme, "fg">;
@@ -34,13 +31,13 @@ export function cadenceEqualizerColors(accentColor?: AccentColor): CadenceEquali
 		: { ...BUCKET_THEME_COLOR, burst: accentToThemeColor(accentColor) };
 }
 
-/** Color a normalized `[0, 1]` band amplitude by projecting it back onto Token Tide's tok/s buckets — reused verbatim so the two cousins share one palette. */
+/** Color a normalized `[0, 1]` band amplitude by projecting it back onto the tok/s buckets, so band color and rate color agree. */
 function bandColor(amplitude: number): RateBucket {
 	return rateBucket(amplitude * MAX_REFERENCE_RATE);
 }
 
 /**
- * Pure renderer: the `full`-tier equalizer row. Each band renders as two
+ * Pure renderer: the widest equalizer variant. Each band renders as two
  * columns — a peak-hold cap (`‾`, dim until the band is still coasting down
  * from a recent high) followed by the live amplitude glyph — separated by a
  * blank spacer column. Deterministic given `bands`/`peaks` alone (no
@@ -98,7 +95,7 @@ export function renderEqualizerRow(
 }
 
 /**
- * Pure renderer: the `subtle`-tier equalizer — the same per-band amplitude
+ * Pure renderer: the narrow equalizer variant — the same per-band amplitude
  * glyphs with no peak caps or spacing, a compact strip that fits a
  * status-line-sized slot. Deterministic given `bands` alone.
  */
@@ -110,60 +107,8 @@ export function renderCompactEqualizer(
 	return bands.map(amplitude => theme.fg(colors[bandColor(amplitude)], waveGlyph(amplitude))).join("");
 }
 
-/** Static one-line fallback for the motion-`off` tier: the numeric tok/s reading, or a dash when idle/unknown. */
+/** Static one-line fallback for a motionless surface: the numeric tok/s reading, or a dash when idle/unknown. */
 export function renderEqualizerText(tokensPerSecond: number | null): string {
 	if (tokensPerSecond === null || !Number.isFinite(tokensPerSecond) || tokensPerSecond <= 0) return "eq --";
 	return `eq ${Math.round(tokensPerSecond)} tok/s`;
-}
-
-export interface CadenceEqualizerWidgetOptions extends AnimatedWidgetOptions {
-	state: CadenceEqualizerState;
-	theme: CadenceEqualizerTheme;
-	/** Sample the live tok/s rate at a given wall-clock (epoch ms) reading. `null` when nothing is streaming. */
-	sampleRate(wallNowMs: number): number | null;
-	/** Wall clock (epoch ms) — distinct from the shared `AnimationHost`'s relative elapsed-ms, mirroring Token Tide. Injectable for tests. */
-	wallClock: { now(): number };
-	/** Accent override for the primary accent slot (the burst bucket); `undefined` keeps the built-in palette. */
-	accentColor?: AccentColor;
-}
-
-/**
- * Ambient widget for the multi-band token-throughput equalizer. Each frame
- * it samples the live tok/s rate (via {@link CadenceEqualizerWidgetOptions.sampleRate},
- * reusing the existing `token-rate.ts` provider — never recomputed here)
- * into the shared {@link CadenceEqualizerState}, then renders a pure
- * function of that state. The {@link AnimatedWidget} base owns the
- * subscribe-on-mount / unsubscribe-on-dispose lifecycle.
- */
-export class CadenceEqualizerWidget extends AnimatedWidget {
-	#state: CadenceEqualizerState;
-	#theme: CadenceEqualizerTheme;
-	#policy: MotionPolicy;
-	#sampleRate: (wallNowMs: number) => number | null;
-	#wallClock: { now(): number };
-	#colors: CadenceEqualizerColors;
-
-	constructor(options: CadenceEqualizerWidgetOptions) {
-		super(options);
-		this.#state = options.state;
-		this.#theme = options.theme;
-		this.#policy = options.policy;
-		this.#sampleRate = options.sampleRate;
-		this.#wallClock = options.wallClock;
-		this.#colors = cadenceEqualizerColors(options.accentColor);
-	}
-
-	override onFrame(_elapsedMs: number): void {
-		const rate = this.#sampleRate(this.#wallClock.now());
-		this.#state.pushSample(normalizeAmplitude(rate ?? 0));
-	}
-
-	renderFrame(_width: number): readonly string[] {
-		if (this.#policy.tier === "full") {
-			return [
-				renderEqualizerRow(this.#state.snapshotBands(), this.#state.snapshotPeaks(), this.#theme, this.#colors),
-			];
-		}
-		return [renderCompactEqualizer(this.#state.snapshotBands(), this.#theme, this.#colors)];
-	}
 }

@@ -5,7 +5,8 @@
  * this package's animation keep-set, so this is Cadence Equalizer's own copy
  * rather than a cross-feature import. `restingPulse`/`WAVE_GLYPHS`, which only
  * Token Tide's own widget used, are dropped; everything below is load-bearing
- * for `widget.ts`.
+ * for `render.ts` or for the Audit Box, which normalizes its live tok/s
+ * samples through {@link normalizeAmplitude} before stepping the bands.
  */
 import type { ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 

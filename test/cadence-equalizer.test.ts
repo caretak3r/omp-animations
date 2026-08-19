@@ -1,117 +1,24 @@
 import { describe, expect, it } from "bun:test";
-import type {
-	MessageEndEvent,
-	MessageStartEvent,
-	MessageUpdateEvent,
-} from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
-import { BAND_ALPHAS, BAND_COUNT, stepBand, stepBands, stepPeak } from "../src/cadence-equalizer/bars";
-import {
-	type CadenceEqualizerContext,
-	CadenceEqualizerController,
-	type WallClock,
-} from "../src/cadence-equalizer/controller";
-import { BUCKET_THEME_COLOR, MAX_REFERENCE_RATE, normalizeAmplitude, waveGlyph } from "../src/cadence-equalizer/scale";
-import { CadenceEqualizerState } from "../src/cadence-equalizer/state";
+import { BAND_ALPHAS, BAND_COUNT, stepBand, stepPeak } from "../src/cadence-equalizer/bars";
 import {
 	type CadenceEqualizerTheme,
-	CadenceEqualizerWidget,
 	renderCompactEqualizer,
 	renderEqualizerRow,
 	renderEqualizerText,
-} from "../src/cadence-equalizer/widget";
-import { AnimationHost, type FrameScheduler, MotionPolicy } from "../src/kit";
+} from "../src/cadence-equalizer/render";
+import {
+	BUCKET_THEME_COLOR,
+	MAX_REFERENCE_RATE,
+	normalizeAmplitude,
+	rateBucket,
+	waveGlyph,
+} from "../src/cadence-equalizer/scale";
+import { CadenceEqualizerState } from "../src/cadence-equalizer/state";
 
 // Identity theme so assertions see plain text instead of ANSI escapes.
 const idTheme: CadenceEqualizerTheme = { fg: (_color, text) => text };
 // Color-tagging theme for tests that need to assert which bucket colored a glyph.
 const taggedTheme: CadenceEqualizerTheme = { fg: (color, text) => `${color}:${text}` };
-
-/** Manual frame scheduler: drives host ticks deterministically. */
-function manualScheduler(): FrameScheduler & { advance(ms: number): void; readonly running: boolean } {
-	let current = 0;
-	let ticker: (() => void) | undefined;
-	return {
-		now: () => current,
-		start(_intervalMs, tick) {
-			ticker = tick;
-			return () => {
-				ticker = undefined;
-			};
-		},
-		advance(ms) {
-			current += ms;
-			ticker?.();
-		},
-		get running() {
-			return ticker !== undefined;
-		},
-	};
-}
-
-/** Manual wall clock (epoch ms) — distinct from the frame scheduler, matching Token Tide's seam. */
-function manualWallClock(start = 0): WallClock & { advance(ms: number): void } {
-	let current = start;
-	return {
-		now: () => current,
-		advance(ms) {
-			current += ms;
-		},
-	};
-}
-
-const noopTui = { requestComponentRender: () => {} };
-
-/** Mutable fake `tui` for backpressure tests: `renderUnderPressure` can be flipped live. */
-class PressureTui {
-	renderUnderPressure = false;
-	requestComponentRender(): void {}
-}
-const fullEnv = { hasUI: true, isTTY: true, env: {} as Record<string, string | undefined> };
-
-function recordingContext(overrides: Partial<CadenceEqualizerContext> = {}): {
-	ctx: CadenceEqualizerContext;
-	calls: Array<{ key: string; content: unknown }>;
-} {
-	const calls: Array<{ key: string; content: unknown }> = [];
-	const ctx: CadenceEqualizerContext = {
-		hasUI: true,
-		isTTY: true,
-		env: {},
-		motionSetting: "full",
-		theme: idTheme,
-		setWidget: (key, content) => calls.push({ key, content }),
-		...overrides,
-	};
-	return { ctx, calls };
-}
-
-function assistantMessage(timestamp: number, output: number, duration?: number): MessageStartEvent["message"] {
-	return {
-		role: "assistant",
-		content: [],
-		api: "anthropic-messages",
-		provider: "test",
-		model: "test-model",
-		usage: { output, input: 0, cacheRead: 0, cacheWrite: 0, totalTokens: output },
-		stopReason: "stop",
-		timestamp,
-		duration,
-	} as unknown as MessageStartEvent["message"];
-}
-
-function userMessage(): MessageStartEvent["message"] {
-	return { role: "user", content: [], timestamp: 0 } as unknown as MessageStartEvent["message"];
-}
-
-function messageStartEvent(message: MessageStartEvent["message"]): MessageStartEvent {
-	return { type: "message_start", message };
-}
-function messageUpdateEvent(message: MessageStartEvent["message"]): MessageUpdateEvent {
-	return { type: "message_update", message, assistantMessageEvent: {} } as unknown as MessageUpdateEvent;
-}
-function messageEndEvent(message: MessageStartEvent["message"]): MessageEndEvent {
-	return { type: "message_end", message };
-}
 
 describe("cadence equalizer band math (pure)", () => {
 	it("stepBand eases toward the target and never overshoots", () => {
@@ -151,19 +58,51 @@ describe("cadence equalizer band math (pure)", () => {
 		const sorted = [...BAND_ALPHAS].sort((a, b) => b - a);
 		expect(BAND_ALPHAS).toEqual(sorted);
 	});
+});
 
-	it("stepBands steps every band/peak in one pass and never mutates its inputs", () => {
-		const prevBands = new Array(BAND_COUNT).fill(0);
-		const prevPeaks = new Array(BAND_COUNT).fill(0);
-		const frozenBands = [...prevBands];
-		const frozenPeaks = [...prevPeaks];
-		const { bands, peaks } = stepBands(prevBands, prevPeaks, 1);
-		expect(prevBands).toEqual(frozenBands);
-		expect(prevPeaks).toEqual(frozenPeaks);
-		expect(bands).toHaveLength(BAND_COUNT);
-		expect(peaks).toHaveLength(BAND_COUNT);
-		// Fast band (alpha 0.55) reacts more than the slow band (alpha 0.05) to the same step target.
-		expect(bands[0]).toBeGreaterThan(bands[bands.length - 1]);
+describe("cadence equalizer scale (pure)", () => {
+	it("normalizeAmplitude clamps to [0, 1] and saturates at MAX_REFERENCE_RATE", () => {
+		expect(normalizeAmplitude(0)).toBe(0);
+		expect(normalizeAmplitude(-5)).toBe(0);
+		expect(normalizeAmplitude(Number.NaN)).toBe(0);
+		expect(normalizeAmplitude(Infinity)).toBe(0);
+		expect(normalizeAmplitude(MAX_REFERENCE_RATE / 2)).toBeCloseTo(0.5, 10);
+		expect(normalizeAmplitude(MAX_REFERENCE_RATE)).toBe(1);
+		expect(normalizeAmplitude(MAX_REFERENCE_RATE * 4)).toBe(1);
+	});
+
+	it("normalizeAmplitude is monotonic non-decreasing in the rate", () => {
+		let previous = -1;
+		for (const rate of [0, 1, 20, 60, 120, MAX_REFERENCE_RATE, MAX_REFERENCE_RATE + 100]) {
+			const amplitude = normalizeAmplitude(rate);
+			expect(amplitude).toBeGreaterThanOrEqual(previous);
+			previous = amplitude;
+		}
+	});
+
+	it("rateBucket walks the cool-to-hot ramp at its documented ceilings", () => {
+		expect(rateBucket(0)).toBe("idle");
+		expect(rateBucket(-1)).toBe("idle");
+		expect(rateBucket(Number.NaN)).toBe("idle");
+		expect(rateBucket(20)).toBe("low");
+		expect(rateBucket(20.5)).toBe("medium");
+		expect(rateBucket(60)).toBe("medium");
+		expect(rateBucket(61)).toBe("high");
+		expect(rateBucket(120)).toBe("high");
+		expect(rateBucket(121)).toBe("burst");
+	});
+
+	it("BUCKET_THEME_COLOR carries one distinct theme color per bucket the box can render", () => {
+		const buckets = [0, 10, 40, 100, 200].map(rateBucket);
+		expect(new Set(buckets).size).toBe(5);
+		for (const bucket of buckets) expect(typeof BUCKET_THEME_COLOR[bucket]).toBe("string");
+	});
+
+	it("waveGlyph spans the whole block ramp and clamps out-of-range amplitudes", () => {
+		expect(waveGlyph(0)).toBe(" ");
+		expect(waveGlyph(-1)).toBe(" ");
+		expect(waveGlyph(1)).toBe("█");
+		expect(waveGlyph(2)).toBe("█");
 	});
 });
 
@@ -234,7 +173,7 @@ describe("cadence equalizer rendering (pure)", () => {
 		expect(withCap).toContain("warning:‾");
 	});
 
-	it("colors each band by its amplitude bucket, matching Token Tide's projected palette", () => {
+	it("colors each band by its amplitude bucket, matching the projected tok/s palette", () => {
 		const row = renderEqualizerRow([1], [1], taggedTheme, undefined, "ascii");
 		// amplitude 1 * MAX_REFERENCE_RATE sits in the burst bucket, themed "warning".
 		expect(row).toContain(`${waveGlyph(1)}`);
@@ -253,266 +192,6 @@ describe("cadence equalizer rendering (pure)", () => {
 		expect(renderEqualizerText(0)).toBe("eq --");
 		expect(renderEqualizerText(null)).toBe("eq --");
 		expect(renderEqualizerText(-5)).toBe("eq --");
-	});
-});
-
-describe("cadence equalizer widget lifecycle", () => {
-	it("subscribes on mount, samples via the injected clocks each tick, and leaves no subscription on dispose", () => {
-		const scheduler = manualScheduler();
-		const wallClock = manualWallClock();
-		const policy = new MotionPolicy(fullEnv, "full");
-		const host = new AnimationHost({ policy, scheduler });
-		const state = new CadenceEqualizerState();
-		let nextRate: number | null = 80;
-		const widget = new CadenceEqualizerWidget({
-			tui: noopTui,
-			host,
-			policy,
-			state,
-			theme: idTheme,
-			wallClock,
-			sampleRate: () => nextRate,
-		});
-
-		expect(host.subscriberCount).toBe(1);
-		expect(widget.animating).toBe(true);
-
-		scheduler.advance(33);
-		expect(state.snapshotBands()[0]).toBeGreaterThan(0);
-
-		nextRate = null;
-		const beforeIdle = state.snapshotBands()[0];
-		scheduler.advance(33);
-		expect(state.snapshotBands()[0]).toBeLessThanOrEqual(beforeIdle); // idle sample eases back down
-
-		widget.dispose();
-		expect(host.subscriberCount).toBe(0);
-		expect(host.running).toBe(false);
-		expect(scheduler.running).toBe(false);
-	});
-
-	it("full tier renders the multi-band row, not the compact strip", () => {
-		const scheduler = manualScheduler();
-		const wallClock = manualWallClock();
-		const policy = new MotionPolicy(fullEnv, "full");
-		const host = new AnimationHost({ policy, scheduler });
-		const state = new CadenceEqualizerState();
-		state.pushSample(1);
-		const widget = new CadenceEqualizerWidget({
-			tui: noopTui,
-			host,
-			policy,
-			state,
-			theme: idTheme,
-			wallClock,
-			sampleRate: () => null,
-		});
-
-		const rows = widget.render(80);
-		expect(rows).toHaveLength(1);
-		expect(rows[0]).toBe(renderEqualizerRow(state.snapshotBands(), state.snapshotPeaks(), idTheme));
-	});
-
-	it("subtle tier renders the compact strip, not the peak-cap row", () => {
-		const scheduler = manualScheduler();
-		const wallClock = manualWallClock();
-		const policy = new MotionPolicy(fullEnv, "subtle");
-		const host = new AnimationHost({ policy, scheduler });
-		const state = new CadenceEqualizerState();
-		state.pushSample(1);
-		const widget = new CadenceEqualizerWidget({
-			tui: noopTui,
-			host,
-			policy,
-			state,
-			theme: idTheme,
-			wallClock,
-			sampleRate: () => null,
-		});
-
-		const rows = widget.render(80);
-		expect(rows).toEqual([renderCompactEqualizer(state.snapshotBands(), idTheme)]);
-	});
-
-	it("off tier renders one static frame and never subscribes", () => {
-		const scheduler = manualScheduler();
-		const wallClock = manualWallClock();
-		const policy = new MotionPolicy(fullEnv, "off");
-		const host = new AnimationHost({ policy, scheduler });
-		const state = new CadenceEqualizerState();
-		const widget = new CadenceEqualizerWidget({
-			tui: noopTui,
-			host,
-			policy,
-			state,
-			theme: idTheme,
-			wallClock,
-			sampleRate: () => 42,
-		});
-
-		expect(widget.animating).toBe(false);
-		expect(host.subscriberCount).toBe(0);
-		expect(widget.render(80)).toEqual([renderCompactEqualizer(state.snapshotBands(), idTheme)]);
-	});
-
-	it("an accent override recolors only the burst bucket, leaving cooler buckets on their fixed tokens", () => {
-		const scheduler = manualScheduler();
-		const wallClock = manualWallClock();
-		const policy = new MotionPolicy(fullEnv, "full");
-		const host = new AnimationHost({ policy, scheduler });
-		const state = new CadenceEqualizerState();
-		for (let i = 0; i < 5; i++) state.pushSample(1); // saturates the fast band into the burst bucket
-		const widget = new CadenceEqualizerWidget({
-			tui: noopTui,
-			host,
-			policy,
-			state,
-			theme: taggedTheme,
-			wallClock,
-			sampleRate: () => null,
-			accentColor: "success",
-		});
-		const row = widget.render(80)[0];
-		expect(row).toContain("success:");
-		expect(row).not.toContain(`${BUCKET_THEME_COLOR.burst}:`);
-		widget.dispose();
-	});
-});
-
-describe("cadence equalizer controller", () => {
-	it("mounts an animated widget on the first streamed assistant message", () => {
-		const scheduler = manualScheduler();
-		const wallClock = manualWallClock();
-		const controller = new CadenceEqualizerController({ scheduler, wallClock });
-		const { ctx, calls } = recordingContext();
-
-		controller.onMessageStart(messageStartEvent(assistantMessage(0, 0)), ctx);
-		expect(calls).toHaveLength(1);
-		expect(typeof calls[0].content).toBe("function");
-
-		const factory = calls[0].content as (tui: typeof noopTui, theme: CadenceEqualizerTheme) => CadenceEqualizerWidget;
-		const widget = factory(noopTui, idTheme);
-		expect(widget.animating).toBe(true);
-		expect(scheduler.running).toBe(true);
-	});
-
-	it("ignores user and tool-result messages entirely", () => {
-		const scheduler = manualScheduler();
-		const controller = new CadenceEqualizerController({ scheduler });
-		const { ctx, calls } = recordingContext();
-
-		controller.onMessageStart(messageStartEvent(userMessage()), ctx);
-		expect(calls).toHaveLength(0);
-	});
-
-	it("samples a live rate from a growing assistant message via message_update, reusing the shared token-rate provider", () => {
-		const scheduler = manualScheduler();
-		const wallClock = manualWallClock(1_000_000);
-		const controller = new CadenceEqualizerController({ scheduler, wallClock });
-
-		controller.onMessageStart(messageStartEvent(assistantMessage(1_000_000, 0)), {
-			hasUI: false,
-		} as CadenceEqualizerContext);
-		wallClock.advance(500);
-		controller.onMessageUpdate(messageUpdateEvent(assistantMessage(1_000_000, 100)), {
-			hasUI: false,
-		} as CadenceEqualizerContext);
-
-		// 100 output tokens over 500ms of in-flight streaming == 200 tok/s.
-		expect(controller.sampleRate(wallClock.now())).toBeCloseTo(200, 5);
-		expect(normalizeAmplitude(controller.sampleRate(wallClock.now()) ?? 0)).toBeCloseTo(
-			Math.min(1, 200 / MAX_REFERENCE_RATE),
-			10,
-		);
-	});
-
-	it("clears the tracked message on message_end so throughput settles back to idle between turns", () => {
-		const scheduler = manualScheduler();
-		const wallClock = manualWallClock(0);
-		const controller = new CadenceEqualizerController({ scheduler, wallClock });
-		const dormantCtx = { hasUI: false } as CadenceEqualizerContext;
-
-		controller.onMessageStart(messageStartEvent(assistantMessage(0, 0)), dormantCtx);
-		controller.onMessageEnd(messageEndEvent(assistantMessage(0, 300, 600)), dormantCtx);
-
-		expect(controller.sampleRate(wallClock.now())).toBeNull();
-	});
-
-	it("renders and live-updates a static numeric line for the off tier with zero frame-clock subscriptions", () => {
-		const scheduler = manualScheduler();
-		const wallClock = manualWallClock(0);
-		const controller = new CadenceEqualizerController({ scheduler, wallClock });
-		const { ctx, calls } = recordingContext({ motionSetting: "off" });
-
-		controller.onMessageStart(messageStartEvent(assistantMessage(0, 0)), ctx);
-		expect(calls[0].content).toEqual(["eq --"]);
-		expect(scheduler.running).toBe(false); // static tier never starts the shared frame clock
-
-		wallClock.advance(1000);
-		controller.onMessageUpdate(messageUpdateEvent(assistantMessage(0, 150)), ctx);
-		expect(calls[1].content).toEqual(["eq 150 tok/s"]);
-
-		controller.onMessageEnd(messageEndEvent(assistantMessage(0, 150, 1000)), ctx);
-		expect(calls[2].content).toEqual(["eq --"]); // settles back to idle between turns
-	});
-
-	it("falls back to a static line outside a TTY even when animations are on", () => {
-		const scheduler = manualScheduler();
-		const controller = new CadenceEqualizerController({ scheduler });
-		const { ctx, calls } = recordingContext({ isTTY: false, motionSetting: "full" });
-
-		controller.onMessageStart(messageStartEvent(assistantMessage(0, 0)), ctx);
-		expect(Array.isArray(calls[0].content)).toBe(true);
-	});
-
-	it("stays dormant when there is no UI surface", () => {
-		const scheduler = manualScheduler();
-		const controller = new CadenceEqualizerController({ scheduler });
-		const { ctx, calls } = recordingContext({ hasUI: false });
-
-		controller.onMessageStart(messageStartEvent(assistantMessage(0, 0)), ctx);
-		expect(calls).toHaveLength(0);
-	});
-
-	it("wires host-level backpressure into the mounted widget: frame emission is skipped while the tui reports render pressure", () => {
-		const scheduler = manualScheduler();
-		const controller = new CadenceEqualizerController({ scheduler });
-		const { ctx, calls } = recordingContext();
-
-		controller.onMessageStart(messageStartEvent(assistantMessage(0, 0)), ctx);
-		const factory = calls[0].content as (tui: PressureTui, theme: CadenceEqualizerTheme) => CadenceEqualizerWidget;
-		const tui = new PressureTui();
-		const widget = factory(tui, idTheme);
-		expect(widget.animating).toBe(true);
-
-		scheduler.advance(16);
-		const elapsedBeforePressure = widget.elapsedMs;
-
-		tui.renderUnderPressure = true;
-		scheduler.advance(16);
-		scheduler.advance(16);
-		expect(widget.elapsedMs).toBe(elapsedBeforePressure);
-		expect(widget.animating).toBe(true);
-
-		tui.renderUnderPressure = false;
-		scheduler.advance(16);
-		expect(widget.elapsedMs).toBeGreaterThan(elapsedBeforePressure);
-		widget.dispose();
-	});
-
-	it("dispose tears down the animated host with no leaked subscription or timer", () => {
-		const scheduler = manualScheduler();
-		const controller = new CadenceEqualizerController({ scheduler });
-		const { ctx, calls } = recordingContext();
-
-		controller.onMessageStart(messageStartEvent(assistantMessage(0, 0)), ctx);
-		const factory = calls[0].content as (tui: typeof noopTui, theme: CadenceEqualizerTheme) => CadenceEqualizerWidget;
-		factory(noopTui, idTheme);
-		expect(scheduler.running).toBe(true);
-
-		controller.dispose(ctx);
-		expect(calls[calls.length - 1].content).toBeUndefined();
-		expect(scheduler.running).toBe(false);
 	});
 });
 
@@ -553,33 +232,6 @@ describe("cadence equalizer hardening: adversarial pure math", () => {
 			expect(result).toBeGreaterThanOrEqual(0);
 			expect(result).toBeLessThanOrEqual(1);
 		}
-	});
-
-	it("stepBands falls back to 0 for any prevBands/prevPeaks entry missing relative to the alphas array", () => {
-		const short = stepBands([0.5], [0.5], 0.9, BAND_ALPHAS);
-		expect(short.bands).toHaveLength(BAND_COUNT);
-		expect(short.peaks).toHaveLength(BAND_COUNT);
-		for (let i = 1; i < BAND_COUNT; i++) {
-			expect(Number.isFinite(short.bands[i])).toBe(true);
-			expect(Number.isFinite(short.peaks[i])).toBe(true);
-		}
-	});
-
-	it("stepBands ignores extra prevBands/prevPeaks entries beyond the alphas length", () => {
-		const longPrev = new Array(BAND_COUNT + 3).fill(0.7);
-		const result = stepBands(longPrev, longPrev, 0.9, BAND_ALPHAS);
-		expect(result.bands).toHaveLength(BAND_COUNT);
-		expect(result.peaks).toHaveLength(BAND_COUNT);
-	});
-
-	it("stepBands never mutates its adversarial (non-finite) inputs in place", () => {
-		const prevBands = [Number.NaN, Infinity, -Infinity, 0.5, 0.5];
-		const prevPeaks = [0.5, Number.NaN, Infinity, -Infinity, 0.5];
-		const snapshotBands = [...prevBands];
-		const snapshotPeaks = [...prevPeaks];
-		stepBands(prevBands, prevPeaks, Number.NaN, BAND_ALPHAS, Number.NaN);
-		expect(prevBands).toEqual(snapshotBands);
-		expect(prevPeaks).toEqual(snapshotPeaks);
 	});
 });
 
@@ -640,95 +292,5 @@ describe("cadence equalizer hardening: rendering edge cases", () => {
 		expect(renderEqualizerText(Number.NaN)).toBe("eq --");
 		expect(renderEqualizerText(-Infinity)).toBe("eq --");
 		expect(renderEqualizerText(Infinity)).toBe("eq --");
-	});
-});
-
-describe("cadence equalizer hardening: widget/controller lifecycle", () => {
-	it("dispose before any message ever mounted a widget is a safe no-op", () => {
-		const scheduler = manualScheduler();
-		const controller = new CadenceEqualizerController({ scheduler });
-		const { ctx, calls } = recordingContext();
-
-		controller.dispose(ctx);
-		expect(calls).toHaveLength(0);
-	});
-
-	it("dispose called twice in a row is idempotent", () => {
-		const scheduler = manualScheduler();
-		const controller = new CadenceEqualizerController({ scheduler });
-		const { ctx, calls } = recordingContext();
-
-		controller.onMessageStart(messageStartEvent(assistantMessage(0, 0)), ctx);
-		controller.dispose(ctx);
-		const callsAfterFirstDispose = calls.length;
-		controller.dispose(ctx);
-		expect(calls).toHaveLength(callsAfterFirstDispose); // second dispose is a no-op, no extra setWidget call
-	});
-
-	it("a message_start arriving after dispose remounts a fresh widget", () => {
-		const scheduler = manualScheduler();
-		const controller = new CadenceEqualizerController({ scheduler });
-		const { ctx, calls } = recordingContext();
-
-		controller.onMessageStart(messageStartEvent(assistantMessage(0, 0)), ctx);
-		controller.dispose(ctx);
-		controller.onMessageStart(messageStartEvent(assistantMessage(1, 0)), ctx);
-		const factory = calls[calls.length - 1].content as
-			| ((tui: typeof noopTui, theme: CadenceEqualizerTheme) => CadenceEqualizerWidget)
-			| undefined;
-		expect(factory).not.toBeUndefined();
-		factory?.(noopTui, idTheme); // constructing the widget is what actually subscribes it to the shared scheduler
-		expect(scheduler.running).toBe(true);
-	});
-
-	it("message_update arriving before any message_start leaves the controller dormant (no mount, no crash)", () => {
-		const scheduler = manualScheduler();
-		const controller = new CadenceEqualizerController({ scheduler });
-		const { ctx, calls } = recordingContext();
-
-		controller.onMessageUpdate(messageUpdateEvent(assistantMessage(0, 100)), ctx);
-		expect(calls).toHaveLength(0);
-	});
-
-	it("message_end for a message that never had a message_start still clears the tracked sample without crashing", () => {
-		const scheduler = manualScheduler();
-		const controller = new CadenceEqualizerController({ scheduler });
-		const { ctx } = recordingContext();
-
-		expect(() => controller.onMessageEnd(messageEndEvent(assistantMessage(0, 100, 200)), ctx)).not.toThrow();
-		expect(controller.sampleRate(0)).toBeNull();
-	});
-
-	it("an assistant message with a NaN duration falls back to wall-clock streaming duration instead of crashing", () => {
-		const scheduler = manualScheduler();
-		const wallClock = manualWallClock(0);
-		const controller = new CadenceEqualizerController({ scheduler, wallClock });
-		const { ctx } = recordingContext();
-
-		controller.onMessageStart(messageStartEvent(assistantMessage(0, 100, Number.NaN)), ctx);
-		wallClock.advance(500);
-		expect(() => controller.sampleRate(wallClock.now())).not.toThrow();
-		expect(controller.sampleRate(wallClock.now())).toBeCloseTo(200, 5);
-	});
-
-	it("onFrame tolerates sampleRate returning NaN (not just null) without corrupting state", () => {
-		const scheduler = manualScheduler();
-		const wallClock = manualWallClock();
-		const policy = new MotionPolicy(fullEnv, "full");
-		const host = new AnimationHost({ policy, scheduler });
-		const state = new CadenceEqualizerState();
-		const widget = new CadenceEqualizerWidget({
-			tui: noopTui,
-			host,
-			policy,
-			state,
-			theme: idTheme,
-			wallClock,
-			sampleRate: () => Number.NaN,
-		});
-
-		scheduler.advance(33);
-		for (const v of state.snapshotBands()) expect(Number.isFinite(v)).toBe(true);
-		widget.dispose();
 	});
 });

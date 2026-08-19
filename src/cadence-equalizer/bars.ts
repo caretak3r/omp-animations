@@ -36,20 +36,3 @@ export function stepPeak(prevPeak: number, currentAmplitude: number, decayPerFra
 	const decayed = clamp01(prevPeak) - decayPerFrame;
 	return clamp01(Math.max(current, decayed));
 }
-
-/**
- * Step every band and every peak one frame toward `targetAmplitude` (a
- * normalized `[0, 1]` reading of the live signal). Pure given the previous
- * snapshots — returns fresh arrays, never mutates the inputs.
- */
-export function stepBands(
-	prevBands: readonly number[],
-	prevPeaks: readonly number[],
-	targetAmplitude: number,
-	alphas: readonly number[] = BAND_ALPHAS,
-	peakDecayPerFrame: number = PEAK_DECAY_PER_FRAME,
-): { bands: number[]; peaks: number[] } {
-	const bands = alphas.map((alpha, i) => stepBand(prevBands[i] ?? 0, targetAmplitude, alpha));
-	const peaks = bands.map((amplitude, i) => stepPeak(prevPeaks[i] ?? 0, amplitude, peakDecayPerFrame));
-	return { bands, peaks };
-}

@@ -4,8 +4,8 @@ import { BAND_ALPHAS, BAND_COUNT, PEAK_DECAY_PER_FRAME, stepBand, stepPeak } fro
  * Mutable, session-scoped model of the equalizer's bands and their
  * peak-hold markers. Fixed length ({@link BAND_COUNT}) for the state's
  * lifetime, zero-initialized. Mutation happens only in {@link pushSample},
- * driven by the widget's per-frame sampling; rendering reads immutable
- * snapshots.
+ * driven by the Audit Box's per-frame sampling of the live tok/s rate;
+ * rendering reads immutable snapshots.
  */
 export class CadenceEqualizerState {
 	#bands: number[];
@@ -27,11 +27,9 @@ export class CadenceEqualizerState {
 
 	/**
 	 * Step every band/peak one frame toward a normalized `[0, 1]` amplitude reading. Non-finite/negative
-	 * coerces to `0` (idle). Steps `#bands`/`#peaks` in place via the same pure per-band {@link stepBand}/
-	 * {@link stepPeak} math {@link stepBands} uses, instead of calling `stepBands` (which allocates two
-	 * fresh arrays via `.map()` every call) — this runs once per animation frame, so avoiding that pair of
-	 * throwaway allocations here is the actual hot-path win; `stepBands` itself stays untouched (and pure/
-	 * non-mutating, per its own tests) as the array-level convenience API.
+	 * coerces to `0` (idle). Steps `#bands`/`#peaks` in place via the pure per-band {@link stepBand}/
+	 * {@link stepPeak} math rather than mapping two fresh arrays per call — this runs once per animation
+	 * frame, so avoiding that pair of throwaway allocations here is the actual hot-path win.
 	 */
 	pushSample(targetAmplitude: number): void {
 		const target = Number.isFinite(targetAmplitude) && targetAmplitude > 0 ? targetAmplitude : 0;
