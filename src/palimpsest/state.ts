@@ -1,6 +1,6 @@
 import { type EditSpan, FADE_AFTER_TURNS, IntervalSet } from "./spans";
 
-/** One renderable row: either a line-precise region (`start`/`end` set) or a degraded path-level entry (`start`/`end` both `undefined` — see {@link PalimpsestState.applyDegradedTouch}). */
+/** One reportable row: either a line-precise region (`start`/`end` set) or a degraded path-level entry (`start`/`end` both `undefined` — see {@link PalimpsestState.applyDegradedTouch}). */
 export interface PalimpsestRow {
 	readonly path: string;
 	readonly start: number | undefined;
@@ -9,7 +9,7 @@ export interface PalimpsestRow {
 	readonly lastTouchedTurn: number;
 }
 
-/** Immutable snapshot handed to the pure renderer each frame/event. */
+/** Immutable ledger snapshot. */
 export interface PalimpsestSnapshot {
 	readonly rows: readonly PalimpsestRow[];
 }
@@ -44,7 +44,7 @@ export class PalimpsestState {
 	#ledger = new Map<string, FileLedgerEntry>();
 	#turn = 0;
 
-	/** Whether the ledger is tracking nothing at all — the controller's cue to unmount entirely once this holds. */
+	/** Whether the ledger is tracking nothing at all — every path has either been deleted or faded out. */
 	get isEmpty(): boolean {
 		return this.#ledger.size === 0;
 	}
@@ -133,7 +133,7 @@ export class PalimpsestState {
 		this.#ledger.set(path, entry);
 	}
 
-	/** Immutable view for the pure renderer: every tracked row, regardless of overlap count — the renderer decides what's visible. */
+	/** Immutable view of every tracked row, regardless of overlap count. */
 	snapshot(): PalimpsestSnapshot {
 		const rows: PalimpsestRow[] = [];
 		for (const [path, entry] of this.#ledger) {

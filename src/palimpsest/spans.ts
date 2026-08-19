@@ -132,27 +132,5 @@ export class IntervalSet {
 /** How many turns a region (or a degraded path-level entry) can go without a re-touch before it's dropped from the ledger. */
 export const FADE_AFTER_TURNS = 3;
 
-/** Overlap count below which a region renders nothing at all — thrashing requires at least a second touch. */
+/** Thrash requires at least a second touch. */
 export const GLOW_THRESHOLD = 2;
-
-/** The four visual states a region can be in, keyed by its overlap count. */
-export type RegionGlow = "hidden" | "underline" | "amber" | "ember";
-
-/** Classify an overlap count into its render tier. Pure, monotonic in `overlapCount`. */
-export function regionGlow(overlapCount: number): RegionGlow {
-	if (overlapCount >= 4) return "ember";
-	if (overlapCount === 3) return "amber";
-	if (overlapCount === GLOW_THRESHOLD) return "underline";
-	return "hidden";
-}
-
-/** Period, in ms, of the ember tier's slow pulse — deliberately much slower than the other animations' shimmer/breathing cadences, matching the bead's "slow ember pulse". */
-export const EMBER_PULSE_PERIOD_MS = 2600;
-/** How long, within each period, the ember reads "hot" rather than resting. */
-export const EMBER_PULSE_HOT_MS = 500;
-
-/** Whether an ember region is in its brief "hot" flash at `elapsedMs`. Pure periodic pulse, `full` tier only. */
-export function isEmberHot(elapsedMs: number): boolean {
-	const phase = ((elapsedMs % EMBER_PULSE_PERIOD_MS) + EMBER_PULSE_PERIOD_MS) % EMBER_PULSE_PERIOD_MS;
-	return phase < EMBER_PULSE_HOT_MS;
-}
