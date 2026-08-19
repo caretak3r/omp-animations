@@ -14,7 +14,7 @@ export interface TidepoolSnapshot {
 	readonly level: number;
 	/** Absolute epoch ms the binding bucket refills at; `undefined` if that bucket reported no reset. */
 	readonly resetAtMs: number | undefined;
-	/** When this response was ingested (the controller's clock) — the refill animation's start point. */
+	/** When this response was ingested (the Audit Box controller's clock) — the refill animation's start point. */
 	readonly observedAtMs: number;
 }
 
@@ -28,7 +28,7 @@ export interface TidepoolSnapshot {
 export class RateLimitTidepoolState {
 	#snapshot: TidepoolSnapshot | undefined;
 
-	/** `undefined` before the first recognized response — the controller's cue to stay unmounted. */
+	/** `undefined` before the first recognized response — the Audit Box's cue to render the dim resting row. */
 	snapshot(): TidepoolSnapshot | undefined {
 		return this.#snapshot;
 	}

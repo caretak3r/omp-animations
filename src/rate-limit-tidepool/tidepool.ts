@@ -1,6 +1,6 @@
 /**
  * Rate-Limit Tidepool — pure header parsing, family whitelist, and the
- * level/refill math the widget draws from.
+ * level/refill math the Audit Box's `limits` line draws from.
  *
  * **This is not Provider Aurora.** Aurora (Round 1) tried to pair
  * `before_provider_request` with `after_provider_response` by correlation ID
@@ -12,11 +12,13 @@
  * always emitted before the `message_start` of the assistant message that
  * response produced (the extension host fires `after_provider_response` when
  * headers land, "before its stream body is consumed" — and `message_start`
- * for the assistant fires on the first consumed chunk of that same body). The
- * controller (`controller.ts`) uses exactly that ordering — never a
- * correlation ID — to know whose headers just arrived. Retry Radar is the
- * after-the-429 view of a rate limit; Tidepool is the before view: how much
- * headroom is left, read straight off the last response's own numbers.
+ * for the assistant fires on the first consumed chunk of that same body).
+ * `../animations-box/controller.ts` uses exactly that ordering — never a
+ * correlation ID — to know whose headers just arrived: it stashes them on
+ * `after_provider_response` and claims them on the next assistant
+ * `message_start`. Retry Radar is the after-the-429 view of a rate limit;
+ * Tidepool is the before view: how much headroom is left, read straight off
+ * the last response's own numbers.
  *
  * Whitelist known families ONLY. A gateway/provider this module doesn't
  * recognize never renders a level — never guessed, never interpolated from a
@@ -202,8 +204,8 @@ export interface RateLimitReading {
  * single most-depleted one — "water level = min(remaining/limit) across
  * every recognized bucket on the latest response." `undefined` when zero
  * buckets parsed (headers absent, `{}`, or simply lacking every field this
- * family looks for) — the controller's cue that this response has nothing to
- * show, not that the pool is empty.
+ * family looks for) — the Audit Box controller's cue that this response has
+ * nothing to show, not that the pool is empty.
  */
 export function readRateLimitHeaders(
 	family: RateLimitFamily,
@@ -234,7 +236,7 @@ function clamp01(x: number): number {
  * `nowMs` advances from `observedAtMs` toward `resetAtMs` — the "slow refill
  * between requests" the reset headers drive. Pure given its four numeric
  * inputs; the wall-clock read that produces `nowMs` happens once, in the
- * controller/widget's injected clock, never here. `resetAtMs === undefined`
+ * Audit Box's injected frame scheduler, never here. `resetAtMs === undefined`
  * (the binding bucket reported no reset) or a non-positive window both hold
  * the raw observed level rather than fabricating a refill with no data
  * behind it.

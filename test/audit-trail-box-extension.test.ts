@@ -6,10 +6,10 @@ import {
 	AUDIT_TRAIL_COMMAND,
 	type AuditTrailBoxExtensionOptions,
 	auditTouchesFromToolResult,
+	badgeGlyph,
 	bashReadTarget,
 	createAuditTrailBoxExtension,
 	resolveTrackedPath,
-	WIDGET_KEY,
 } from "../src/audit-trail-box";
 import { hashContent, type ProbeObservation, type ProbeSource } from "../src/audit-trail-box/probe";
 
@@ -353,7 +353,10 @@ function mountExtension(options: AuditTrailBoxExtensionOptions = {}) {
 	};
 }
 
-function recordingContext(overrides: Partial<ExtensionContext> = {}) {
+function recordingContext(
+	overrides: Partial<ExtensionContext> = {},
+	fg: (color: string, text: string) => string = (_color, text) => text,
+) {
 	const widgets: Array<{ key: string; content: unknown }> = [];
 	const statuses: Array<{ key: string; text: string | undefined }> = [];
 	const notes: Array<{ message: string; type: string | undefined }> = [];
@@ -361,7 +364,7 @@ function recordingContext(overrides: Partial<ExtensionContext> = {}) {
 		hasUI: true,
 		cwd: CWD,
 		ui: {
-			theme: { fg: (_color: string, text: string) => text, getSymbolPreset: () => "unicode" as const },
+			theme: { fg, getSymbolPreset: () => "unicode" as const },
 			setWidget: (key: string, content: unknown) => widgets.push({ key, content }),
 			setStatus: (key: string, text: string | undefined) => statuses.push({ key, text }),
 			notify: (message: string, type?: string) => notes.push({ message, type }),
@@ -425,17 +428,17 @@ describe("audit trail box extension — wiring", () => {
 
 	it("stays completely dormant without a UI surface", async () => {
 		const mounted = mountExtension({ probeSource: fakeDisk({ "/repo/a.ts": "alpha" }) });
-		const headless = recordingContext({ hasUI: false });
+		const silent = recordingContext({ hasUI: false });
 
-		mounted.emit("tool_result", wholeFileRead("/repo/a.ts", "alpha"), headless.ctx);
-		mounted.emit("tool_result", toolResult("write", { path: "b.ts", content: "beta" }), headless.ctx);
-		mounted.emit("turn_end", {}, headless.ctx);
-		mounted.emit("session_compact", {}, headless.ctx);
-		await mounted.command.handler("", headless.ctx as ExtensionCommandContext);
+		mounted.emit("tool_result", wholeFileRead("/repo/a.ts", "alpha"), silent.ctx);
+		mounted.emit("tool_result", toolResult("write", { path: "b.ts", content: "beta" }), silent.ctx);
+		mounted.emit("turn_end", {}, silent.ctx);
+		mounted.emit("session_compact", {}, silent.ctx);
+		await mounted.command.handler("", silent.ctx as ExtensionCommandContext);
 
-		expect(headless.widgets).toEqual([]);
-		expect(headless.statuses).toEqual([]);
-		expect(headless.notes).toEqual([]);
+		expect(silent.widgets).toEqual([]);
+		expect(silent.statuses).toEqual([]);
+		expect(silent.notes).toEqual([]);
 
 		// And nothing was recorded behind the scenes either: a UI-bearing read-back
 		// shows an empty working set, not a hidden one that was tracked all along.
@@ -444,10 +447,9 @@ describe("audit trail box extension — wiring", () => {
 		expect(lastNote(visible.notes).message).toContain("0 paths");
 	});
 
-	it("headless mode owns the ledger, notifies its consumer, and mounts no widget or footer status", async () => {
+	it("owns the ledger unconditionally, notifies its consumer, and mounts no widget or footer status", async () => {
 		let changes = 0;
 		const mounted = mountExtension({
-			headless: true,
 			probeSource: fakeDisk({ "/repo/a.ts": "v1" }),
 			onChange: () => changes++,
 		});
@@ -466,15 +468,17 @@ describe("audit trail box extension — wiring", () => {
 		expect(lastNote(recorded.notes).message).toContain("/repo/a.ts");
 	});
 
-	it("clears its standalone widget on session shutdown", () => {
+	it("drops the whole working set on session shutdown, even without a UI surface", async () => {
 		const mounted = mountExtension({ probeSource: fakeDisk() });
-		const { ctx, widgets } = recordingContext();
+		const { ctx, notes } = recordingContext();
 
 		mounted.emit("tool_result", wholeFileRead("/repo/a.ts", "alpha"), ctx);
-		expect(widgets.some(entry => entry.key === WIDGET_KEY)).toBe(true);
+		await mounted.command.handler("", ctx as ExtensionCommandContext);
+		expect(lastNote(notes).message).toContain("1 path");
 
-		mounted.emit("session_shutdown", {}, ctx);
-		expect(widgets.at(-1)).toEqual({ key: WIDGET_KEY, content: undefined });
+		mounted.emit("session_shutdown", {}, recordingContext({ hasUI: false }).ctx);
+		await mounted.command.handler("", ctx as ExtensionCommandContext);
+		expect(lastNote(notes).message).toContain("0 paths");
 	});
 });
 
@@ -490,6 +494,19 @@ describe("audit trail box extension — the /audit-trail command", () => {
 		expect(note.type).toBe("info");
 		expect(note.message).toContain("audit trail box");
 		expect(note.message).toContain("/repo/a.ts");
+	});
+
+	it("colors the panel badge with the registrar's accent", async () => {
+		const mounted = mountExtension({
+			accentColor: "syntaxString",
+			probeSource: fakeDisk({ "/repo/a.ts": "alpha" }),
+		});
+		const { ctx, notes } = recordingContext({}, (color, text) => `${color}:${text}`);
+
+		mounted.emit("tool_result", wholeFileRead("/repo/a.ts", "alpha"), ctx);
+		await mounted.command.handler("", ctx as ExtensionCommandContext);
+
+		expect(lastNote(notes).message).toContain(`syntaxString:${badgeGlyph("unicode")}`);
 	});
 
 	it("diffs a stale copy BEFORE it is discarded, and says so loudly", async () => {

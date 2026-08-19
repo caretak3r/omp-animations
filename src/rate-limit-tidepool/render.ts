@@ -1,10 +1,17 @@
+/**
+ * Rate-Limit Tidepool's pure renderers — the palette, the glyph set, and the
+ * proportional pool bar the Audit Box's `limits` status line draws.
+ *
+ * `src/animations-box/segments.ts` calls {@link renderTidepoolRow} once per
+ * width variant at the fixed `subtle` motion tier, so the `full`-tier shimmer
+ * ({@link shimmerBeat}) never fires there; it stays because the tier is a
+ * parameter of the renderer, not of any one caller. Everything here is
+ * deterministic given its numeric inputs — no wall-clock reads, no state.
+ */
 import type { SymbolPreset, Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import { type AccentColor, accentToThemeColor } from "../appearance";
 import { resolveGlyph } from "../glyph-presets";
-import type { AnimatedWidgetOptions, FrameScheduler, MotionPolicy } from "../kit";
-import { AnimatedWidget } from "../kit";
-import type { TidepoolSnapshot } from "./state";
-import { poolFilledCells, poolTier, refillLevel } from "./tidepool";
+import { type PoolTier, poolFilledCells, poolTier } from "./tidepool";
 
 /** The slice of {@link Theme} the renderers need — just foreground coloring. */
 export type TidepoolTheme = Pick<Theme, "fg">;
@@ -65,7 +72,7 @@ export function shimmerBeat(elapsedMs: number): boolean {
 }
 
 /** A single tier's resting glyph — used for the very narrow width degradation. */
-function bareGlyph(tier: ReturnType<typeof poolTier>, preset: SymbolPreset): string {
+function bareGlyph(tier: PoolTier, preset: SymbolPreset): string {
 	return tier === "sand" ? sandGlyph(preset) : tier === "pebbles" ? pebbleGlyph(preset) : waterGlyph(preset);
 }
 
@@ -79,7 +86,7 @@ function bareGlyph(tier: ReturnType<typeof poolTier>, preset: SymbolPreset): str
 export function renderTidepoolBar(
 	level: number,
 	cells: number,
-	tier: ReturnType<typeof poolTier>,
+	tier: PoolTier,
 	shimmerOn: boolean,
 	theme: TidepoolTheme,
 	colors: TidepoolColors = TIDEPOOL_COLORS,
@@ -136,91 +143,4 @@ export function renderTidepoolRow(
 
 	const glyphColor = tier === "sand" ? colors.sand : tier === "pebbles" ? colors.pebble : colors.water;
 	return theme.fg(glyphColor, bareGlyph(tier, preset));
-}
-
-/** Static one-line fallback for the motion-`off` tier: the same honest `NN% provider` label, no bar (no frame clock to animate one). */
-export function renderTidepoolOffText(
-	snapshot: Pick<TidepoolSnapshot, "level" | "provider">,
-	preset: SymbolPreset = "unicode",
-): string {
-	const level = snapshot.level <= 0 ? 0 : snapshot.level >= 1 ? 1 : snapshot.level;
-	return `${waterGlyph(preset)} ${Math.round(level * 100)}% ${snapshot.provider}`;
-}
-
-/** Minimal clock seam the widget needs — shared with the controller so `observedAtMs`/`resetAtMs` and render reads agree. */
-export type TidepoolClock = Pick<FrameScheduler, "now">;
-
-/** Minimal state seam the widget needs. */
-export interface TidepoolWidgetState {
-	snapshot(): TidepoolSnapshot | undefined;
-}
-
-export interface TidepoolWidgetOptions extends AnimatedWidgetOptions {
-	state: TidepoolWidgetState;
-	theme: TidepoolTheme;
-	/** Same clock the controller stamps `observedAtMs` with — NOT the host's internal relative elapsed-ms. */
-	clock: TidepoolClock;
-	/** Accent override for the primary accent slot (the water); `undefined` keeps the built-in palette. */
-	accentColor?: AccentColor;
-	/** The host's live symbol preset; `undefined` keeps the `"unicode"` default (see `../glyph-presets.ts`). */
-	glyphPreset?: SymbolPreset;
-}
-
-/**
- * Ambient widget for Rate-Limit Tidepool. Unlike Drift Buoy/Diff Bloom's
- * one-shot animations, this widget has no settle/teardown of its own — once
- * the controller mounts it (on the first recognized response), it stays
- * mounted for the rest of the session, redrawing from whatever the shared
- * state's single latest snapshot says. Each frame it reads {@link
- * TidepoolClock} (never `this.elapsedMs`, for the same dual-clock-seam reason
- * as every other widget in this kit) to compute the refill-adjusted level
- * from the snapshot's `observedAtMs`/`resetAtMs`, then renders at the current
- * width and {@link MotionPolicy} tier.
- */
-export class TidepoolWidget extends AnimatedWidget {
-	#state: TidepoolWidgetState;
-	#theme: TidepoolTheme;
-	#policy: MotionPolicy;
-	#clock: TidepoolClock;
-	#colors: TidepoolColors;
-	#glyphPreset: SymbolPreset;
-
-	constructor(options: TidepoolWidgetOptions) {
-		super(options);
-		this.#state = options.state;
-		this.#theme = options.theme;
-		this.#policy = options.policy;
-		this.#clock = options.clock;
-		this.#colors = tidepoolColors(options.accentColor);
-		this.#glyphPreset = options.glyphPreset ?? "unicode";
-	}
-
-	renderFrame(width: number): readonly string[] {
-		const snapshot = this.#state.snapshot();
-		// Defensive: the controller never constructs this widget before the first
-		// recognized sample lands, but a live tier change can leave it mounted
-		// with no frame subscription (see AnimatedWidget#syncToTier) — render()
-		// may still be invoked (e.g. on resize), so this stays honest either way.
-		if (snapshot === undefined) return [""];
-
-		const now = this.#clock.now();
-		const level = refillLevel(snapshot.level, now, snapshot.observedAtMs, snapshot.resetAtMs);
-
-		if (this.#policy.tier === "off") {
-			return [renderTidepoolOffText({ level, provider: snapshot.provider }, this.#glyphPreset)];
-		}
-		const motionTier = this.#policy.tier === "full" ? "full" : "subtle";
-		return [
-			renderTidepoolRow(
-				level,
-				snapshot.provider,
-				now,
-				width,
-				this.#theme,
-				motionTier,
-				this.#colors,
-				this.#glyphPreset,
-			),
-		];
-	}
 }

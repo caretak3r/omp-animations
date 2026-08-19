@@ -1,12 +1,14 @@
 import { describe, expect, it } from "bun:test";
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import type {
-	AfterProviderResponseEvent,
-	MessageStartEvent,
-} from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
-import { AnimationHost, backpressureFromTui, type FrameScheduler, MotionPolicy } from "../src/kit";
-import { createRateLimitTidepoolExtension } from "../src/rate-limit-tidepool";
-import { RateLimitTidepoolController, type TidepoolContext } from "../src/rate-limit-tidepool/controller";
+import {
+	pebbleGlyph,
+	renderTidepoolRow,
+	SHIMMER_PERIOD_MS,
+	sandGlyph,
+	shimmerBeat,
+	type TidepoolTheme,
+	waterGlyph,
+	waterShimmerGlyph,
+} from "../src/rate-limit-tidepool/render";
 import { RateLimitTidepoolState } from "../src/rate-limit-tidepool/state";
 import {
 	familyForProvider,
@@ -18,99 +20,11 @@ import {
 	readRateLimitHeaders,
 	refillLevel,
 } from "../src/rate-limit-tidepool/tidepool";
-import {
-	pebbleGlyph,
-	renderTidepoolOffText,
-	renderTidepoolRow,
-	SHIMMER_PERIOD_MS,
-	sandGlyph,
-	shimmerBeat,
-	type TidepoolTheme,
-	TidepoolWidget,
-	waterGlyph,
-	waterShimmerGlyph,
-} from "../src/rate-limit-tidepool/widget";
 
 // Identity theme so assertions see plain text instead of ANSI escapes.
 const idTheme: TidepoolTheme = { fg: (_color, text) => text };
 // Color-tagging theme for tests that need to assert which token the renderer chose.
 const taggedTheme: TidepoolTheme = { fg: (color, text) => `${color}:${text}` };
-
-/** Manual frame scheduler: drives host ticks deterministically. */
-function manualScheduler(): FrameScheduler & { advance(ms: number): void; readonly running: boolean } {
-	let current = 0;
-	let ticker: (() => void) | undefined;
-	return {
-		now: () => current,
-		start(_intervalMs, tick) {
-			ticker = tick;
-			return () => {
-				ticker = undefined;
-			};
-		},
-		advance(ms) {
-			current += ms;
-			ticker?.();
-		},
-		get running() {
-			return ticker !== undefined;
-		},
-	};
-}
-
-const fullEnv = { hasUI: true, isTTY: true, env: {} as Record<string, string | undefined> };
-
-/** Records every `setWidget` call for assertion, with sensible full-motion defaults. */
-function recordingContext(overrides: Partial<TidepoolContext> = {}): {
-	ctx: TidepoolContext;
-	calls: Array<{ key: string; content: unknown }>;
-} {
-	const calls: Array<{ key: string; content: unknown }> = [];
-	const ctx: TidepoolContext = {
-		hasUI: true,
-		isTTY: true,
-		env: {},
-		motionSetting: "full",
-		theme: idTheme,
-		glyphPreset: "unicode",
-		setWidget: (key, content) => calls.push({ key, content }),
-		...overrides,
-	};
-	return { ctx, calls };
-}
-
-class ToggleTui {
-	renderUnderPressure = false;
-	requestComponentRender(): void {}
-}
-
-function afterProviderResponse(headers: Readonly<Record<string, string>>): AfterProviderResponseEvent {
-	return { type: "after_provider_response", status: 200, headers: headers as Record<string, string> };
-}
-
-/** Minimal-but-valid assistant `message_start`. Cast rather than filling every optional `AssistantMessage` field — mirrors `appearance.test.ts`'s `successfulCompactionEnd` pattern. */
-function assistantMessageStart(provider: string, model = "model-x"): MessageStartEvent {
-	return {
-		type: "message_start",
-		message: {
-			role: "assistant",
-			content: [],
-			api: "anthropic-messages",
-			provider,
-			model,
-			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 },
-			stopReason: "stop",
-			timestamp: 0,
-		},
-	} as unknown as MessageStartEvent;
-}
-
-function toolResultMessageStart(): MessageStartEvent {
-	return {
-		type: "message_start",
-		message: { role: "toolResult", toolCallId: "c1", toolName: "bash", content: [], isError: false, timestamp: 0 },
-	} as unknown as MessageStartEvent;
-}
 
 const anthropicHeaders = {
 	"anthropic-ratelimit-requests-limit": "50",
@@ -348,7 +262,7 @@ describe("shimmerBeat", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Pure rendering (widget.ts)
+// Pure rendering (render.ts)
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("rate-limit tidepool pure rendering — width tiers at 69 columns", () => {
@@ -455,17 +369,6 @@ describe("rate-limit tidepool pure rendering — shimmer and coloring", () => {
 	});
 });
 
-describe("rate-limit tidepool off-tier text", () => {
-	it("asserts the honest 'NN% provider' frame", () => {
-		expect(renderTidepoolOffText({ level: 0.42, provider: "anthropic" })).toBe("≈ 42% anthropic");
-	});
-
-	it("clamps an out-of-range level rather than rendering a nonsense percentage", () => {
-		expect(renderTidepoolOffText({ level: 1.5, provider: "openai" })).toBe("≈ 100% openai");
-		expect(renderTidepoolOffText({ level: -1, provider: "openai" })).toBe("≈ 0% openai");
-	});
-});
-
 // ═══════════════════════════════════════════════════════════════════════════
 // RateLimitTidepoolState
 // ═══════════════════════════════════════════════════════════════════════════
@@ -493,278 +396,5 @@ describe("RateLimitTidepoolState", () => {
 			resetAtMs: 5_000,
 			observedAtMs: 1_000,
 		});
-	});
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// TidepoolWidget lifecycle
-// ═══════════════════════════════════════════════════════════════════════════
-
-describe("TidepoolWidget", () => {
-	function makeWidget(state: RateLimitTidepoolState, scheduler: ReturnType<typeof manualScheduler>) {
-		const policy = new MotionPolicy(fullEnv, "full");
-		const host = new AnimationHost({ policy, scheduler });
-		const tui = new ToggleTui();
-		const widget = new TidepoolWidget({ tui, host, policy, state, theme: idTheme, clock: scheduler });
-		return { widget, host, policy, tui };
-	}
-
-	it("subscribes on construction and renders the current snapshot", () => {
-		const scheduler = manualScheduler();
-		const state = new RateLimitTidepoolState();
-		state.applySample({
-			provider: "anthropic",
-			family: "anthropic",
-			level: 1,
-			resetAtMs: undefined,
-			observedAtMs: 0,
-		});
-		const { widget, host } = makeWidget(state, scheduler);
-		expect(widget.render(69)[0]).toContain("anthropic");
-		expect(widget.animating).toBe(true);
-		expect(host.subscriberCount).toBe(1);
-		widget.dispose();
-		expect(host.subscriberCount).toBe(0);
-	});
-
-	it("the displayed level refills toward full as the injected clock advances past observedAtMs toward resetAtMs", () => {
-		const scheduler = manualScheduler();
-		const state = new RateLimitTidepoolState();
-		state.applySample({ provider: "anthropic", family: "anthropic", level: 0.2, resetAtMs: 1_000, observedAtMs: 0 });
-		const { widget } = makeWidget(state, scheduler);
-		const before = widget.render(69)[0];
-		scheduler.advance(1_000);
-		widget.markDirty();
-		const after = widget.render(69)[0];
-		expect(before).not.toBe(after);
-		expect(after).toContain("100%");
-	});
-
-	it("off tier renders one static frame and never subscribes", () => {
-		const scheduler = manualScheduler();
-		const policy = new MotionPolicy(fullEnv, "off");
-		const host = new AnimationHost({ policy, scheduler });
-		const state = new RateLimitTidepoolState();
-		state.applySample({ provider: "openai", family: "openai", level: 0.6, resetAtMs: undefined, observedAtMs: 0 });
-		const tui = new ToggleTui();
-		const widget = new TidepoolWidget({ tui, host, policy, state, theme: idTheme, clock: scheduler });
-
-		expect(widget.animating).toBe(false);
-		expect(host.subscriberCount).toBe(0);
-		expect(widget.render(20)[0]).toBe(renderTidepoolOffText({ level: 0.6, provider: "openai" }));
-	});
-
-	it("backpressure freezes the widget instantly and resumes once pressure clears", () => {
-		const scheduler = manualScheduler();
-		const tui = new ToggleTui();
-		const policy = new MotionPolicy(fullEnv, "full");
-		const host = new AnimationHost({ policy, backpressure: backpressureFromTui(tui), scheduler });
-		const state = new RateLimitTidepoolState();
-		state.applySample({
-			provider: "anthropic",
-			family: "anthropic",
-			level: 0.5,
-			resetAtMs: undefined,
-			observedAtMs: 0,
-		});
-		const widget = new TidepoolWidget({ tui, host, policy, state, theme: idTheme, clock: scheduler });
-		widget.render(69);
-		expect(widget.animating).toBe(true);
-
-		scheduler.advance(1000 / 30);
-		const elapsedBeforePressure = widget.elapsedMs;
-		expect(elapsedBeforePressure).toBeGreaterThan(0);
-
-		tui.renderUnderPressure = true;
-		scheduler.advance(1000 / 30);
-		scheduler.advance(1000 / 30);
-		expect(policy.tier).toBe("full");
-		expect(widget.animating).toBe(true);
-		expect(widget.elapsedMs).toBe(elapsedBeforePressure);
-
-		tui.renderUnderPressure = false;
-		scheduler.advance(1000 / 30);
-		expect(widget.elapsedMs).toBeGreaterThan(elapsedBeforePressure);
-		widget.dispose();
-	});
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// RateLimitTidepoolController — after_provider_response / message_start pairing
-// ═══════════════════════════════════════════════════════════════════════════
-
-describe("rate-limit tidepool controller — mounting on the first recognized response", () => {
-	it("mounts once a response's headers are recognized and the following assistant message_start reveals a whitelisted provider", () => {
-		const scheduler = manualScheduler();
-		const controller = new RateLimitTidepoolController({ scheduler });
-		const { ctx, calls } = recordingContext();
-
-		controller.onAfterProviderResponse(afterProviderResponse(anthropicHeaders), ctx);
-		expect(calls).toHaveLength(0); // headers alone never mount anything
-		controller.onMessageStart(assistantMessageStart("anthropic"), ctx);
-		expect(calls).toHaveLength(1);
-		expect(typeof calls[0]?.content).toBe("function");
-		expect(controller.state.snapshot()?.provider).toBe("anthropic");
-		expect(controller.state.snapshot()?.level).toBeCloseTo(0.3, 10);
-	});
-
-	it("a message_start for a non-assistant role never consumes the pending sample", () => {
-		const controller = new RateLimitTidepoolController();
-		const { ctx, calls } = recordingContext();
-
-		controller.onAfterProviderResponse(afterProviderResponse(anthropicHeaders), ctx);
-		controller.onMessageStart(toolResultMessageStart(), ctx);
-		expect(calls).toHaveLength(0);
-		expect(controller.state.snapshot()).toBeUndefined();
-
-		// The assistant message_start that actually follows still claims it.
-		controller.onMessageStart(assistantMessageStart("anthropic"), ctx);
-		expect(calls).toHaveLength(1);
-	});
-
-	it("absent headers ({}) never mount anything", () => {
-		const controller = new RateLimitTidepoolController();
-		const { ctx, calls } = recordingContext();
-		controller.onAfterProviderResponse(afterProviderResponse({}), ctx);
-		controller.onMessageStart(assistantMessageStart("anthropic"), ctx);
-		expect(calls).toHaveLength(0);
-		expect(controller.state.snapshot()).toBeUndefined();
-	});
-
-	it("headers whose provider is not on the whitelist (e.g. openrouter) never mount anything — invisible, never guessed", () => {
-		const controller = new RateLimitTidepoolController();
-		const { ctx, calls } = recordingContext();
-		controller.onAfterProviderResponse(afterProviderResponse(anthropicHeaders), ctx);
-		controller.onMessageStart(assistantMessageStart("openrouter"), ctx);
-		expect(calls).toHaveLength(0);
-		expect(controller.state.snapshot()).toBeUndefined();
-	});
-
-	it("an assistant message_start with no pending header sample is a safe no-op", () => {
-		const controller = new RateLimitTidepoolController();
-		const { ctx, calls } = recordingContext();
-		controller.onMessageStart(assistantMessageStart("anthropic"), ctx);
-		expect(calls).toHaveLength(0);
-	});
-
-	it("a second after_provider_response before any message_start overwrites the first — latest only, never a queue", () => {
-		const controller = new RateLimitTidepoolController();
-		const { ctx } = recordingContext();
-		controller.onAfterProviderResponse(afterProviderResponse(anthropicHeaders), ctx);
-		controller.onAfterProviderResponse(afterProviderResponse(openaiHeaders), ctx);
-		controller.onMessageStart(assistantMessageStart("openai"), ctx);
-		expect(controller.state.snapshot()?.family).toBe("openai");
-	});
-
-	it("a second edit while already mounted updates state without a second mount call", () => {
-		const controller = new RateLimitTidepoolController();
-		const { ctx, calls } = recordingContext();
-		controller.onAfterProviderResponse(afterProviderResponse(anthropicHeaders), ctx);
-		controller.onMessageStart(assistantMessageStart("anthropic"), ctx);
-		controller.onAfterProviderResponse(afterProviderResponse(anthropicHeaders), ctx);
-		controller.onMessageStart(assistantMessageStart("anthropic"), ctx);
-		expect(calls).toHaveLength(1); // no remount — the existing animated mount just re-renders
-	});
-
-	it("stays dormant when there is no UI surface", () => {
-		const controller = new RateLimitTidepoolController();
-		const { ctx, calls } = recordingContext({ hasUI: false });
-		controller.onAfterProviderResponse(afterProviderResponse(anthropicHeaders), ctx);
-		controller.onMessageStart(assistantMessageStart("anthropic"), ctx);
-		expect(calls).toHaveLength(0);
-		expect(controller.state.snapshot()).toBeUndefined();
-	});
-
-	it("falls back to a static line outside a TTY even when animations are on", () => {
-		const controller = new RateLimitTidepoolController();
-		const { ctx, calls } = recordingContext({ isTTY: false, motionSetting: "full" });
-		controller.onAfterProviderResponse(afterProviderResponse(anthropicHeaders), ctx);
-		controller.onMessageStart(assistantMessageStart("anthropic"), ctx);
-		expect(Array.isArray(calls[0]?.content)).toBe(true);
-	});
-
-	it("renders a static line for the off tier, refreshed on each recognized response", () => {
-		const controller = new RateLimitTidepoolController();
-		const { ctx, calls } = recordingContext({ motionSetting: "off" });
-		controller.onAfterProviderResponse(afterProviderResponse(anthropicHeaders), ctx);
-		controller.onMessageStart(assistantMessageStart("anthropic"), ctx);
-		const snapshot = controller.state.snapshot();
-		expect(snapshot).toBeDefined();
-		expect(calls[0]?.content).toEqual([renderTidepoolOffText(snapshot as { level: number; provider: string })]);
-	});
-});
-
-describe("rate-limit tidepool controller — provider switch swaps pools", () => {
-	it("a later response from a different (whitelisted) provider replaces the pool outright, never blended", () => {
-		const controller = new RateLimitTidepoolController();
-		const { ctx } = recordingContext();
-
-		controller.onAfterProviderResponse(afterProviderResponse(anthropicHeaders), ctx);
-		controller.onMessageStart(assistantMessageStart("anthropic"), ctx);
-		expect(controller.state.snapshot()?.provider).toBe("anthropic");
-		expect(controller.state.snapshot()?.level).toBeCloseTo(0.3, 10);
-
-		controller.onAfterProviderResponse(afterProviderResponse(openaiHeaders), ctx);
-		controller.onMessageStart(assistantMessageStart("openai"), ctx);
-		const snapshot = controller.state.snapshot();
-		expect(snapshot?.provider).toBe("openai");
-		expect(snapshot?.family).toBe("openai");
-		expect(snapshot?.level).toBeCloseTo(5000 / 60000, 10);
-		// The stale anthropic reading is gone entirely, not averaged in.
-		expect(snapshot?.level).not.toBeCloseTo(0.3, 1);
-	});
-
-	it("a response from an unwhitelisted provider leaves the existing pool exactly as it was, rather than clearing it to a stale zero", () => {
-		const controller = new RateLimitTidepoolController();
-		const { ctx } = recordingContext();
-
-		controller.onAfterProviderResponse(afterProviderResponse(anthropicHeaders), ctx);
-		controller.onMessageStart(assistantMessageStart("anthropic"), ctx);
-		const before = controller.state.snapshot();
-
-		controller.onAfterProviderResponse(afterProviderResponse(openaiHeaders), ctx);
-		controller.onMessageStart(assistantMessageStart("openrouter"), ctx);
-		expect(controller.state.snapshot()).toEqual(before);
-	});
-});
-
-describe("rate-limit tidepool controller — dispose", () => {
-	it("dispose() with no prior mount is a safe no-op", () => {
-		const controller = new RateLimitTidepoolController();
-		const { ctx, calls } = recordingContext();
-		expect(() => controller.dispose(ctx)).not.toThrow();
-		expect(calls).toHaveLength(0);
-	});
-
-	it("tears the mount down and drops any pending header buffer", () => {
-		const scheduler = manualScheduler();
-		const controller = new RateLimitTidepoolController({ scheduler });
-		const { ctx, calls } = recordingContext();
-
-		controller.onAfterProviderResponse(afterProviderResponse(anthropicHeaders), ctx);
-		controller.onMessageStart(assistantMessageStart("anthropic"), ctx);
-		controller.dispose(ctx);
-		expect(calls.at(-1)?.content).toBeUndefined();
-
-		// A header sample stashed before disposal must not leak into a later session.
-		controller.onAfterProviderResponse(afterProviderResponse(anthropicHeaders), ctx);
-		controller.dispose(ctx);
-		controller.onMessageStart(assistantMessageStart("anthropic"), ctx);
-		expect(controller.state.snapshot()).toBeUndefined();
-	});
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Extension wiring
-// ═══════════════════════════════════════════════════════════════════════════
-
-describe("createRateLimitTidepoolExtension wiring", () => {
-	it("subscribes to after_provider_response, message_start, session_switch, and session_shutdown", () => {
-		const events: string[] = [];
-		const api = { on: (event: string) => events.push(event) } as unknown as ExtensionAPI;
-		createRateLimitTidepoolExtension()(api);
-		expect(events.sort()).toEqual(
-			["after_provider_response", "message_start", "session_switch", "session_shutdown"].sort(),
-		);
 	});
 });

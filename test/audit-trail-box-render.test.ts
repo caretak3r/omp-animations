@@ -1,21 +1,18 @@
 import { describe, expect, it } from "bun:test";
-import { AuditLedgerState, COLD_AFTER_TURNS, POISON_STREAK_TICKS } from "../src/audit-trail-box/state";
 import {
 	AUDIT_TRAIL_BOX_COLORS,
 	type AuditTrailBoxTheme,
-	AuditTrailBoxWidget,
 	alarmPulse,
 	badgeGlyph,
 	badgePulseGlyph,
 	elidePath,
 	PULSE_PERIOD_MS,
 	renderAuditMeterRow,
-	renderAuditOffText,
 	renderAuditPanel,
 	statusGlyphs,
 	topRiskStatus,
-} from "../src/audit-trail-box/widget";
-import { AnimationHost, type FrameScheduler, MotionPolicy } from "../src/kit";
+} from "../src/audit-trail-box/render";
+import { AuditLedgerState, COLD_AFTER_TURNS, POISON_STREAK_TICKS } from "../src/audit-trail-box/state";
 
 // Identity theme so assertions see plain text instead of ANSI escapes.
 const idTheme: AuditTrailBoxTheme = { fg: (_color, text) => text };
@@ -28,31 +25,6 @@ const BADGE_PULSE_GLYPH = badgePulseGlyph("unicode");
 const STATUS_GLYPHS = statusGlyphs("unicode");
 
 const WIDE = 200;
-
-/** Manual frame scheduler: drives host ticks deterministically. */
-function manualScheduler(): FrameScheduler & { advance(ms: number): void; readonly running: boolean } {
-	let current = 0;
-	let ticker: (() => void) | undefined;
-	return {
-		now: () => current,
-		start(_intervalMs, tick) {
-			ticker = tick;
-			return () => {
-				ticker = undefined;
-			};
-		},
-		advance(ms) {
-			current += ms;
-			ticker?.();
-		},
-		get running() {
-			return ticker !== undefined;
-		},
-	};
-}
-
-const noopTui = { requestComponentRender: () => {} };
-const fullEnv = { hasUI: true, isTTY: true, env: {} as Record<string, string | undefined> };
 
 /** Drive a path to POISONED: read it, then two probe ticks of divergence past the hysteresis gate. */
 function poison(state: AuditLedgerState, path: string, nowMs = 100_000): void {
@@ -405,121 +377,6 @@ describe("audit trail box panel (slash-command surface)", () => {
 		poison(state, "a.ts");
 		const row = renderAuditPanel(state.snapshot(), taggedTheme).find(line => line.includes("a.ts")) ?? "";
 		expect(row).toContain(`${AUDIT_TRAIL_BOX_COLORS.poisoned}:${STATUS_GLYPHS.poisoned}`);
-	});
-});
-
-describe("audit trail box off-tier text (static surface)", () => {
-	it("reports idle before anything is tracked", () => {
-		expect(renderAuditOffText(new AuditLedgerState().snapshot())).toBe(`${BADGE_GLYPH} nothing tracked`);
-	});
-
-	it("leads with risk and names every non-empty status", () => {
-		const state = new AuditLedgerState();
-		state.noteRead("a.ts", { hash: "h" });
-		state.noteWrite("b.ts", 0, { hash: "h" });
-		poison(state, "c.ts");
-
-		const text = renderAuditOffText(state.snapshot());
-		expect(text).toBe(`${BADGE_GLYPH} 3 tracked · 1 poisoned, 1 dirty, 1 fresh`);
-	});
-
-	it("is plain text with no color and no motion phase", () => {
-		const state = new AuditLedgerState();
-		poison(state, "a.ts");
-		const text = renderAuditOffText(state.snapshot());
-		expect(text).not.toContain("\u001b[");
-		expect(text).not.toContain(BADGE_PULSE_GLYPH);
-	});
-});
-
-describe("audit trail box widget lifecycle", () => {
-	it("subscribes to the frame clock, repaints as the pulse advances, and unsubscribes on dispose", () => {
-		const scheduler = manualScheduler();
-		const policy = new MotionPolicy(fullEnv, "full");
-		const host = new AnimationHost({ policy, scheduler });
-		const state = new AuditLedgerState();
-		poison(state, "a.ts");
-		const widget = new AuditTrailBoxWidget({ tui: noopTui, host, policy, state, theme: idTheme, clock: scheduler });
-
-		expect(widget.animating).toBe(true);
-		expect(host.subscriberCount).toBe(1);
-
-		const bright = widget.render(80);
-		scheduler.advance(PULSE_PERIOD_MS / 2);
-		widget.markDirty();
-		expect(widget.render(80)).not.toEqual(bright);
-
-		widget.dispose();
-		expect(host.subscriberCount).toBe(0);
-		expect(host.running).toBe(false);
-		expect(scheduler.running).toBe(false);
-	});
-
-	it("off tier renders one static frame and never subscribes", () => {
-		const scheduler = manualScheduler();
-		const policy = new MotionPolicy(fullEnv, "off");
-		const host = new AnimationHost({ policy, scheduler });
-		const state = new AuditLedgerState();
-		state.noteRead("a.ts", { hash: "h" });
-		const widget = new AuditTrailBoxWidget({ tui: noopTui, host, policy, state, theme: idTheme, clock: scheduler });
-
-		expect(widget.animating).toBe(false);
-		expect(host.subscriberCount).toBe(0);
-		expect(widget.render(80)[0]).not.toBe("");
-	});
-
-	it("renders exactly one row and honors the width it is handed", () => {
-		const scheduler = manualScheduler();
-		const policy = new MotionPolicy(fullEnv, "subtle");
-		const host = new AnimationHost({ policy, scheduler });
-		const state = new AuditLedgerState();
-		state.noteRead("a.ts", { hash: "h" });
-		state.noteWrite("b.ts", 0, { hash: "h" });
-		const widget = new AuditTrailBoxWidget({ tui: noopTui, host, policy, state, theme: idTheme, clock: scheduler });
-
-		const wide = widget.render(WIDE);
-		expect(wide).toHaveLength(1);
-		expect(wide[0]).toContain("r/w");
-
-		widget.markDirty();
-		const narrow = widget.render(6);
-		expect(narrow).toHaveLength(1);
-		expect((narrow[0] ?? "").length).toBeLessThanOrEqual(6);
-		widget.dispose();
-	});
-
-	it("applies the accent override to the badge slot", () => {
-		const scheduler = manualScheduler();
-		const policy = new MotionPolicy(fullEnv, "subtle");
-		const host = new AnimationHost({ policy, scheduler });
-		const state = new AuditLedgerState();
-		state.noteRead("a.ts", { hash: "h" });
-		const widget = new AuditTrailBoxWidget({
-			tui: noopTui,
-			host,
-			policy,
-			state,
-			theme: taggedTheme,
-			clock: scheduler,
-			accentColor: "syntaxNumber",
-		});
-		expect(widget.render(WIDE)[0]).toContain(`syntaxNumber:${BADGE_GLYPH}`);
-		widget.dispose();
-	});
-
-	it("reads the injected clock, not the host's mount-relative elapsed time", () => {
-		const scheduler = manualScheduler();
-		scheduler.advance(PULSE_PERIOD_MS / 2);
-		const policy = new MotionPolicy(fullEnv, "full");
-		const host = new AnimationHost({ policy, scheduler });
-		const state = new AuditLedgerState();
-		poison(state, "a.ts");
-		const widget = new AuditTrailBoxWidget({ tui: noopTui, host, policy, state, theme: idTheme, clock: scheduler });
-
-		// elapsedMs is still 0 (nothing has ticked since mount); the clock says half a period.
-		expect(widget.elapsedMs).toBe(0);
-		expect((widget.render(WIDE)[0] ?? "").startsWith(BADGE_PULSE_GLYPH)).toBe(true);
-		widget.dispose();
 	});
 });
 

@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import { hashContent, type ProbeObservation, type ProbeSource } from "../src/audit-trail-box/probe";
+import { AuditTrailService, PROBE_INTERVAL_MS } from "../src/audit-trail-box/service";
 import {
 	AuditLedgerState,
 	CACHE_INVALIDATION_THRESHOLD,
@@ -20,6 +22,7 @@ import {
 	WORKING_SET_SOFT_CAP,
 	WRITE_AMPLIFICATION_THRESHOLD,
 } from "../src/audit-trail-box/state";
+import type { FrameScheduler } from "../src/kit";
 
 /** One probe tick that saw `hash` on disk for `path`. */
 function seen(path: string, hash: string, content?: string): ProbeReading {
@@ -571,5 +574,292 @@ describe("audit-trail-box snapshot", () => {
 		state.noteRead("/a.ts", { hash: "h1" });
 		expect(before.paths[0]?.status).toBe("fresh");
 		expect(state.record("/a.ts")?.status).toBe("redundant");
+	});
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Service: the ledger's only owner — probe scheduling, divergence, remedy.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Manual clock: the service reads `now()` and never starts a tick of its own. */
+function manualClock(): FrameScheduler & { set(ms: number): void } {
+	let current = 0;
+	return {
+		now: () => current,
+		start: () => () => {},
+		set(ms) {
+			current = ms;
+		},
+	};
+}
+
+/** In-memory disk. A path absent from the map is unreachable (deleted / EPERM). */
+function fakeDisk(initial: Record<string, string> = {}) {
+	const files = new Map<string, string>(Object.entries(initial));
+	const inspected: string[] = [];
+	const source: ProbeSource = {
+		async inspect(path: string): Promise<ProbeObservation | undefined> {
+			inspected.push(path);
+			const content = files.get(path);
+			if (content === undefined) return undefined;
+			return { hash: hashContent(content), content };
+		},
+	};
+	return {
+		source,
+		inspected,
+		write(path: string, content: string) {
+			files.set(path, content);
+		},
+		remove(path: string) {
+			files.delete(path);
+		},
+	};
+}
+
+/** Content plus the hash the agent would have taken when it saw that content. */
+function held(content: string) {
+	return { hash: hashContent(content), content };
+}
+
+describe("audit-trail-box service — probe scheduling", () => {
+	it("kicks an off-path probe from a tracked event", async () => {
+		const disk = fakeDisk({ "a.ts": "v1", "b.ts": "v1" });
+		const service = new AuditTrailService({ scheduler: manualClock(), probeSource: disk.source });
+
+		service.noteRead("a.ts", held("v1"));
+		await service.settled();
+		expect(disk.inspected).toEqual(["a.ts"]);
+	});
+
+	it("rate-limits ticks, then allows one once the interval has passed", async () => {
+		const scheduler = manualClock();
+		const disk = fakeDisk({ "a.ts": "v1" });
+		const service = new AuditTrailService({ scheduler, probeSource: disk.source });
+
+		service.noteRead("a.ts", held("v1"));
+		await service.settled();
+		service.noteRead("a.ts", held("v1"));
+		service.noteTurn();
+		await service.settled();
+		expect(disk.inspected).toHaveLength(1);
+
+		scheduler.set(PROBE_INTERVAL_MS);
+		service.noteTurn();
+		await service.settled();
+		expect(disk.inspected).toHaveLength(2);
+	});
+
+	it("walks the working set round-robin instead of re-hashing everything each tick", async () => {
+		const disk = fakeDisk({ "a.ts": "v", "b.ts": "v", "c.ts": "v" });
+		const service = new AuditTrailService({
+			scheduler: manualClock(),
+			probeSource: disk.source,
+			probeBatchSize: 1,
+		});
+
+		service.noteRead("a.ts", held("v"));
+		service.noteRead("b.ts", held("v"));
+		service.noteRead("c.ts", held("v"));
+		await service.settled();
+		disk.inspected.length = 0;
+
+		await service.probeNow();
+		expect(disk.inspected).toHaveLength(1);
+		await service.probeNow();
+		await service.probeNow();
+		expect([...disk.inspected].sort()).toEqual(["a.ts", "b.ts", "c.ts"]);
+	});
+
+	it("skips a tick with nothing tracked", async () => {
+		const disk = fakeDisk();
+		const service = new AuditTrailService({ scheduler: manualClock(), probeSource: disk.source });
+		await service.probeNow();
+		expect(disk.inspected).toHaveLength(0);
+	});
+
+	it("never overlaps two ticks", async () => {
+		let release: (() => void) | undefined;
+		const inspected: string[] = [];
+		const source: ProbeSource = {
+			async inspect(path) {
+				inspected.push(path);
+				await new Promise<void>(resolve => {
+					release = resolve;
+				});
+				return { hash: hashContent("v"), content: "v" };
+			},
+		};
+		const service = new AuditTrailService({ scheduler: manualClock(), probeSource: source, probeBatchSize: 1 });
+
+		// The read kicks a tick that parks inside `inspect`; every call while it is
+		// parked must return without touching the disk a second time.
+		service.noteRead("a.ts", held("v"));
+		await service.probeNow();
+		await service.probeNow();
+		expect(inspected).toEqual(["a.ts"]);
+
+		release?.();
+		await service.settled();
+		expect(inspected).toEqual(["a.ts"]);
+	});
+
+	it("survives a probe source that throws on the fire-and-forget path", async () => {
+		const source: ProbeSource = {
+			inspect() {
+				throw new Error("EPERM from a hostile filesystem");
+			},
+		};
+		const service = new AuditTrailService({ scheduler: manualClock(), probeSource: source });
+
+		service.noteRead("a.ts", held("v"));
+		await service.settled();
+		expect(service.state.record("a.ts")?.status).toBe("fresh");
+	});
+});
+
+describe("audit-trail-box service — divergence against a real disk", () => {
+	it("needs two consecutive probe ticks before POISONED sticks", async () => {
+		const disk = fakeDisk({ "a.ts": "line1\nline2" });
+		const service = new AuditTrailService({ scheduler: manualClock(), probeSource: disk.source });
+
+		service.noteRead("a.ts", held("line1\nline2"));
+		await service.settled();
+		disk.write("a.ts", "line1\nCHANGED");
+
+		await service.probeNow();
+		expect(service.state.record("a.ts")?.status).not.toBe("poisoned");
+		expect(service.state.record("a.ts")?.divergenceStreak).toBe(1);
+
+		await service.probeNow();
+		expect(service.state.record("a.ts")?.status).toBe("poisoned");
+		expect(service.state.record("a.ts")?.divergenceStreak).toBe(POISON_STREAK_TICKS);
+	});
+
+	it("treats a path that vanished from disk as unreachable, then poisoned", async () => {
+		const disk = fakeDisk({ "a.ts": "v1" });
+		const service = new AuditTrailService({ scheduler: manualClock(), probeSource: disk.source });
+
+		service.noteRead("a.ts", held("v1"));
+		await service.settled();
+		disk.remove("a.ts");
+		await service.probeNow();
+		await service.probeNow();
+
+		const record = service.state.record("a.ts");
+		expect(record?.reachable).toBe(false);
+		expect(record?.status).toBe("poisoned");
+	});
+
+	it("does NOT fire POISONED when the repo's own formatter rewrites a file the agent just wrote", async () => {
+		const scheduler = manualClock();
+		const disk = fakeDisk({ "a.ts": "const x=1\n" });
+		const service = new AuditTrailService({ scheduler, probeSource: disk.source });
+
+		service.noteWrite("a.ts", held("const x=1\n"));
+		await service.settled();
+
+		// `bun run fix` lands: same file, different bytes, no human involved.
+		disk.write("a.ts", "const x = 1;\n");
+		scheduler.set(FORMATTER_WINDOW_MS / 4);
+		await service.probeNow();
+		scheduler.set(FORMATTER_WINDOW_MS / 2);
+		await service.probeNow();
+
+		const record = service.state.record("a.ts");
+		expect(record?.status).toBe("dirty");
+		expect(record?.formatterAbsorbs).toBe(1);
+		expect(record?.divergenceStreak).toBe(0);
+	});
+
+	it("still fires POISONED for an external edit that lands after the formatter window closes", async () => {
+		const scheduler = manualClock();
+		const disk = fakeDisk({ "a.ts": "written\n" });
+		const service = new AuditTrailService({ scheduler, probeSource: disk.source });
+
+		service.noteWrite("a.ts", held("written\n"));
+		await service.settled();
+
+		scheduler.set(FORMATTER_WINDOW_MS + 1_000);
+		disk.write("a.ts", "somebody else was here\n");
+		await service.probeNow();
+		await service.probeNow();
+
+		expect(service.state.record("a.ts")?.status).toBe("poisoned");
+	});
+});
+
+describe("audit-trail-box service — remedy", () => {
+	it("diffs the held copy against disk BEFORE the stale copy is discarded", async () => {
+		const disk = fakeDisk({ "a.ts": "alpha\nbeta\n" });
+		const service = new AuditTrailService({ scheduler: manualClock(), probeSource: disk.source });
+
+		service.noteRead("a.ts", held("alpha\nbeta\n"));
+		await service.settled();
+		disk.write("a.ts", "alpha\nGAMMA\n");
+		await service.probeNow();
+		await service.probeNow();
+
+		const plan = await service.remedy();
+		expect(plan.mustReread.map(entry => entry.path)).toEqual(["a.ts"]);
+		expect(plan.mustReread[0]?.status).toBe("poisoned");
+		expect(plan.mustReread[0]?.diff).toEqual(["-beta", "+GAMMA"]);
+		// The held copy is still held — the remedy describes it, it does not drop it.
+		expect(service.state.record("a.ts")?.contextContent).toBe("alpha\nbeta\n");
+	});
+
+	it("re-reads every stale path, not just the round-robin slice the next tick would cover", async () => {
+		const disk = fakeDisk({ "a.ts": "v", "b.ts": "v", "c.ts": "v" });
+		const service = new AuditTrailService({
+			scheduler: manualClock(),
+			probeSource: disk.source,
+			probeBatchSize: 1,
+		});
+
+		service.noteWrite("a.ts", held("v"));
+		service.noteWrite("b.ts", held("v"));
+		service.noteWrite("c.ts", held("v"));
+		await service.settled();
+		disk.inspected.length = 0;
+
+		await service.remedy();
+		expect([...disk.inspected].sort()).toEqual(["a.ts", "b.ts", "c.ts"]);
+	});
+
+	it("picks up content that moved between the last tick and the command", async () => {
+		const disk = fakeDisk({ "a.ts": "one\n" });
+		const service = new AuditTrailService({ scheduler: manualClock(), probeSource: disk.source });
+
+		service.noteWrite("a.ts", held("one\n"));
+		await service.settled();
+		disk.write("a.ts", "two\n");
+
+		const plan = await service.remedy();
+		expect(plan.mustReread[0]?.diff).toEqual(["-one", "+two"]);
+	});
+
+	it("splits cold paths into the safe-to-drop list", async () => {
+		const disk = fakeDisk({ "cold.ts": "v", "hot.ts": "v" });
+		const service = new AuditTrailService({ scheduler: manualClock(), probeSource: disk.source });
+
+		service.noteRead("cold.ts", held("v"));
+		for (let turn = 0; turn < COLD_AFTER_TURNS; turn++) service.noteTurn();
+		service.noteWrite("hot.ts", held("v"));
+		await service.settled();
+
+		const plan = await service.remedy();
+		expect(plan.safeToDrop.map(entry => entry.path)).toEqual(["cold.ts"]);
+		expect(plan.mustReread.map(entry => entry.path)).toEqual(["hot.ts"]);
+	});
+
+	it("reports an empty plan when nothing is tracked", async () => {
+		const service = new AuditTrailService({ scheduler: manualClock(), probeSource: fakeDisk().source });
+		expect(await service.remedy()).toEqual({
+			turn: 0,
+			mustReread: [],
+			mustRereadOverflow: 0,
+			safeToDrop: [],
+			safeToDropOverflow: 0,
+		});
 	});
 });
