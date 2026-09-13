@@ -1,4 +1,4 @@
-import { breathPeriodMsForTurnDuration, EXHALE_DURATION_MS } from "./breath";
+import { breathPeriodMsForTurnDuration, EXHALE_DURATION_MS, glossLapProgress } from "./breath";
 
 /**
  * `idle`: no motion, byte-identical static border (either never started, or
@@ -22,6 +22,8 @@ export interface BreathingBorderSnapshot {
 export class BreathingBorderState {
 	#phase: BreathingBorderPhase = "idle";
 	#breathStartedAt = 0;
+	#glossStartedAt = 0;
+	#frozenGlossProgress = 0;
 	#exhaleStartedAt = 0;
 	#turnIndex: number | undefined;
 	#turnStartedAt: number | undefined;
@@ -35,11 +37,16 @@ export class BreathingBorderState {
 	applyAgentStart(now: number): void {
 		this.#phase = "active";
 		this.#breathStartedAt = now;
+		this.#glossStartedAt = now;
+		this.#frozenGlossProgress = 0;
 	}
 
 	/** `agent_end`: begin the single wind-down exhale. A no-op if already idle (no active breath to wind down). */
 	applyAgentEnd(now: number): void {
 		if (this.#phase === "idle") return;
+		if (this.#phase === "active") {
+			this.#frozenGlossProgress = this.glossProgress(now);
+		}
 		this.#phase = "exhaling";
 		this.#exhaleStartedAt = now;
 	}
@@ -77,6 +84,12 @@ export class BreathingBorderState {
 	/** Milliseconds into the wind-down exhale. Only meaningful while `exhaling`. */
 	exhaleElapsedMs(now: number): number {
 		return Math.max(0, now - this.#exhaleStartedAt);
+	}
+
+	/** Fixed-clock gloss position while active; frozen through exhale and idle. */
+	glossProgress(now: number): number {
+		if (this.#phase !== "active") return this.#frozenGlossProgress;
+		return glossLapProgress(now - this.#glossStartedAt);
 	}
 
 	/** The live breath period, modulated by the most recently observed turn duration. */

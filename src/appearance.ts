@@ -9,8 +9,7 @@
  * shipped animation. Resolution happens once, at registrar wire time (the same
  * restart-required posture as the enable/tier settings); there is no live re-read.
  */
-import type { WidgetPlacement } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
-import type { SymbolPreset, Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { SymbolPreset, Theme, ThemeColor, WidgetPlacement } from "./host/types";
 import type { RenderTier } from "./terminal-capabilities";
 
 /**

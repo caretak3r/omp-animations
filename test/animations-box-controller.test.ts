@@ -9,22 +9,16 @@ import type {
 	AgentStartEvent,
 	MessageEndEvent,
 	MessageStartEvent,
-	MessageUpdateEvent,
 	ToolCallEvent,
+	ToolExecutionEndEvent,
+	ToolExecutionStartEvent,
 	ToolResultEvent,
-	TtsrTriggeredEvent,
 	TurnEndEvent,
 	TurnStartEvent,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 import { formatNumber } from "@oh-my-pi/pi-utils";
+import { type AnimationsBoxContext, AnimationsBoxController, BOX_WIDGET_KEY } from "../src/animations-box/controller";
 import {
-	type AnimationsBoxContext,
-	AnimationsBoxController,
-	BOX_WIDGET_KEY,
-	SIGNAL_WIDGET_KEY,
-} from "../src/animations-box/controller";
-import {
-	BOX_OPTIONAL_STATUS_SEGMENT_IDS,
 	BOX_REQUIRED_SEGMENT_IDS,
 	type BoxRequiredSegmentId,
 	resolveAnimationsBoxConfig,
@@ -41,17 +35,18 @@ import {
 	BASE_BREATH_PERIOD_MS,
 	BREATHING_BORDER_COLORS,
 	EXHALE_DURATION_MS,
+	GLOSS_LAP_DURATION_MS,
 	MIN_BREATH_PERIOD_MS,
 } from "../src/breathing-border";
 import { CacheMeterState } from "../src/cache-meter";
 import { resolveGlyph } from "../src/glyph-presets";
 import type { FrameScheduler } from "../src/kit";
-import { DIM_DURATION_MS, RIPPLE_DURATION_MS } from "../src/reflection-ripple";
 
 // Identity theme so most assertions see plain text instead of ANSI escapes.
 const idTheme = { fg: (_color: string, text: string) => text };
 // Color-tagging theme for tests that need to assert which border token the box chose.
 const taggedTheme = { fg: (color: string, text: string) => `${color}:${text}` };
+const cellTaggedTheme = { fg: (color: string, text: string) => `<${color}>${text}</${color}>` };
 const noopTui = { requestComponentRender: () => {} };
 const REQUIRED_SEGMENT_LABELS = {
 	filesLive: "files",
@@ -110,13 +105,19 @@ function buildWidget(call: SetWidgetCall, theme: unknown = idTheme): AnimationsB
 	return factory(noopTui, theme);
 }
 
+function borderCellColors(row: string): string[] {
+	return [...row.matchAll(/<(borderMuted|border|borderAccent)>[^<]*<\/(?:borderMuted|border|borderAccent)>/gu)].map(
+		match => match[1] ?? "",
+	);
+}
+
 interface UsageOverrides {
 	input?: number;
 	cacheRead?: number;
 	cacheWrite?: number;
 }
 
-function messageEnd(usage: UsageOverrides = {}): MessageEndEvent {
+function messageEnd(usage: UsageOverrides = {}, stopReason = "stop"): MessageEndEvent {
 	return {
 		type: "message_end",
 		message: {
@@ -126,16 +127,13 @@ function messageEnd(usage: UsageOverrides = {}): MessageEndEvent {
 			provider: "anthropic",
 			model: "claude",
 			usage: { input: 0, output: 10, cacheRead: 0, cacheWrite: 0, totalTokens: 10, ...usage },
-			stopReason: "stop",
+			stopReason,
 			timestamp: 0,
 		},
 	} as unknown as MessageEndEvent;
 }
 
 interface AssistantMessageOverrides {
-	output?: number;
-	timestamp?: number;
-	duration?: number;
 	provider?: string;
 }
 
@@ -148,10 +146,10 @@ function assistantMessageStart(overrides: AssistantMessageOverrides = {}): Messa
 			api: "anthropic-messages",
 			provider: overrides.provider ?? "anthropic",
 			model: "claude",
-			usage: { input: 0, output: overrides.output ?? 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 },
+			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 },
 			stopReason: undefined,
-			timestamp: overrides.timestamp ?? 0,
-			duration: overrides.duration,
+			timestamp: 0,
+			duration: undefined,
 		},
 	} as unknown as MessageStartEvent;
 }
@@ -164,25 +162,8 @@ function userMessageStart(): MessageStartEvent {
 	} as unknown as MessageStartEvent;
 }
 
-function assistantMessageUpdate(overrides: AssistantMessageOverrides = {}): MessageUpdateEvent {
-	return {
-		type: "message_update",
-		message: {
-			role: "assistant",
-			content: [],
-			api: "anthropic-messages",
-			provider: overrides.provider ?? "anthropic",
-			model: "claude",
-			usage: { input: 0, output: overrides.output ?? 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 },
-			stopReason: undefined,
-			timestamp: overrides.timestamp ?? 0,
-			duration: overrides.duration,
-		},
-	} as unknown as MessageUpdateEvent;
-}
-
-function afterProviderResponse(headers: Record<string, string>): AfterProviderResponseEvent {
-	return { type: "after_provider_response", headers } as unknown as AfterProviderResponseEvent;
+function afterProviderResponse(headers: Record<string, string>, status = 200): AfterProviderResponseEvent {
+	return { type: "after_provider_response", status, headers } as unknown as AfterProviderResponseEvent;
 }
 
 /** A recognized Anthropic rate-limit header triple, `remainingOf(limit)` fraction depleted, resetting `resetInMs` from `nowMs`. */
@@ -194,15 +175,23 @@ function anthropicHeaders(limit: number, remaining: number, nowMs: number, reset
 	};
 }
 
-function ttsrTriggered(ruleNames: readonly string[]): TtsrTriggeredEvent {
-	return {
-		type: "ttsr_triggered",
-		rules: ruleNames.map(name => ({ name })),
-	} as unknown as TtsrTriggeredEvent;
-}
-
 function toolCall(toolName: string, input: Record<string, unknown> = {}, toolCallId = "tc-1"): ToolCallEvent {
 	return { type: "tool_call", toolCallId, toolName, input } as unknown as ToolCallEvent;
+}
+
+function toolExecutionStart(toolName: string, toolCallId = "tc-1"): ToolExecutionStartEvent {
+	return { type: "tool_execution_start", toolCallId, toolName, args: {} } as unknown as ToolExecutionStartEvent;
+}
+
+function toolExecutionEnd(toolName: string, toolCallId = "tc-1", isError = false): ToolExecutionEndEvent {
+	return {
+		type: "tool_execution_end",
+		toolCallId,
+		toolName,
+		args: {},
+		result: undefined,
+		isError,
+	} as unknown as ToolExecutionEndEvent;
 }
 
 function readResult(path: string): ToolResultEvent {
@@ -269,7 +258,7 @@ describe("AnimationsBoxController — mount lifecycle", () => {
 		expect(calls).toEqual([]);
 	});
 
-	it("mounts the Audit Box and signal sidecar exactly once across repeated mount() calls", () => {
+	it("mounts the complete Animations Box exactly once across repeated mount() calls", () => {
 		const { ctx, calls } = recordingContext();
 		const controller = new AnimationsBoxController({
 			scheduler: manualScheduler(),
@@ -277,10 +266,9 @@ describe("AnimationsBoxController — mount lifecycle", () => {
 		});
 		controller.mount(ctx);
 		controller.mount(ctx);
-		expect(calls).toHaveLength(2);
-		expect(calls.map(call => call.key)).toEqual([BOX_WIDGET_KEY, SIGNAL_WIDGET_KEY]);
+		expect(calls).toHaveLength(1);
+		expect(calls.map(call => call.key)).toEqual([BOX_WIDGET_KEY]);
 		expect(BOX_WIDGET_KEY).toBe("oh-my-pi-animations-box");
-		expect(SIGNAL_WIDGET_KEY).toBe("oh-my-pi-animation-signals");
 	});
 
 	it("defaults placement to belowEditor, and honors an explicit override", () => {
@@ -289,7 +277,7 @@ describe("AnimationsBoxController — mount lifecycle", () => {
 			scheduler: manualScheduler(),
 			initialConfig: resolveAnimationsBoxConfig({}),
 		}).mount(ctx);
-		expect(calls.map(call => call.options)).toEqual([{ placement: "belowEditor" }, { placement: "aboveEditor" }]);
+		expect(calls.map(call => call.options)).toEqual([{ placement: "belowEditor" }]);
 
 		const { ctx: ctx2, calls: calls2 } = recordingContext();
 		new AnimationsBoxController({
@@ -297,7 +285,7 @@ describe("AnimationsBoxController — mount lifecycle", () => {
 			placement: "aboveEditor",
 			initialConfig: resolveAnimationsBoxConfig({}),
 		}).mount(ctx2);
-		expect(calls2.map(call => call.options)).toEqual([{ placement: "aboveEditor" }, { placement: "aboveEditor" }]);
+		expect(calls2.map(call => call.options)).toEqual([{ placement: "aboveEditor" }]);
 	});
 
 	it("dispose tears down the mount and clears the widget; is idempotent", () => {
@@ -309,10 +297,9 @@ describe("AnimationsBoxController — mount lifecycle", () => {
 		controller.mount(ctx);
 		controller.dispose(ctx);
 		controller.dispose(ctx);
-		expect(calls).toHaveLength(4);
-		expect(calls.slice(2)).toEqual([
+		expect(calls).toHaveLength(2);
+		expect(calls.slice(1)).toEqual([
 			{ key: BOX_WIDGET_KEY, content: undefined, options: { placement: "belowEditor" } },
-			{ key: SIGNAL_WIDGET_KEY, content: undefined, options: { placement: "aboveEditor" } },
 		]);
 	});
 
@@ -334,6 +321,26 @@ describe("AnimationsBoxController — mount lifecycle", () => {
 		expect(rows).toContain(resolveGlyph("box.dot.live", "ascii")); // cache went live under the ascii preset
 		expect(rows).not.toContain(resolveGlyph("box.dot.live", "unicode"));
 		expect(rows).not.toContain(resolveGlyph("box.dot.idle", "unicode"));
+		widget.dispose();
+	});
+
+	it("threads the canonical progress bar through the mounted widget without motion", () => {
+		const { ctx, calls } = recordingContext({
+			getContextUsage: () => ({ tokens: 120_000, contextWindow: 200_000, percent: 60 }),
+		});
+		const scheduler = manualScheduler();
+		const controller = new AnimationsBoxController({
+			scheduler,
+			motionSetting: "full",
+			initialConfig: resolveAnimationsBoxConfig({}),
+		});
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall);
+		const initial = widget.renderFrame(120).find(row => row.includes("context"));
+		expect(initial).toContain("[████████░░]");
+		expect(initial).toContain("120K/200K");
+		scheduler.advance(600);
+		expect(widget.renderFrame(120).find(row => row.includes("context"))).toBe(initial);
 		widget.dispose();
 	});
 });
@@ -461,7 +468,7 @@ describe("AnimationsBoxController — cache-meter state wiring", () => {
 
 		controller.onSessionSwitch(undefined, ctx);
 		// The mount itself is untouched — setWidget was never called again for a teardown.
-		expect(calls).toHaveLength(2);
+		expect(calls).toHaveLength(1);
 
 		const afterSwitch = buildWidget(calls[0] as SetWidgetCall);
 		const restingCacheRow = afterSwitch.renderFrame(69).find(row => row.includes("cache"));
@@ -484,135 +491,21 @@ describe("AnimationsBoxController — cache-meter state wiring", () => {
 		expect(rows).toContain("cache");
 		widget.dispose();
 	});
-});
 
-describe("AnimationsBoxController — cadence equalizer state wiring", () => {
-	it("the mounted widget starts on the resting row before any message_start lands", () => {
+	it("a truncated assistant reply (stopReason length) reaches the rendered error row", () => {
 		const { ctx, calls } = recordingContext();
 		const controller = new AnimationsBoxController({
 			scheduler: manualScheduler(),
-			initialConfig: resolveAnimationsBoxConfig({ cadenceEqualizer: true }),
+			initialConfig: resolveAnimationsBoxConfig({}),
 		});
 		controller.mount(ctx);
-		const widget = buildWidget(calls[0] as SetWidgetCall);
-		const cadenceRow = widget.renderFrame(69).find(row => row.includes("cadence"));
-		expect(cadenceRow).toContain("—");
-		widget.dispose();
-	});
-
-	it("onMessageStart latches hasStreamed and surfaces the sampled rate, flipping the segment to its active row", () => {
-		const scheduler = manualScheduler();
-		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({
-			scheduler,
-			initialConfig: resolveAnimationsBoxConfig({ cadenceEqualizer: true }),
-		});
-		controller.mount(ctx);
-		const widget = buildWidget(calls[0] as SetWidgetCall);
-
-		controller.onMessageStart(assistantMessageStart({ output: 100, timestamp: 0, duration: 1_000 }), ctx);
-		const cadenceRow = widget.renderFrame(69).find(row => row.includes("cadence"));
-		expect(cadenceRow).toBeDefined();
-		expect(cadenceRow).toContain("100 t/s"); // (100 output tokens * 1000) / 1000ms duration
-		widget.dispose();
-	});
-
-	it("onMessageUpdate keeps the tracked message's usage current mid-stream", () => {
-		const scheduler = manualScheduler();
-		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({
-			scheduler,
-			initialConfig: resolveAnimationsBoxConfig({ cadenceEqualizer: true }),
-		});
-		controller.mount(ctx);
-		const widget = buildWidget(calls[0] as SetWidgetCall);
-
-		controller.onMessageStart(assistantMessageStart({ output: 10, timestamp: 0, duration: 1_000 }), ctx);
-		controller.onMessageUpdate(assistantMessageUpdate({ output: 200, timestamp: 0, duration: 1_000 }), ctx);
-		const cadenceRow = widget.renderFrame(69).find(row => row.includes("cadence"));
-		expect(cadenceRow).toContain("200 t/s");
-		widget.dispose();
-	});
-
-	it("a non-assistant message_start (e.g. a user message) never latches hasStreamed", () => {
-		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({
-			scheduler: manualScheduler(),
-			initialConfig: resolveAnimationsBoxConfig({ cadenceEqualizer: true }),
-		});
-		controller.mount(ctx);
-		const widget = buildWidget(calls[0] as SetWidgetCall);
-
-		controller.onMessageStart(userMessageStart(), ctx);
-		const cadenceRow = widget.renderFrame(69).find(row => row.includes("cadence"));
-		expect(cadenceRow).toContain("—");
-		widget.dispose();
-	});
-
-	it("onFrame samples the live rate and steps the EMA bands through the #onTick seam", () => {
-		const scheduler = manualScheduler();
-		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({
-			scheduler,
-			initialConfig: resolveAnimationsBoxConfig({ cadenceEqualizer: true }),
-		});
-		controller.mount(ctx);
-		const widget = buildWidget(calls[0] as SetWidgetCall);
-
-		controller.onMessageStart(assistantMessageStart({ output: 100, timestamp: 0, duration: 1_000 }), ctx);
-		const beforeTick = widget.renderFrame(69).find(row => row.includes("cadence"));
-		widget.onFrame(0); // simulate one AnimationHost frame tick
-		const afterTick = widget.renderFrame(69).find(row => row.includes("cadence"));
-		expect(afterTick).not.toBe(beforeTick); // the band-bar glyph/trailing columns moved off zero
-		widget.dispose();
-	});
-
-	it("returns to the resting cadence row when no measurable sample was recorded", () => {
-		const scheduler = manualScheduler();
-		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({
-			scheduler,
-			initialConfig: resolveAnimationsBoxConfig({ cadenceEqualizer: true }),
-		});
-		controller.mount(ctx);
-		const widget = buildWidget(calls[0] as SetWidgetCall);
-
-		controller.onMessageStart(assistantMessageStart({ output: 100, timestamp: 0, duration: 1_000 }), ctx);
-		controller.onMessageEnd(messageEnd({ input: 100 }), ctx);
-		const cadenceRow = widget.renderFrame(69).find(row => row.includes("cadence"));
-		expect(cadenceRow).toContain("—");
-		expect(cadenceRow).not.toContain("peak 0");
-		widget.dispose();
-	});
-
-	it("ignores every event when hasUI is false", () => {
-		const scheduler = manualScheduler();
-		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({
-			scheduler,
-			initialConfig: resolveAnimationsBoxConfig({ cadenceEqualizer: true }),
-		});
-		controller.mount(ctx);
-		const widget = buildWidget(calls[0] as SetWidgetCall);
-
-		controller.onMessageStart(assistantMessageStart({ output: 100, duration: 1_000 }), { hasUI: false });
-		expect(widget.renderFrame(69).find(row => row.includes("cadence"))).toContain("—");
-		widget.dispose();
-	});
-
-	it("respects the enabled gate — a disabled cadenceEqualizer segment never appears, active or resting", () => {
-		const scheduler = manualScheduler();
-		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({
-			scheduler,
-			initialConfig: resolveAnimationsBoxConfig({ cadenceEqualizer: false }),
-		});
-		controller.mount(ctx);
-		controller.onMessageStart(assistantMessageStart({ output: 100, duration: 1_000 }), ctx);
+		controller.onMessageEnd(messageEnd({ input: 400 }), ctx);
 
 		const widget = buildWidget(calls[0] as SetWidgetCall);
-		const rows = widget.renderFrame(69).join("\n");
-		expect(rows).not.toContain("cadence");
+		expect(widget.renderFrame(120).join("\n")).not.toContain("trunc");
+
+		controller.onMessageEnd(messageEnd({ input: 400 }, "length"), ctx);
+		expect(widget.renderFrame(120).join("\n")).toContain("trunc");
 		widget.dispose();
 	});
 });
@@ -699,7 +592,7 @@ describe("AnimationsBoxController — audit trail state wiring", () => {
 		activeWidget.dispose();
 
 		controller.onSessionSwitch(undefined, ctx);
-		expect(calls).toHaveLength(2); // both mounts are untouched
+		expect(calls).toHaveLength(1); // the single mount is untouched
 
 		const afterSwitch = buildWidget(calls[0] as SetWidgetCall);
 		const restingAuditRow = afterSwitch.renderFrame(69).find(row => row.includes("audit"));
@@ -740,7 +633,7 @@ describe("AnimationsBoxController — rate-limit tidepool state wiring", () => {
 		widget.dispose();
 	});
 
-	it("an unwhitelisted provider's headers never apply — the segment stays resting", () => {
+	it("an unwhitelisted provider's quota never applies, but health does", () => {
 		const scheduler = manualScheduler();
 		const { ctx, calls } = recordingContext();
 		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
@@ -751,7 +644,10 @@ describe("AnimationsBoxController — rate-limit tidepool state wiring", () => {
 		controller.onMessageStart(assistantMessageStart({ provider: "openrouter" }), ctx);
 
 		const limitsRow = widget.renderFrame(69).find(row => row.includes("limits"));
-		expect(limitsRow).toContain("—");
+		// Health row shows for all providers
+		expect(limitsRow).toContain("http 200");
+		// But quota spans require a whitelisted provider
+		expect(limitsRow).not.toContain("% left");
 		widget.dispose();
 	});
 
@@ -764,7 +660,9 @@ describe("AnimationsBoxController — rate-limit tidepool state wiring", () => {
 
 		controller.onAfterProviderResponse(afterProviderResponse(anthropicHeaders(100, 78, 0, 12 * 60_000)), ctx);
 		controller.onMessageStart(userMessageStart(), ctx);
-		expect(widget.renderFrame(69).find(row => row.includes("limits"))).toContain("—");
+		// Health row activates on first response, but tidepool quota needs assistant message_start
+		expect(widget.renderFrame(69).find(row => row.includes("limits"))).toContain("http 200");
+		expect(widget.renderFrame(69).find(row => row.includes("limits"))).not.toContain("% left");
 
 		// The sample survives the intervening user message_start and is claimed by the assistant one that follows.
 		controller.onMessageStart(assistantMessageStart({ provider: "anthropic" }), ctx);
@@ -800,7 +698,7 @@ describe("AnimationsBoxController — rate-limit tidepool state wiring", () => {
 		activeWidget.dispose();
 
 		controller.onSessionSwitch(undefined, ctx);
-		expect(calls).toHaveLength(2); // both mounts are untouched
+		expect(calls).toHaveLength(1); // the single mount is untouched
 
 		const afterSwitch = buildWidget(calls[0] as SetWidgetCall);
 		expect(afterSwitch.renderFrame(69).find(row => row.includes("limits"))).toContain("—");
@@ -826,57 +724,154 @@ describe("AnimationsBoxController — rate-limit tidepool state wiring", () => {
 });
 
 describe("AnimationsBoxController — tool activity state wiring", () => {
-	it("the mounted widget starts on the resting row before any tool_call lands", () => {
-		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({
-			scheduler: manualScheduler(),
-			initialConfig: resolveAnimationsBoxConfig({}),
-		});
-		controller.mount(ctx);
-		const widget = buildWidget(calls[0] as SetWidgetCall);
-		const toolsRow = widget.renderFrame(69).find(row => row.includes("tools"));
-		expect(toolsRow).toContain("—");
-		widget.dispose();
-	});
-
-	it("onToolCall counts the call, flipping the segment to its active row", () => {
+	it("starts on the resting row and ignores headless tool events", () => {
 		const scheduler = manualScheduler();
 		const { ctx, calls } = recordingContext();
 		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
 		controller.mount(ctx);
 		const widget = buildWidget(calls[0] as SetWidgetCall);
-
-		controller.onToolCall(toolCall("read"), ctx);
-		const toolsRow = widget.renderFrame(69).find(row => row.includes("tools"));
-		expect(toolsRow).toContain("1 call");
-		widget.dispose();
-	});
-
-	it("counts a file tool toward the total but never breaks it out — the audit row owns read/write", () => {
-		const scheduler = manualScheduler();
-		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
-		controller.mount(ctx);
-		const widget = buildWidget(calls[0] as SetWidgetCall);
-
-		controller.onToolCall(toolCall("read"), ctx);
-		controller.onToolCall(toolCall("bash"), ctx);
-		const toolsRow = widget.renderFrame(69).find(row => row.includes("tools"));
-		expect(toolsRow).toContain("2 calls — bash (1)");
-		expect(toolsRow).not.toContain("read (");
-		widget.dispose();
-	});
-
-	it("ignores tool_call when hasUI is false", () => {
-		const scheduler = manualScheduler();
-		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
-		controller.mount(ctx);
-		const widget = buildWidget(calls[0] as SetWidgetCall);
+		expect(widget.renderFrame(120).find(row => row.includes("tools"))).toContain("—");
 
 		controller.onToolCall(toolCall("read"), { hasUI: false });
-		const toolsRow = widget.renderFrame(69).find(row => row.includes("tools"));
-		expect(toolsRow).toContain("—");
+		controller.onToolExecutionStart(toolExecutionStart("read"), { hasUI: false });
+		expect(widget.renderFrame(120).find(row => row.includes("tools"))).toContain("—");
+		widget.dispose();
+	});
+
+	it("renders exact active execution latency from the controller clock", () => {
+		const scheduler = manualScheduler();
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall);
+
+		controller.onToolCall(toolCall("bash", {}, "verify"), ctx);
+		controller.onToolExecutionStart(toolExecutionStart("bash", "verify"), ctx);
+		scheduler.advance(4_800);
+		const active = widget.renderFrame(160).find(row => row.includes("tools"));
+		expect(active).toContain("bash · 4.8s active · 1 call");
+		expect(active).not.toContain("VERIFY");
+
+		controller.onToolExecutionEnd(toolExecutionEnd("bash", "verify"), ctx);
+		const settled = widget.renderFrame(160).find(row => row.includes("tools"));
+		expect(settled).toContain("1 call · bash (1)");
+		widget.dispose();
+	});
+
+	it("shows the active tool first without duplicating file tools in the category breakdown", () => {
+		const scheduler = manualScheduler();
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall);
+
+		for (const [id, toolName] of [
+			["write-1", "write"],
+			["verify", "bash"],
+		] as const) {
+			controller.onToolCall(toolCall(toolName, {}, id), ctx);
+			controller.onToolExecutionStart(toolExecutionStart(toolName, id), ctx);
+			scheduler.advance(10);
+			controller.onToolExecutionEnd(toolExecutionEnd(toolName, id), ctx);
+		}
+		controller.onToolCall(toolCall("write", {}, "write-2"), ctx);
+		controller.onToolExecutionStart(toolExecutionStart("write", "write-2"), ctx);
+		const toolsRow = widget.renderFrame(160).find(row => row.includes("tools"));
+		expect(toolsRow).toContain("write · 0ms active · 3 calls · bash (1)");
+		expect(toolsRow).not.toContain("write (");
+		expect(toolsRow).not.toContain("BUILD");
+		widget.dispose();
+	});
+
+	it("keeps the settled tool row compact across build and verification work", () => {
+		const scheduler = manualScheduler();
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall);
+
+		controller.onToolCall(toolCall("write", {}, "write"), ctx);
+		controller.onToolExecutionStart(toolExecutionStart("write", "write"), ctx);
+		controller.onToolExecutionEnd(toolExecutionEnd("write", "write"), ctx);
+		controller.onTurnEnd(turnEnd(0), ctx);
+		expect(widget.renderFrame(160).find(row => row.includes("tools"))).toContain("1 call");
+
+		controller.onToolCall(toolCall("bash", {}, "verify"), ctx);
+		controller.onToolExecutionStart(toolExecutionStart("bash", "verify"), ctx);
+		controller.onToolExecutionEnd(toolExecutionEnd("bash", "verify"), ctx);
+		controller.onTurnEnd(turnEnd(1), ctx);
+		const settled = widget.renderFrame(160).find(row => row.includes("tools"));
+		expect(settled).toContain("2 calls · bash (1)");
+		expect(settled).not.toContain("HANDOFF");
+		widget.dispose();
+	});
+
+	it("resets the ledger on agent_start and session_switch without remounting", () => {
+		const scheduler = manualScheduler();
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall);
+
+		controller.onToolCall(toolCall("bash"), ctx);
+		controller.onAgentStart(agentStart(), ctx);
+		expect(widget.renderFrame(120).find(row => row.includes("tools"))).toContain("—");
+
+		controller.onToolCall(toolCall("bash"), ctx);
+		controller.onSessionSwitch(undefined, ctx);
+		expect(widget.renderFrame(120).find(row => row.includes("tools"))).toContain("—");
+		expect(calls).toHaveLength(1);
+		widget.dispose();
+	});
+
+	it("feeds the verify sidecar row when writes settle", () => {
+		const scheduler = manualScheduler();
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall);
+
+		controller.onToolCall(toolCall("write", {}, "w1"), ctx);
+		controller.onToolExecutionStart(toolExecutionStart("write", "w1"), ctx);
+		controller.onToolExecutionEnd(toolExecutionEnd("write", "w1"), ctx);
+		const afterWrite = widget.renderFrame(160);
+		expect(afterWrite.some(row => row.includes("verify") && row.includes("write") && row.includes("bash"))).toBe(
+			true,
+		);
+		widget.dispose();
+	});
+
+	it("clears the verify row when a green bash settles", () => {
+		const scheduler = manualScheduler();
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall);
+
+		controller.onToolCall(toolCall("write", {}, "w1"), ctx);
+		controller.onToolExecutionStart(toolExecutionStart("write", "w1"), ctx);
+		controller.onToolExecutionEnd(toolExecutionEnd("write", "w1"), ctx);
+		controller.onToolCall(toolCall("bash", {}, "b1"), ctx);
+		controller.onToolExecutionStart(toolExecutionStart("bash", "b1"), ctx);
+		controller.onToolExecutionEnd(toolExecutionEnd("bash", "b1", false), ctx);
+		const afterBash = widget.renderFrame(160);
+		expect(afterBash.every(row => !row.includes("verify"))).toBe(true);
+		widget.dispose();
+	});
+
+	it("verify row survives onAgentStart (session scope, not request scope)", () => {
+		const scheduler = manualScheduler();
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall);
+
+		controller.onToolCall(toolCall("write", {}, "w1"), ctx);
+		controller.onToolExecutionStart(toolExecutionStart("write", "w1"), ctx);
+		controller.onToolExecutionEnd(toolExecutionEnd("write", "w1"), ctx);
+		controller.onAgentStart(agentStart(), ctx);
+		const afterAgentStart = widget.renderFrame(160);
+		expect(afterAgentStart.some(row => row.includes("verify") && row.includes("write"))).toBe(true);
 		widget.dispose();
 	});
 });
@@ -971,114 +966,6 @@ describe("AnimationsBoxController — live file state wiring", () => {
 	});
 });
 
-describe("AnimationsBoxController — reflection ripple state wiring", () => {
-	const SETTLE_MS = Math.max(RIPPLE_DURATION_MS, DIM_DURATION_MS);
-	// Pins the RESTING status line specifically: "reflect" fills its 7-col label
-	// gutter exactly, then the two-space gap, then the shared idle phrase "—"
-	// (IDLE_SPANS — see segments.ts). The active line puts rule names there
-	// instead, so this substring only ever matches the resting row. Reflection
-	// is an optional animation, so each test enables it explicitly.
-	const RESTING_REFLECT_ROW = "reflect  —";
-
-	it("the mounted widget starts on the resting row before any ttsr_triggered event — the COMMON state, not a startup gap", () => {
-		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({
-			scheduler: manualScheduler(),
-			initialConfig: resolveAnimationsBoxConfig({ reflectionRipple: true }),
-		});
-		controller.mount(ctx);
-		const widget = buildWidget(calls[0] as SetWidgetCall);
-		const reflectRow = widget.renderFrame(69).find(row => row.includes("reflect"));
-		expect(reflectRow).toContain(RESTING_REFLECT_ROW);
-		widget.dispose();
-	});
-
-	it("onTtsrTriggered flips the segment active, and settling via the #onTick seam reverts it to resting", () => {
-		const scheduler = manualScheduler();
-		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({
-			scheduler,
-			initialConfig: resolveAnimationsBoxConfig({ reflectionRipple: true }),
-		});
-		controller.mount(ctx);
-		const widget = buildWidget(calls[0] as SetWidgetCall);
-
-		controller.onTtsrTriggered(ttsrTriggered(["ruleA"]), ctx);
-		const activeRow = widget.renderFrame(69).find(row => row.includes("reflect"));
-		expect(activeRow).toBeDefined();
-		expect(activeRow).toContain("ruleA");
-		expect(activeRow).not.toContain(RESTING_REFLECT_ROW);
-
-		scheduler.advance(SETTLE_MS);
-		widget.onFrame(0); // drives #onTick -> settleIfDone
-		const settledRow = widget.renderFrame(69).find(row => row.includes("reflect"));
-		expect(settledRow).toContain(RESTING_REFLECT_ROW);
-		widget.dispose();
-	});
-
-	it("ignores ttsr_triggered when hasUI is false", () => {
-		const scheduler = manualScheduler();
-		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({
-			scheduler,
-			initialConfig: resolveAnimationsBoxConfig({ reflectionRipple: true }),
-		});
-		controller.mount(ctx);
-		const widget = buildWidget(calls[0] as SetWidgetCall);
-
-		controller.onTtsrTriggered(ttsrTriggered(["rule"]), { hasUI: false });
-		expect(widget.renderFrame(69).find(row => row.includes("reflect"))).toContain(RESTING_REFLECT_ROW);
-		widget.dispose();
-	});
-
-	it("respects the enabled gate — a disabled reflectionRipple segment never appears, active or resting", () => {
-		const scheduler = manualScheduler();
-		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({
-			scheduler,
-			initialConfig: resolveAnimationsBoxConfig({ reflectionRipple: false }),
-		});
-		controller.mount(ctx);
-		controller.onTtsrTriggered(ttsrTriggered(["rule"]), ctx);
-
-		const widget = buildWidget(calls[0] as SetWidgetCall);
-		const rows = widget.renderFrame(69).join("\n");
-		expect(rows).not.toContain("reflect");
-		widget.dispose();
-	});
-
-	it("MANDATORY acceptance: a ripple triggered before the box widget mounts settles at the correct wall-clock phase, not mount-relative (Plan 017 Decision 4)", () => {
-		const scheduler = manualScheduler();
-		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({
-			scheduler,
-			initialConfig: resolveAnimationsBoxConfig({ reflectionRipple: true }),
-		});
-
-		// Trigger BEFORE mount() — onTtsrTriggered only needs ctx.hasUI, not a live
-		// mount, and stamps the trigger off the scheduler regardless.
-		controller.onTtsrTriggered(ttsrTriggered(["preMount"]), ctx);
-
-		// Advance to just short of settling, THEN mount. If elapsed were wrongly
-		// anchored to the mount time instead of the true trigger time, the very
-		// next tick below would read elapsed≈0 and stay rippling far longer.
-		scheduler.advance(SETTLE_MS - 1);
-		controller.mount(ctx);
-		const widget = buildWidget(calls[0] as SetWidgetCall);
-
-		widget.onFrame(0); // now = SETTLE_MS - 1: not yet settled
-		const stillRippling = widget.renderFrame(69).find(row => row.includes("reflect"));
-		expect(stillRippling).toContain("preMount");
-		expect(stillRippling).not.toContain(RESTING_REFLECT_ROW);
-
-		scheduler.advance(2);
-		widget.onFrame(0); // now = SETTLE_MS + 1: settled, measured off the ORIGINAL trigger time
-		const settled = widget.renderFrame(69).find(row => row.includes("reflect"));
-		expect(settled).toContain(RESTING_REFLECT_ROW);
-		widget.dispose();
-	});
-});
-
 describe("AnimationsBoxController — grouped Audit Box composition", () => {
 	it("renders all required summaries in canonical order even when their standalone settings are false", () => {
 		const scheduler = manualScheduler();
@@ -1105,49 +992,6 @@ describe("AnimationsBoxController — grouped Audit Box composition", () => {
 		widget.dispose();
 	});
 
-	it("renders enabled optional status rows below exactly one separator in deterministic order", () => {
-		const scheduler = manualScheduler();
-		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({
-			scheduler,
-			initialConfig: resolveAnimationsBoxConfig({ cadenceEqualizer: true, reflectionRipple: true }),
-		});
-		controller.mount(ctx);
-		const widget = buildWidget(calls[0] as SetWidgetCall);
-
-		controller.onTtsrTriggered(ttsrTriggered(["rule"]), ctx);
-		controller.onMessageStart(assistantMessageStart({ output: 10, duration: 1_000 }), ctx);
-
-		const width = 69;
-		const frame = widget.renderFrame(width);
-		const expectedLabels = [...requiredSegmentLabels(), "cadence", "reflect"];
-		expect(expectedLabels).toHaveLength(BOX_REQUIRED_SEGMENT_IDS.length + BOX_OPTIONAL_STATUS_SEGMENT_IDS.length);
-		expect(frame).toHaveLength(expectedLabels.length + 3);
-		for (let i = 0; i < BOX_REQUIRED_SEGMENT_IDS.length; i++) {
-			expect(frame[i + 1]).toContain(expectedLabels[i] as string);
-		}
-		expect(frame[BOX_REQUIRED_SEGMENT_IDS.length + 1]).toBe(`│ ${" ".repeat(width - 4)} │`);
-		for (let i = 0; i < BOX_OPTIONAL_STATUS_SEGMENT_IDS.length; i++) {
-			expect(frame[BOX_REQUIRED_SEGMENT_IDS.length + 2 + i]).toContain(
-				expectedLabels[BOX_REQUIRED_SEGMENT_IDS.length + i] as string,
-			);
-		}
-		widget.dispose();
-	});
-
-	it("toggles cadence and reflection independently without interleaving either with required rows", () => {
-		const { ctx, calls } = recordingContext();
-		new AnimationsBoxController({
-			scheduler: manualScheduler(),
-			initialConfig: resolveAnimationsBoxConfig({ cadenceEqualizer: false, reflectionRipple: true }),
-		}).mount(ctx);
-		const widget = buildWidget(calls[0] as SetWidgetCall);
-
-		const frame = widget.renderFrame(69);
-		expect(frame.join("\n")).not.toContain("cadence");
-		expect(frame[BOX_REQUIRED_SEGMENT_IDS.length + 2]).toContain("reflect");
-		widget.dispose();
-	});
 	it("renders a headless probe failure as a sanitized actionable alarm in the shared audit row", async () => {
 		const scheduler = manualScheduler();
 		const state = new AuditLedgerState();
@@ -1192,7 +1036,7 @@ describe("AnimationsBoxController — breathing border wiring (Decision 2)", () 
 		const widget = buildWidget(calls[0] as SetWidgetCall, taggedTheme);
 
 		const row = widget.renderFrame(20)[0];
-		expect(row).toBe(`${BREATHING_BORDER_COLORS.muted}:╭${"─".repeat(18)}╮`);
+		expect(row).toBe(`${BREATHING_BORDER_COLORS.muted}:┌${"─".repeat(18)}┐`);
 		widget.dispose();
 	});
 
@@ -1211,6 +1055,7 @@ describe("AnimationsBoxController — breathing border wiring (Decision 2)", () 
 
 		expect(atStart).toContain(`${BREATHING_BORDER_COLORS.muted}:`);
 		expect(atMidCycle).toContain(`${BREATHING_BORDER_COLORS.peak}:`);
+		expect(atMidCycle.replace(/(?:borderMuted|border|borderAccent):/gu, "")).toBe(`┏${"━".repeat(18)}┓`);
 		expect(atMidCycle).not.toBe(atStart);
 		widget.dispose();
 	});
@@ -1234,6 +1079,35 @@ describe("AnimationsBoxController — breathing border wiring (Decision 2)", () 
 		widget.dispose();
 	});
 
+	it("freezes the gloss through its exhale fade and restarts the next run at top-left", () => {
+		const scheduler = manualScheduler();
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall, cellTaggedTheme);
+
+		controller.onAgentStart(agentStart(), ctx);
+		scheduler.advance(GLOSS_LAP_DURATION_MS / 8);
+		const activeColors = borderCellColors(widget.renderFrame(20)[0] ?? "");
+		expect(activeColors[6]).toBe(BREATHING_BORDER_COLORS.peak);
+
+		controller.onAgentEnd(agentEnd(), ctx);
+		scheduler.advance(EXHALE_DURATION_MS / 2);
+		const midExhaleColors = borderCellColors(widget.renderFrame(20)[0] ?? "");
+		expect(midExhaleColors[6]).toBe(BREATHING_BORDER_COLORS.peak);
+
+		scheduler.advance(EXHALE_DURATION_MS / 4);
+		const lateExhaleColors = borderCellColors(widget.renderFrame(20)[0] ?? "");
+		expect(lateExhaleColors[0]).toBe(BREATHING_BORDER_COLORS.muted);
+		expect(lateExhaleColors[6]).toBe(BREATHING_BORDER_COLORS.base);
+
+		controller.onAgentStart(agentStart(), ctx);
+		const restartedColors = borderCellColors(widget.renderFrame(20)[0] ?? "");
+		expect(restartedColors[0]).toBe(BREATHING_BORDER_COLORS.peak);
+		expect(restartedColors[6]).toBe(BREATHING_BORDER_COLORS.muted);
+		widget.dispose();
+	});
+
 	it("turn_start/turn_end modulate the breath cadence: a fast turn pulls the period down toward MIN_BREATH_PERIOD_MS", () => {
 		const scheduler = manualScheduler();
 		const { ctx, calls } = recordingContext();
@@ -1252,7 +1126,7 @@ describe("AnimationsBoxController — breathing border wiring (Decision 2)", () 
 		widget.dispose();
 	});
 
-	it("without a modulating turn, the same elapsed time is nowhere near the (slower) base-period peak", () => {
+	it("without a modulating turn, the uniform envelope stays below its peak while the gloss head remains accented", () => {
 		const scheduler = manualScheduler();
 		const { ctx, calls } = recordingContext();
 		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
@@ -1262,7 +1136,8 @@ describe("AnimationsBoxController — breathing border wiring (Decision 2)", () 
 		controller.onAgentStart(agentStart(), ctx); // no turn_start/turn_end -> stays at BASE_BREATH_PERIOD_MS
 		scheduler.advance(MIN_BREATH_PERIOD_MS / 2 - 1);
 		const row = widget.renderFrame(20)[0];
-		expect(row).not.toContain(`${BREATHING_BORDER_COLORS.peak}:`);
+		expect(row).toStartWith(`${BREATHING_BORDER_COLORS.base}:┌`);
+		expect(row).toContain(`${BREATHING_BORDER_COLORS.peak}:`); // one spatial head, independent of breath cadence
 		widget.dispose();
 	});
 
@@ -1298,7 +1173,7 @@ describe("AnimationsBoxController — breathing border wiring (Decision 2)", () 
 		controller.onAgentStart(agentStart(), ctx);
 		scheduler.advance(BASE_BREATH_PERIOD_MS / 2); // would-be peak, if enabled
 		const row = widget.renderFrame(20)[0];
-		expect(row).toBe(`╭${"─".repeat(18)}╮`); // plain — no theme.fg call at all, exactly the pre-dxi.5 chrome
+		expect(row).toBe(`┌${"─".repeat(18)}┐`); // plain — no theme.fg call at all
 		widget.dispose();
 	});
 
@@ -1316,7 +1191,7 @@ describe("AnimationsBoxController — breathing border wiring (Decision 2)", () 
 		scheduler.advance(BASE_BREATH_PERIOD_MS / 2);
 
 		const row = widget.renderFrame(20)[0];
-		expect(row).toBe(`${BREATHING_BORDER_COLORS.muted}:╭${"─".repeat(18)}╮`); // still idle
+		expect(row).toBe(`${BREATHING_BORDER_COLORS.muted}:┌${"─".repeat(18)}┐`); // still idle
 		widget.dispose();
 	});
 });

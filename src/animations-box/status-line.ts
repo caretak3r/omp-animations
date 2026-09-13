@@ -17,9 +17,9 @@
  * `notable`/`alert` tone (and `dim` — idle dashes, n/a prose) never flash.
  */
 
-import type { SymbolPreset, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
 import { type GlyphKey, resolveGlyph } from "../glyph-presets";
+import type { SymbolPreset, ThemeColor } from "../host/types";
 import { type GradientDirection, gradientColorAt, type ProgressBarTheme, parseHex } from "../progress-bar";
 import { dashedUnderline } from "../styled-underline";
 import type { RenderTier } from "../terminal-capabilities";
@@ -44,6 +44,15 @@ export interface PhraseSpan {
 	readonly text: string;
 	/** Resting tone; `undefined` means `value`. */
 	readonly tone?: SpanTone;
+	/** Persistent theme color for this span. Ignored while a real change flash is active. */
+	readonly color?: ThemeColor;
+	/** Animated visual spans set this false so their frame changes do not masquerade as data-change flashes. */
+	readonly flash?: boolean;
+	/**
+	 * Fixed graphics opt out of prose truncation. A span wider than the phrase
+	 * budget drops whole before priority narrowing, leaving room for a fallback.
+	 */
+	readonly neverTruncate?: boolean;
 	/**
 	 * Drop order under narrow widths: higher numbers drop first, ties drop
 	 * rightmost-first. `undefined` means the span's position in the list
@@ -51,12 +60,8 @@ export interface PhraseSpan {
 	 */
 	readonly priority?: number;
 	/**
-	 * Trailing detail span, kept beside the body under a
-	 * {@link MIN_TAIL_GAP}-column semantic gap. The tail always gives way
-	 * before any body span, and gives way one span at a time (same
-	 * {@link priority} order as the body: highest first, ties rightmost-first),
-	 * so a multi-metric tail sheds its least important figure instead of
-	 * vanishing whole.
+	 * Optional trailing detail. It stays in the same ` · ` phrase as core
+	 * content but sheds before core spans when the pane narrows.
 	 */
 	readonly wideOnly?: boolean;
 	/** Separator rendered BEFORE this span (ignored for the first span). Default `" · "`. */
@@ -73,6 +78,8 @@ export interface SegmentLine {
 	/** Segment accent color — the `live` dot's color and the change-flash color. */
 	readonly accent: ThemeColor;
 	readonly spans: readonly PhraseSpan[];
+	/** The row represents work happening now and should use the shared activity pulse. */
+	readonly activity?: boolean;
 }
 
 /** Flash intensity, derived from the motion tier (reduced-motion forces `off`). */
@@ -84,6 +91,21 @@ export const SUBTLE_FLASH_MS = 250;
 export const FULL_FLASH_BOLD_MS = 400;
 /** `full` flash: total decay (bold+accent, then accent alone) — ~2-3 frames at the box's cadence. */
 export const FULL_FLASH_MS = 800;
+
+export type ActivityPulsePhase = "off" | "rest" | "accent" | "bold";
+
+const ACTIVITY_PULSE_MS = 1_200;
+const ACTIVITY_BOLD_MS = 300;
+const ACTIVITY_ACCENT_MS = 650;
+
+/** Shared fixed-cadence emphasis for active rows and agents. Geometry never changes. */
+export function activityPulsePhase(now: number, tier: FlashTier): ActivityPulsePhase {
+	if (tier === "off" || !Number.isFinite(now)) return "off";
+	if (tier === "subtle") return "accent";
+	const elapsed = ((now % ACTIVITY_PULSE_MS) + ACTIVITY_PULSE_MS) % ACTIVITY_PULSE_MS;
+	if (elapsed < ACTIVITY_BOLD_MS) return "bold";
+	return elapsed < ACTIVITY_ACCENT_MS ? "accent" : "rest";
+}
 
 interface FlashEntry {
 	text: string;
@@ -102,6 +124,10 @@ export class FlashTracker {
 	observe(segmentId: string, spans: readonly PhraseSpan[], now: number): void {
 		for (const span of spans) {
 			const key = `${segmentId}\u0000${span.key}`;
+			if (span.flash === false) {
+				this.#entries.delete(key);
+				continue;
+			}
 			const prev = this.#entries.get(key);
 			if (prev === undefined) {
 				this.#entries.set(key, { text: span.text, changedAt: Number.NEGATIVE_INFINITY });
@@ -144,10 +170,6 @@ export interface StatusLineContext {
 /** Dot column (1) + gap (2) + label gutter (7) + gap (2) — the phrase starts at column 12. */
 export const STATUS_LINE_PREFIX_COLS = 12;
 const LABEL_COLS = 7;
-/** Preferred column for a wide tail, measured within the rendered status line. */
-const TAIL_START_COL = 45;
-/** Minimum spaces between the phrase body and a right-aligned wide tail. */
-const MIN_TAIL_GAP = 3;
 
 /** D2's dot → glyph-key mapping — shared with the legend overlay (D8), which documents the same four-dot vocabulary the renderer draws. */
 export const DOT_GLYPH_KEY: Record<StatusDot, GlyphKey> = {
@@ -162,8 +184,13 @@ function boldText(theme: BoxTheme, text: string): string {
 	return theme.bold === undefined ? text : theme.bold(text);
 }
 
-function renderDot(line: SegmentLine, ctx: StatusLineContext): string {
+function renderDot(line: SegmentLine, ctx: StatusLineContext, activity: ActivityPulsePhase): string {
 	const glyph = resolveGlyph(DOT_GLYPH_KEY[line.dot], ctx.preset);
+	if (line.activity === true) {
+		if (activity === "bold") return boldText(ctx.theme, ctx.theme.fg(line.accent, glyph));
+		if (activity === "accent") return ctx.theme.fg(line.accent, glyph);
+		if (activity === "rest") return ctx.theme.fg("dim", glyph);
+	}
 	switch (line.dot) {
 		case "idle":
 			return ctx.theme.fg("dim", glyph);
@@ -192,14 +219,25 @@ function gradientText(text: string, ratio: number, direction: GradientDirection,
 	return ctx.theme.fg(goodness >= 0.5 ? "success" : goodness >= 0.25 ? "warning" : "error", text);
 }
 
-/** Color one span at its resting tone or its current flash phase. `text` may be a truncated form of `span.text`. */
-function colorSpan(span: PhraseSpan, text: string, accent: ThemeColor, ctx: StatusLineContext): string {
+/** Color one span at its resting tone, current change-flash phase, or active-row pulse. `text` may be a truncated form of `span.text`. */
+function colorSpan(
+	span: PhraseSpan,
+	text: string,
+	accent: ThemeColor,
+	activity: ActivityPulsePhase,
+	ctx: StatusLineContext,
+): string {
 	const tone = span.tone ?? "value";
 	// Only value-toned spans flash — dim (idle/n-a prose) stays quiet, and
 	// notable/alert are persistent states, not events (D6).
-	const phase = tone === "value" ? ctx.flash?.phase(ctx.segmentId, span.key, ctx.now, ctx.flashTier) : undefined;
+	const phase =
+		tone === "value" && span.flash !== false
+			? ctx.flash?.phase(ctx.segmentId, span.key, ctx.now, ctx.flashTier)
+			: undefined;
 	if (phase === "bold") return boldText(ctx.theme, ctx.theme.fg(accent, text));
 	if (phase === "accent") return ctx.theme.fg(accent, text);
+	if (tone === "value" && activity === "bold") return boldText(ctx.theme, ctx.theme.fg(accent, text));
+	if (tone === "value" && activity === "accent") return ctx.theme.fg(accent, text);
 	switch (tone) {
 		case "alert":
 			return boldText(ctx.theme, ctx.theme.fg("error", text));
@@ -208,9 +246,8 @@ function colorSpan(span: PhraseSpan, text: string, accent: ThemeColor, ctx: Stat
 		case "dim":
 			return ctx.theme.fg("dim", text);
 		case "value":
-			return span.gradient === undefined
-				? text
-				: gradientText(text, span.gradient.ratio, span.gradient.direction, ctx);
+			if (span.gradient !== undefined) return gradientText(text, span.gradient.ratio, span.gradient.direction, ctx);
+			return span.color === undefined ? text : ctx.theme.fg(span.color, text);
 	}
 }
 
@@ -237,41 +274,39 @@ function dropIndex(spans: readonly PhraseSpan[], priorityOf: (span: PhraseSpan) 
 /**
  * Render one status line to exactly ≤ `inner` visible columns.
  *
- * Layout: `dot␣␣label··␣␣phrase`, phrase = body spans joined by their
- * separators plus an optional wide-width tail aligned at
- * {@link TAIL_START_COL}. Width degradation (spec §3): the wide tail sheds
- * spans first, one at a time by {@link PhraseSpan.priority}, then body spans
- * in the same order (default: rightmost-first). A final lone span
- * hard-truncates as the safety net. The function observes the full span list
- * into `ctx.flash` before narrowing, so dropped spans do not reset flash state.
+ * Layout: `dot␣␣label··␣␣phrase`. Every visible span uses the same separator;
+ * trailing detail no longer jumps to a second column. Width degradation drops
+ * `wideOnly` spans first, then body spans by {@link PhraseSpan.priority}
+ * (default: rightmost-first). Spans marked `neverTruncate` drop whole if they
+ * exceed the phrase budget; a final lone prose span hard-truncates as the safety
+ * net. The function observes the full span list into `ctx.flash` before
+ * narrowing, so dropped spans do not reset flash state.
  */
 export function renderStatusLine(line: SegmentLine, inner: number, ctx: StatusLineContext): string {
 	ctx.flash?.observe(ctx.segmentId, line.spans, ctx.now);
 	if (inner <= 0) return "";
 
-	const dot = renderDot(line, ctx);
-	const label = truncateToWidth(line.label, LABEL_COLS);
-	const prefix = `${dot}  ${label}${" ".repeat(Math.max(0, LABEL_COLS - visibleWidth(label)))}  `;
+	const activity = line.activity === true ? activityPulsePhase(ctx.now, ctx.flashTier) : "off";
+	const dot = renderDot(line, ctx, activity);
+	const plainLabel = truncateToWidth(line.label, LABEL_COLS);
+	const label =
+		activity === "bold"
+			? boldText(ctx.theme, ctx.theme.fg(line.accent, plainLabel))
+			: activity === "accent"
+				? ctx.theme.fg(line.accent, plainLabel)
+				: activity === "rest"
+					? ctx.theme.fg("dim", plainLabel)
+					: plainLabel;
+	const prefix = `${dot}  ${label}${" ".repeat(Math.max(0, LABEL_COLS - visibleWidth(plainLabel)))}  `;
 	const available = inner - STATUS_LINE_PREFIX_COLS;
 	if (available <= 0) return truncateToWidth(prefix, inner);
 
-	const body = line.spans.filter(span => span.wideOnly !== true);
-	const priorityOf = (span: PhraseSpan) => span.priority ?? line.spans.indexOf(span);
-
-	// The wide tail yields before anything in the body, but only as much of it
-	// as the width actually demands: a six-metric cache row must be able to
-	// shed `write` without also losing `uncached`.
-	const tail = line.spans.filter(span => span.wideOnly === true);
-	const bodyWidth = phraseWidth(body);
-	const gap = body.length > 0 ? Math.max(MIN_TAIL_GAP, TAIL_START_COL - STATUS_LINE_PREFIX_COLS - bodyWidth) : 0;
-	while (tail.length > 0 && bodyWidth + gap + phraseWidth(tail) > available) {
-		tail.splice(dropIndex(tail, priorityOf), 1);
-	}
-
-	const tailGap = tail.length > 0 ? gap : 0;
-	const kept = [...body];
-	const bodyBudget = available - tailGap - phraseWidth(tail);
-	while (kept.length > 1 && phraseWidth(kept) > bodyBudget) {
+	const kept = line.spans.filter(span => span.neverTruncate !== true || visibleWidth(span.text) <= available);
+	const priorityOf = (span: PhraseSpan): number => {
+		const ownPriority = span.priority ?? line.spans.indexOf(span);
+		return ownPriority + (span.wideOnly === true ? line.spans.length : 0);
+	};
+	while (kept.length > 1 && phraseWidth(kept) > available) {
 		kept.splice(dropIndex(kept, priorityOf), 1);
 	}
 
@@ -280,20 +315,12 @@ export function renderStatusLine(line: SegmentLine, inner: number, ctx: StatusLi
 	for (let i = 0; i < kept.length; i++) {
 		const span = kept[i] as PhraseSpan;
 		const sep = i > 0 ? (span.sep ?? " · ") : "";
-		// Safety net: a lone oversized span truncates rather than overflowing.
-		const room = bodyBudget - plainWidth - visibleWidth(sep);
+		const room = available - plainWidth - visibleWidth(sep);
 		const text = visibleWidth(span.text) > room ? truncateToWidth(span.text, Math.max(0, room)) : span.text;
 		if (text.length === 0 && i > 0) break;
-		phrase += sep + colorSpan(span, text, line.accent, ctx);
+		phrase += sep + colorSpan(span, text, line.accent, activity, ctx);
 		plainWidth += visibleWidth(sep) + visibleWidth(text);
 	}
 
-	if (tail.length === 0) return prefix + phrase;
-
-	let tailPhrase = "";
-	for (let i = 0; i < tail.length; i++) {
-		const span = tail[i] as PhraseSpan;
-		tailPhrase += (i > 0 ? (span.sep ?? " · ") : "") + colorSpan(span, span.text, line.accent, ctx);
-	}
-	return prefix + phrase + " ".repeat(tailGap) + tailPhrase;
+	return prefix + phrase;
 }

@@ -18,6 +18,8 @@
  * other gateway stays invisible rather than guessed at — see `tidepool.ts`'s
  * module doc for the provenance of that rule.
  */
+
+export { classifyStatus, type ProviderHealthSnapshot, ProviderHealthState, type StatusClass } from "./health";
 export * from "./render";
 export * from "./state";
 export * from "./tidepool";

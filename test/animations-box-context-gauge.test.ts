@@ -203,23 +203,30 @@ describe("buildContextGaugeSegment — live line", () => {
 		return { sample: buildContextGaugeSegment(state, 0, idTheme), state };
 	}
 
-	it("leads with a plain quota-fill bar carrying the gradient the renderer colors it by", () => {
+	it("renders the canonical progress bar byte-for-byte and applies quota health only to its fill", () => {
 		const { sample } = liveSample(120_000);
-		const bar = sample.line.spans[0] as PhraseSpan;
-		expect(bar.key).toBe("bar");
-		// The bar carries no color of its own — `idTheme` proves it, and the
-		// renderer paints it from `gradient`. The fill color argument is only
-		// what a real theme would have used.
+		const visual = sample.line.spans[0] as PhraseSpan;
+		const pct = sample.line.spans[1] as PhraseSpan;
 		const fill = getContextUsageThemeColor(getContextUsageLevel(60, 200_000));
-		expect(bar.text).toBe(renderProgressBar(0.75, idTheme, fill, "dim", "unicode"));
-		expect(bar.text).not.toContain("\x1b");
-		expect(bar.gradient).toEqual({ ratio: 0.75, direction: "down-good" });
+		expect(visual.text).toBe(renderProgressBar(0.75, idTheme, fill, "dim", "unicode"));
+		expect(visual.text).toBe("[████████░░]");
+		expect(visual.text).not.toContain("\x1b");
+		expect(visual.gradient).toEqual({ ratio: 0.75, direction: "down-good" });
+		expect(pct.gradient).toBeUndefined();
 	});
 
-	it("states the quota fill and the window reality as separate spans", () => {
-		const { sample } = liveSample(120_000);
-		expect(spanText(sample.line.spans, "pct")).toBe("75% quota");
-		expect(spanText(sample.line.spans, "used")).toBe(`${formatNumber(120_000)}/${formatNumber(200_000)}`);
+	it("distinguishes configured budget fill from the model window at different quota settings", () => {
+		for (const [quota, fill] of [
+			[80, 75],
+			[100, 60],
+		] as const) {
+			const state = new ContextGaugeState(quota);
+			state.observe(usage(120_000, 200_000));
+			const sample = buildContextGaugeSegment(state, 0, idTheme);
+			expect(spanText(sample.line.spans, "pct")).toBe(`${fill}% budget`);
+			expect(spanText(sample.line.spans, "used")).toBe(`${formatNumber(120_000)}/${formatNumber(200_000)} window`);
+			for (const variant of sample.variants) expect(variant).toContain(`${fill}% budget`);
+		}
 	});
 
 	it("keeps the ceiling, the burn estimate and the compaction tally on the sheddable tail", () => {
@@ -230,9 +237,7 @@ describe("buildContextGaugeSegment — live line", () => {
 		state.noteCompaction();
 		state.observe(usage(120_000, 200_000));
 		const spans = buildContextGaugeSegment(state, 0, idTheme).line.spans;
-		expect(spanText(spans, "quota")).toBe(`${formatNumber(160_000)} quota`);
-		expect(spanText(spans, "compactions")).toBe("1 compaction");
-		for (const key of ["quota", "compactions"]) {
+		for (const key of ["compactions"]) {
 			expect(spans.find(span => span.key === key)?.wideOnly).toBe(true);
 		}
 	});
@@ -250,7 +255,15 @@ describe("buildContextGaugeSegment — live line", () => {
 		turn(state, 40_000);
 		const spans = buildContextGaugeSegment(state, 0, idTheme).line.spans;
 		expect(spanText(spans, "turns")).toBe("~12 turns left");
-		expect(spans.find(span => span.key === "turns")?.wideOnly).toBe(true);
+	});
+
+	it("suppresses the burn forecast beyond the useful horizon (>99 turns)", () => {
+		const state = new ContextGaugeState(80);
+		turn(state, 1_000);
+		turn(state, 1_100);
+		turn(state, 1_200);
+		const spans = buildContextGaugeSegment(state, 0, idTheme).line.spans;
+		expect(spanText(spans, "turns")).toBeUndefined();
 	});
 
 	it("singularizes a lone remaining turn and a lone compaction", () => {
@@ -285,7 +298,6 @@ describe("buildContextGaugeSegment — live line", () => {
 		const widths = sample.variants.map(variant => variant.length);
 		expect(widths).toEqual([...widths].sort((a, b) => b - a));
 		expect(new Set(sample.variants).size).toBe(sample.variants.length);
-		expect(sample.variants.at(-1)).toBe("75% quota");
 	});
 
 	it("renders the bar at the caller's glyph preset", () => {

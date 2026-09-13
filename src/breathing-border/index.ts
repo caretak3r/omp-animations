@@ -1,17 +1,13 @@
 /**
- * Breathing Border: while the agent works, a faint luminance pulse breathes on
- * a ~4s inhale/exhale — ambient presence, felt not seen. On `agent_end` it
- * winds down in one slow exhale then goes perfectly still; `turn_start`/
- * `turn_end` modulate the breath cadence from the just-finished turn's
- * duration.
+ * Breathing Border: while the agent works, a faint luminance pulse breathes
+ * with turn-modulated cadence while a fixed-speed gloss circles the perimeter.
+ * On `agent_end`, the gloss freezes while the border winds down in one slow
+ * exhale, then goes perfectly still.
  *
- * The motion has no surface of its own. It renders as the Audit Box's border
- * chrome: `../animations-box/controller.ts` owns the phase machine (importing
- * {@link BreathingBorderState}, {@link breathEnvelope}, {@link exhaleEnvelope}
- * and {@link EXHALE_DURATION_MS} from here) and exposes the live `0..1`
- * envelope to `../animations-box/widget.ts`, which colors the border with
- * {@link breathingBorderColors} / {@link BreathingBorderColors} after bucketing
- * that envelope through {@link brightnessToken} / {@link BorderBrightnessToken}.
+ * The motion primitives have no surface of their own. An Audit Box consumer
+ * supplies perimeter geometry, reads {@link BreathingBorderState}, and combines
+ * the envelope and gloss helpers with {@link breathingBorderColors} /
+ * {@link BreathingBorderColors} when painting border chrome.
  *
  * Everything exported here is pure: deterministic functions of their numeric
  * inputs plus a clock-injected state machine, so the box's frames stay

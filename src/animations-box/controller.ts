@@ -1,93 +1,87 @@
 /**
- * Owns the Audit Box and signal sidecar.
+ * Owns the complete Animations Box.
  *
- * Both widgets share one `AnimationHost`, one scheduler, and one set of signal
- * states. Audit rows render current operational summaries below the editor.
- * The sidecar renders only meaningful optional signals above the editor.
+ * One widget, one `AnimationHost`, and one scheduler render operational
+ * summaries and meaningful optional signals together on the configured side
+ * of the editor.
  *
  * `#onTick` is the only per-frame mutation seam. Money and risk values render
  * their current values without easing or blinking.
  */
-import type {
-	ExtensionWidgetContent,
-	ExtensionWidgetOptions,
-	WidgetPlacement,
-} from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
-import type {
-	AfterProviderResponseEvent,
-	AgentEndEvent,
-	AgentStartEvent,
-	AutoCompactionStartEvent,
-	AutoRetryEndEvent,
-	AutoRetryStartEvent,
-	ContextEvent,
-	ContextUsage,
-	MessageEndEvent,
-	MessageStartEvent,
-	MessageUpdateEvent,
-	RetryFallbackAppliedEvent,
-	RetryFallbackSucceededEvent,
-	SessionBeforeCompactEvent,
-	ToolApprovalRequestedEvent,
-	ToolApprovalResolvedEvent,
-	ToolCallEvent,
-	ToolExecutionEndEvent,
-	ToolExecutionUpdateEvent,
-	ToolResultEvent,
-	TtsrTriggeredEvent,
-	TurnEndEvent,
-	TurnStartEvent,
-} from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
-import type { GoalUpdatedEvent } from "@oh-my-pi/pi-coding-agent/extensibility/shared-events";
-import type { SymbolPreset } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
-import { calculateTokensPerSecond } from "@oh-my-pi/pi-coding-agent/utils/token-rate";
+
 import type { ActivityProbe } from "../activity-roster/bus";
-import {
-	buildActivityFilesSegment,
-	projectActivityAgents,
-	projectActivityTitleFiles,
-} from "../activity-roster/projection";
+import { projectActivityAgents, projectActivityTitleFiles } from "../activity-roster/projection";
 import type { AgentBonsaiController } from "../agent-bonsai";
 import type { AccentColor } from "../appearance";
 import { AuditLedgerState, auditTouchesFromToolResult } from "../audit-trail-box";
 import { BreathingBorderState, breathEnvelope, EXHALE_DURATION_MS, exhaleEnvelope } from "../breathing-border";
 import { CacheMeterState, type CacheRequestSample } from "../cache-meter";
-import { CadenceEqualizerState } from "../cadence-equalizer";
-import { normalizeAmplitude } from "../cadence-equalizer/scale";
+import type {
+	AfterProviderResponseEvent,
+	AgentEndEvent,
+	AgentStartEvent,
+	AsyncJobSnapshot,
+	AutoCompactionStartEvent,
+	AutoRetryEndEvent,
+	AutoRetryStartEvent,
+	ContextEvent,
+	ContextUsage,
+	CredentialDisabledEvent,
+	ExtensionWidgetContent,
+	ExtensionWidgetOptions,
+	GoalUpdatedEvent,
+	MessageEndEvent,
+	MessageStartEvent,
+	RetryFallbackAppliedEvent,
+	RetryFallbackSucceededEvent,
+	SessionBeforeCompactEvent,
+	SymbolPreset,
+	ToolApprovalRequestedEvent,
+	ToolApprovalResolvedEvent,
+	ToolCallEvent,
+	ToolExecutionEndEvent,
+	ToolExecutionStartEvent,
+	ToolExecutionUpdateEvent,
+	ToolResultEvent,
+	TurnEndEvent,
+	TurnStartEvent,
+	WidgetPlacement,
+} from "../host/types";
 import type { BackpressureSignal, FrameScheduler, MotionSetting } from "../kit";
 import { AnimationHost, backpressureFromTui, DEFAULT_FRAME_SCHEDULER, MotionPolicy } from "../kit";
 import { LiveFilesState } from "../live-files";
-import { familyForProvider, RateLimitTidepoolState, readRateLimitHeaders } from "../rate-limit-tidepool";
-import { ReflectionRippleState } from "../reflection-ripple";
+import {
+	familyForProvider,
+	ProviderHealthState,
+	RateLimitTidepoolState,
+	readRateLimitHeaders,
+} from "../rate-limit-tidepool";
 import {
 	buildDarkroomTitle,
 	buildSignalExtraSegments,
 	DEFAULT_SIGNAL_EXTRAS_CONFIG,
 	estimateContentTokens,
-	type MemoryObservation,
 	type PhylogenySignal,
 	type SignalExtrasConfig,
 	SignalExtrasState,
 } from "../signal-extras";
-import { ContextGaugeState } from "./context-gauge";
+import { rootSkillName } from "../signal-extras/lifecycle-effects";
+import { normalizeMemoryError } from "../signal-extras/memory-tide";
 import {
-	type BoxTheme,
-	buildAuditTrailBoxSegment,
-	buildCacheMeterSegment,
-	buildCadenceEqualizerSegment,
-	buildContextGaugeSegment,
-	buildRateLimitTidepoolSegment,
-	buildReflectionRippleSegment,
-	buildToolActivitySegment,
-	type SegmentSample,
-} from "./segments";
-import { type AnimationsBoxConfig, BOX_SEGMENT_IDS } from "./settings";
+	type CollisionPriority,
+	type CollisionSampleId,
+	composeCollisionDiffraction,
+} from "../signal-extras/metric-effects";
+import { ContextGaugeState } from "./context-gauge";
+import { CORE_ROW_ORDER, CORE_ROWS, type CoreRowDeps } from "./row-registry";
+import type { BoxTheme, SegmentSample } from "./segments";
+import type { AnimationsBoxConfig } from "./settings";
+import { type TemporalEvidenceSnapshot, TemporalEvidenceStore } from "./temporal-evidence";
 import { ToolActivityState } from "./tool-activity";
-import { type AnimationsBoxSampleGroups, AnimationsBoxWidget } from "./widget";
+import { type AnimationsBoxBorderFrame, type AnimationsBoxSampleGroups, AnimationsBoxWidget } from "./widget";
 
 /** Namespaced per the native-vs-plugin key-collision memory — a plugin's widget key must never collide with a host-owned one. */
 export const BOX_WIDGET_KEY = "oh-my-pi-animations-box";
-export const SIGNAL_WIDGET_KEY = "oh-my-pi-animation-signals";
 const DEFAULT_PLACEMENT: WidgetPlacement = "belowEditor";
 
 /** Narrow a finalized `message_end` event to the provider/model/usage triple the cache ledger needs. The host delivers a whole `AgentMessage`; `CacheMeterState.recordUsage` wants only this triple, so the narrowing lives beside the subscription rather than inside the pure state module. */
@@ -108,25 +102,6 @@ function toCacheRequestSample(message: MessageEndEvent["message"]): CacheRequest
 	};
 }
 
-/** The minimal shape `calculateTokensPerSecond` needs from an assistant `AgentMessage` — a property of the host's rate provider, not of `CadenceEqualizerState`, so it is declared here. */
-interface AssistantSample {
-	role: "assistant";
-	timestamp: number;
-	duration?: number;
-	usage: { output: number };
-}
-
-/** Narrow a streamed message to the assistant sample shape the shared rate provider consumes. `undefined` for any other role. */
-function toAssistantSample(message: MessageStartEvent["message"]): AssistantSample | undefined {
-	if (message.role !== "assistant") return undefined;
-	return {
-		role: "assistant",
-		timestamp: message.timestamp,
-		duration: message.duration,
-		usage: { output: message.usage.output },
-	};
-}
-
 function assistantContentSizes(message: MessageEndEvent["message"]): { thinking: number; acting: number } | undefined {
 	if (message.role !== "assistant" || !Array.isArray(message.content)) return undefined;
 	let thinking = 0;
@@ -136,14 +111,6 @@ function assistantContentSizes(message: MessageEndEvent["message"]): { thinking:
 		else if (block.type === "text") acting += block.text.length;
 	}
 	return { thinking, acting };
-}
-
-function toolErrorText(event: ToolResultEvent): string | undefined {
-	if (!event.isError) return undefined;
-	for (const block of event.content) {
-		if (block.type === "text" && block.text.trim().length > 0) return block.text;
-	}
-	return undefined;
 }
 
 /**
@@ -175,8 +142,8 @@ export interface AnimationsBoxContext {
 	getContextUsage?(): ContextUsage | undefined;
 	getTranscriptTokens?(): number;
 	getSessionTopology?(): PhylogenySignal;
-	hasPendingMessages?(): boolean;
-	getMemoryStatus?(): Promise<MemoryObservation | undefined>;
+	getMemoryStatus?(): Promise<unknown>;
+	getAsyncJobSnapshot?(): AsyncJobSnapshot | null;
 	setTitle?(title: string): void;
 	setWidget(key: string, content: ExtensionWidgetContent, options?: ExtensionWidgetOptions): void;
 }
@@ -192,26 +159,26 @@ export interface AnimationsBoxControllerOptions {
 	agentBonsai?: AgentBonsaiController;
 }
 
-/** Drives the Animations Box. See the module doc above for the state it owns and the two rules it holds. */
+/** Drives the complete Animations Box. See the module documentation above for its lifecycle contract. */
 export class AnimationsBoxController {
 	#scheduler: FrameScheduler;
 	#widgetOptions: ExtensionWidgetOptions;
-	#signalWidgetOptions: ExtensionWidgetOptions = { placement: "aboveEditor" };
 	#motionSetting: MotionSetting;
 	#accentColor: AccentColor | undefined;
 	#config: AnimationsBoxConfig;
 	#extrasConfig: SignalExtrasConfig;
-	#mount: { host: AnimationHost; auditWidget?: AnimationsBoxWidget; signalWidget?: AnimationsBoxWidget } | undefined;
+	#mount: { host: AnimationHost; widget?: AnimationsBoxWidget } | undefined;
 	#glyphPreset: SymbolPreset = "unicode";
 	#contextGaugeState: ContextGaugeState;
 	#getContextUsage: (() => ContextUsage | undefined) | undefined;
 	#getTranscriptTokens: (() => number) | undefined;
 	#getSessionTopology: (() => PhylogenySignal) | undefined;
-	#hasPendingMessages: (() => boolean) | undefined;
-	#getMemoryStatus: (() => Promise<MemoryObservation | undefined>) | undefined;
+	#getMemoryStatus: (() => Promise<unknown>) | undefined;
+	#getAsyncJobSnapshot: (() => AsyncJobSnapshot | null) | undefined;
 	#setTitle: ((title: string) => void) | undefined;
 	#contextPercent: number | undefined;
 	#memoryEpoch = 0;
+	#memorySequence = 0;
 	#cacheMeterState: CacheMeterState = new CacheMeterState();
 	#auditTrailState: AuditLedgerState;
 	#ownsAuditTrailState: boolean;
@@ -221,14 +188,15 @@ export class AnimationsBoxController {
 	#toolActivityState: ToolActivityState = new ToolActivityState();
 	#liveFilesState: LiveFilesState = new LiveFilesState();
 	#signalState: SignalExtrasState = new SignalExtrasState();
-	#cadenceState: CadenceEqualizerState = new CadenceEqualizerState();
+	#skillReads = new Map<string, string>();
 	#tidepoolState: RateLimitTidepoolState = new RateLimitTidepoolState();
-	#reflectionRippleState: ReflectionRippleState = new ReflectionRippleState();
+	#providerHealthState: ProviderHealthState = new ProviderHealthState();
 	#breathingBorderState: BreathingBorderState = new BreathingBorderState();
-	#cadenceCurrent: AssistantSample | undefined;
-	#cadenceStreaming = false;
-	#cadenceHasStreamed = false;
 	#tidepoolPendingHeaders: Readonly<Record<string, string>> | undefined;
+	#temporalEvidenceStore: TemporalEvidenceStore;
+	#temporalEvidenceSnapshot: TemporalEvidenceSnapshot | undefined;
+	#temporalEvidenceSession = 0;
+	#motionPolicy: MotionPolicy | undefined;
 
 	constructor(options: AnimationsBoxControllerOptions) {
 		this.#scheduler = options.scheduler ?? DEFAULT_FRAME_SCHEDULER;
@@ -240,6 +208,7 @@ export class AnimationsBoxController {
 		this.#accentColor = options.accentColor;
 		this.#auditTrailState = options.auditTrailState ?? new AuditLedgerState();
 		this.#ownsAuditTrailState = options.auditTrailState === undefined;
+		this.#temporalEvidenceStore = new TemporalEvidenceStore({ scope: { root: 0, session: 0 } });
 		this.#agentBonsai = options.agentBonsai;
 	}
 
@@ -261,12 +230,11 @@ export class AnimationsBoxController {
 		this.#captureRuntime(ctx);
 
 		const policy = new MotionPolicy({ hasUI: ctx.hasUI, isTTY: ctx.isTTY, env: ctx.env }, this.#motionSetting);
+		this.#motionPolicy = policy;
 		const backpressure = deferredBackpressure();
 		const host = new AnimationHost({ policy, backpressure: backpressure.signal, scheduler: this.#scheduler });
 		const scheduler = this.#scheduler;
-		const mount: { host: AnimationHost; auditWidget?: AnimationsBoxWidget; signalWidget?: AnimationsBoxWidget } = {
-			host,
-		};
+		const mount: { host: AnimationHost; widget?: AnimationsBoxWidget } = { host };
 		this.#mount = mount;
 
 		ctx.setWidget(
@@ -282,48 +250,28 @@ export class AnimationsBoxController {
 					onTick: now => this.#onTick(now),
 					buildSampleGroups: now => this.#buildAuditSampleGroups(now, theme),
 					getDetail: () => this.#config.detail,
-					getBorderBrightness: now => this.#getBorderBrightness(now),
+					getBorderFrame: now => this.#getBorderFrame(now),
+					getCollisionDiffraction: (now, width) => this.#getCollisionDiffraction(now, width),
+					getBorderAlert: () => this.#signalState.snapshot().credentialAlerts.length > 0,
 					accentColor: this.#accentColor,
 					preset: this.#glyphPreset,
-					getAgentBonsai: () =>
-						projectActivityAgents(this.#activityProbe?.snapshot(), this.#agentBonsai?.snapshot()),
+					getAgentBonsai: () => {
+						const roster = this.#activityProbe?.snapshot();
+						return projectActivityAgents(roster, this.#agentBonsai?.snapshot(roster?.retiredAgentIds));
+					},
 				});
-				mount.auditWidget = widget;
+				mount.widget = widget;
 				return widget;
 			},
 			this.#widgetOptions,
 		);
 
-		ctx.setWidget(
-			SIGNAL_WIDGET_KEY,
-			(tui, theme) => {
-				backpressure.attach(tui);
-				const widget = new AnimationsBoxWidget({
-					tui,
-					host,
-					policy,
-					theme,
-					clock: scheduler,
-					onTick: now => this.#onTick(now),
-					buildSampleGroups: now => this.#buildSignalSampleGroups(now),
-					getDetail: () => this.#config.detail,
-					getBorderBrightness: () => undefined,
-					accentColor: this.#accentColor,
-					preset: this.#glyphPreset,
-					getAgentBonsai: () => ({ nodes: [], hiddenCount: 0, visible: false }),
-				});
-				mount.signalWidget = widget;
-				return widget;
-			},
-			this.#signalWidgetOptions,
-		);
 		this.#refreshMemory();
 		this.#refreshTitle();
 	}
 
 	requestRender(): void {
-		this.#mount?.auditWidget?.requestRender();
-		this.#mount?.signalWidget?.requestRender();
+		this.#mount?.widget?.requestRender();
 	}
 
 	attachActivityProbe(probe: ActivityProbe | undefined): void {
@@ -338,37 +286,79 @@ export class AnimationsBoxController {
 		this.#getContextUsage = ctx.getContextUsage?.bind(ctx);
 		this.#getTranscriptTokens = ctx.getTranscriptTokens?.bind(ctx);
 		this.#getSessionTopology = ctx.getSessionTopology?.bind(ctx);
-		this.#hasPendingMessages = ctx.hasPendingMessages?.bind(ctx);
 		this.#getMemoryStatus = ctx.getMemoryStatus?.bind(ctx);
+		this.#getAsyncJobSnapshot = ctx.getAsyncJobSnapshot?.bind(ctx);
 		this.#setTitle = ctx.setTitle?.bind(ctx);
 	}
 
-	#sampleCadenceRate(wallNowMs: number): number | null {
-		return calculateTokensPerSecond(
-			this.#cadenceCurrent ? [this.#cadenceCurrent] : [],
-			this.#cadenceStreaming,
-			wallNowMs,
-		);
-	}
-
 	#onTick(now: number): void {
-		this.#cadenceState.pushSample(normalizeAmplitude(this.#sampleCadenceRate(now) ?? 0));
-		this.#reflectionRippleState.settleIfDone(now);
 		this.#breathingBorderState.settleIfDone(now);
 	}
 
-	#getBorderBrightness(now: number): number | undefined {
+	#getBorderFrame(now: number): AnimationsBoxBorderFrame | undefined {
 		if (!this.#config.breathingBorder) return undefined;
-		switch (this.#breathingBorderState.phase) {
+		const phase = this.#breathingBorderState.phase;
+		const motionNow = this.#mount?.host.motionTime(now) ?? now;
+		let brightness: number;
+		switch (phase) {
 			case "idle":
-				return 0;
+				brightness = 0;
+				break;
 			case "active": {
 				const period = this.#breathingBorderState.breathPeriodMs();
-				return breathEnvelope(this.#breathingBorderState.breathElapsedMs(now), period);
+				brightness = breathEnvelope(this.#breathingBorderState.breathElapsedMs(motionNow), period);
+				break;
 			}
 			case "exhaling":
-				return exhaleEnvelope(this.#breathingBorderState.exhaleElapsedMs(now), EXHALE_DURATION_MS);
+				brightness = exhaleEnvelope(this.#breathingBorderState.exhaleElapsedMs(now), EXHALE_DURATION_MS);
+				break;
 		}
+		return {
+			phase,
+			brightness,
+			glossProgress: this.#breathingBorderState.glossProgress(motionNow),
+			glossStrength: phase === "active" ? 1 : phase === "exhaling" ? brightness : 0,
+		};
+	}
+
+	#getCollisionDiffraction(now: number, width: number): string | undefined {
+		const snapshot = this.#temporalEvidenceSnapshot;
+		if (snapshot === undefined) return undefined;
+		const facts = new Map<
+			CollisionSampleId,
+			{ readonly sampleId: CollisionSampleId; readonly priority: CollisionPriority }
+		>();
+		let observedAt = Number.NEGATIVE_INFINITY;
+		for (const entry of snapshot.entries) {
+			if (entry.stage !== "fresh") continue;
+			let fact: { readonly sampleId: CollisionSampleId; readonly priority: CollisionPriority } | undefined;
+			switch (entry.kind) {
+				case "memory-observation":
+					fact = { sampleId: "memoryBackendTide", priority: 2 };
+					break;
+				case "retry-schedule":
+					fact = { sampleId: "retryRadar", priority: 1 };
+					break;
+				case "skill-invocation":
+					fact = { sampleId: "skillChromatograph", priority: 2 };
+					break;
+				case "latency-sample":
+					fact = { sampleId: "ttftSplit", priority: 3 };
+					break;
+				default:
+					break;
+			}
+			if (fact === undefined || facts.has(fact.sampleId)) continue;
+			facts.set(fact.sampleId, fact);
+			observedAt = Math.max(observedAt, entry.observedAt);
+		}
+		const token = composeCollisionDiffraction({ phase: "changed", observedAt, facts: [...facts.values()] }, now, {
+			width,
+			unicode: this.#glyphPreset !== "ascii",
+			color: true,
+			reducedMotion: (this.#motionPolicy?.reducedMotion ?? true) || this.#mount?.host.effectiveTier === "off",
+		});
+		return token?.fringe;
 	}
 
 	#observeContext(): void {
@@ -378,50 +368,45 @@ export class AnimationsBoxController {
 	}
 
 	#buildAuditSampleGroups(now: number, theme: BoxTheme): AnimationsBoxSampleGroups {
+		this.#temporalEvidenceSnapshot = this.#temporalEvidenceStore.snapshot(now);
+		const evidence = this.#temporalEvidenceSnapshot;
+		const activityRoster = this.#activityProbe?.snapshot();
 		this.#observeContext();
-		const required: SegmentSample[] = [
-			buildContextGaugeSegment(this.#contextGaugeState, now, theme, this.#glyphPreset),
-			buildCacheMeterSegment(this.#cacheMeterState, now, theme, undefined, this.#glyphPreset),
-			buildAuditTrailBoxSegment(this.#auditTrailState, now, theme, undefined, this.#glyphPreset),
-			buildRateLimitTidepoolSegment(this.#tidepoolState, now, theme, undefined, this.#glyphPreset),
-			buildToolActivitySegment(this.#toolActivityState, now, theme),
-		];
-		if (this.#extrasConfig.liveFiles) {
-			required.push(
-				buildActivityFilesSegment(
-					this.#activityProbe?.snapshot(),
-					this.#liveFilesState.snapshot(),
-					BOX_SEGMENT_IDS.indexOf("filesLive") + 1,
-				),
-			);
-		}
-		const optional: SegmentSample[] = [];
-		if (this.#config.optional.cadenceEqualizer) {
-			optional.push(
-				buildCadenceEqualizerSegment(
-					this.#cadenceState,
-					this.#cadenceHasStreamed,
-					this.#sampleCadenceRate(now),
-					now,
-					theme,
-					undefined,
-					this.#glyphPreset,
-				),
-			);
-		}
-		if (this.#config.optional.reflectionRipple) {
-			optional.push(
-				buildReflectionRippleSegment(this.#reflectionRippleState, now, theme, undefined, this.#glyphPreset),
-			);
-		}
-		return { required, optional };
-	}
-
-	#buildSignalSampleGroups(now: number): AnimationsBoxSampleGroups {
-		return {
-			required: [],
-			optional: buildSignalExtraSegments(this.#signalState.snapshot(), this.#extrasConfig, now),
+		const deps: CoreRowDeps = {
+			now,
+			theme,
+			glyphPreset: this.#glyphPreset,
+			contextGauge: this.#contextGaugeState,
+			cacheMeter: this.#cacheMeterState,
+			auditTrail: this.#auditTrailState,
+			tidepool: this.#tidepoolState,
+			providerHealth: this.#providerHealthState.snapshot(),
+			toolActivity: this.#toolActivityState,
+			roster: activityRoster,
+			liveFiles: this.#liveFilesState.snapshot(),
+			extrasConfig: this.#extrasConfig,
 		};
+		const required: SegmentSample[] = [];
+		for (const id of CORE_ROW_ORDER) {
+			const spec = CORE_ROWS[id];
+			if (spec.enabled !== undefined && !spec.enabled(deps)) continue;
+			required.push(spec.build(deps));
+		}
+		// Retry deadlines and evidence expiry remain real-time facts, even when
+		// the governor asks the optional renderers for their static motion form.
+		const optional = buildSignalExtraSegments(
+			this.#signalState.snapshot(),
+			this.#extrasConfig,
+			now,
+			evidence,
+			{
+				unicode: this.#glyphPreset !== "ascii",
+				reducedMotion: (this.#motionPolicy?.reducedMotion ?? true) || this.#mount?.host.effectiveTier === "off",
+			},
+			activityRoster,
+			this.#getAsyncJobSnapshot?.() ?? null,
+		);
+		return { required, optional };
 	}
 
 	#changed(): void {
@@ -442,25 +427,50 @@ export class AnimationsBoxController {
 
 	#refreshMemory(): void {
 		if (!this.#extrasConfig.memoryBackendTide || this.#getMemoryStatus === undefined) return;
-		const epoch = ++this.#memoryEpoch;
+		const epoch = this.#memoryEpoch;
+		const sequence = ++this.#memorySequence;
 		void this.#getMemoryStatus()
 			.then(status => {
 				if (epoch !== this.#memoryEpoch) return;
-				this.#signalState.noteMemory(status);
+				const now = this.#scheduler.now();
+				if (!this.#signalState.noteMemoryPollSuccess(sequence, status, now)) return;
+				this.#observeMemoryEvidence(now);
 				this.#changed();
 			})
-			.catch(() => undefined);
+			.catch(error => {
+				if (epoch !== this.#memoryEpoch) return;
+				const now = this.#scheduler.now();
+				if (!this.#signalState.noteMemoryPollFailure(sequence, normalizeMemoryError(error), now)) return;
+				this.#observeMemoryEvidence(now);
+				this.#changed();
+			});
+	}
+
+	#observeMemoryEvidence(now: number): void {
+		const memory = this.#signalState.snapshot().memoryTide;
+		const good = memory.lastGood;
+		if (good === undefined && memory.pollFailure === undefined) return;
+		const status =
+			memory.pollFailure !== undefined
+				? "degraded"
+				: good?.status.active === true && good.status.error === undefined
+					? "available"
+					: good?.status.active === false || good?.status.backend === "off"
+						? "unavailable"
+						: "degraded";
+		this.#temporalEvidenceStore.observe({
+			kind: "memory-observation",
+			slot: 0,
+			observedAt: now,
+			payload: {
+				status,
+				tier: good?.status.backend === "local" ? "local" : "unknown",
+			},
+		});
 	}
 
 	onMessageStart(event: MessageStartEvent, ctx: Pick<AnimationsBoxContext, "hasUI">): void {
 		if (!ctx.hasUI) return;
-		const assistantSample = toAssistantSample(event.message);
-		if (assistantSample !== undefined) {
-			this.#cadenceCurrent = assistantSample;
-			this.#cadenceStreaming = true;
-			this.#cadenceHasStreamed = true;
-			this.#signalState.noteAssistantStart(this.#scheduler.now());
-		}
 		if (event.message.role === "assistant") {
 			const headers = this.#tidepoolPendingHeaders;
 			this.#tidepoolPendingHeaders = undefined;
@@ -482,50 +492,71 @@ export class AnimationsBoxController {
 		this.#changed();
 	}
 
-	onMessageUpdate(event: MessageUpdateEvent, ctx: Pick<AnimationsBoxContext, "hasUI">): void {
-		if (!ctx.hasUI) return;
-		const sample = toAssistantSample(event.message);
-		if (sample !== undefined) this.#cadenceCurrent = sample;
-	}
-
 	onAfterProviderResponse(event: AfterProviderResponseEvent, ctx: Pick<AnimationsBoxContext, "hasUI">): void {
 		if (!ctx.hasUI) return;
 		this.#tidepoolPendingHeaders = event.headers;
-	}
-
-	onTtsrTriggered(event: TtsrTriggeredEvent, ctx: Pick<AnimationsBoxContext, "hasUI">): void {
-		if (!ctx.hasUI) return;
-		this.#reflectionRippleState.applyTrigger(
-			event.rules.map(rule => rule.name),
-			this.#scheduler.now(),
-		);
+		this.#providerHealthState.noteStatus(event.status, this.#scheduler.now());
 		this.#changed();
 	}
 
 	onMessageEnd(event: MessageEndEvent, ctx: Pick<AnimationsBoxContext, "hasUI">): void {
 		if (!ctx.hasUI) return;
+		const now = this.#scheduler.now();
 		const cacheSample = toCacheRequestSample(event.message);
-		if (cacheSample !== undefined) this.#cacheMeterState.recordUsage(cacheSample, this.#scheduler.now());
-		if (toAssistantSample(event.message) !== undefined) {
-			this.#cadenceCurrent = undefined;
-			this.#cadenceStreaming = false;
+		if (cacheSample !== undefined) this.#cacheMeterState.recordUsage(cacheSample, now);
+		if (event.message.role === "assistant") {
 			const sizes = assistantContentSizes(event.message);
 			if (sizes !== undefined) this.#signalState.noteAssistant(sizes.thinking, sizes.acting);
+			this.#signalState.noteAssistantTiming(event.message.ttft, event.message.duration);
+			this.#signalState.noteAssistantIntegrity({
+				stopReason: event.message.stopReason,
+				provider: event.message.provider,
+				upstreamProvider: event.message.upstreamProvider,
+				disabledFeatures: event.message.disabledFeatures,
+			});
+			const usage = event.message.usage;
+			this.#signalState.noteUsageSent(usage.input + usage.cacheRead + usage.cacheWrite);
+			if (Number.isFinite(event.message.ttft) && (event.message.ttft ?? -1) >= 0) {
+				this.#temporalEvidenceStore.observe({
+					kind: "latency-sample",
+					slot: 0,
+					observedAt: now,
+					payload: { durationMs: event.message.ttft!, phase: "first-byte" },
+				});
+			}
+			if (Number.isFinite(event.message.duration) && (event.message.duration ?? -1) >= 0) {
+				this.#temporalEvidenceStore.observe({
+					kind: "latency-sample",
+					slot: 1,
+					observedAt: now,
+					payload: { durationMs: event.message.duration!, phase: "completion" },
+				});
+			}
 		}
 		this.#changed();
 	}
 
 	onToolResult(event: ToolResultEvent, ctx: Pick<AnimationsBoxContext, "hasUI" | "cwd">): void {
 		if (!ctx.hasUI) return;
+		const now = this.#scheduler.now();
 		if (this.#ownsAuditTrailState) {
 			for (const touch of auditTouchesFromToolResult(event, ctx.cwd)) {
 				if (touch.kind === "read") this.#auditTrailState.noteRead(touch.path, touch.observed);
-				else this.#auditTrailState.noteWrite(touch.path, this.#scheduler.now(), touch.observed);
+				else this.#auditTrailState.noteWrite(touch.path, now, touch.observed);
 			}
 		}
 		this.#liveFilesState.onToolResult(event.toolCallId);
-		const error = toolErrorText(event);
-		if (error !== undefined) this.#signalState.noteError(error);
+		const skillName = this.#skillReads.get(event.toolCallId);
+		if (skillName !== undefined) {
+			this.#skillReads.delete(event.toolCallId);
+			this.#temporalEvidenceStore.observe({
+				kind: "skill-invocation",
+				slot: 0,
+				observedAt: now,
+				payload: { phase: event.isError ? "failed" : "completed", source: "unknown" },
+			});
+		}
+		if (event.isError) this.#signalState.noteError();
 		this.#changed();
 	}
 
@@ -535,62 +566,91 @@ export class AnimationsBoxController {
 	): void {
 		if (!ctx.hasUI) return;
 		const cwd = ctx.cwd ?? "";
+		const now = this.#scheduler.now();
 		this.#toolActivityState.record(event.toolName);
 		this.#liveFilesState.onToolCall(event, cwd);
-		this.#signalState.onToolCall(event.toolName, event.input);
+		this.#signalState.onToolCall(event.toolName);
+		const path =
+			event.toolName === "read" && typeof (event.input as Record<string, unknown>).path === "string"
+				? ((event.input as Record<string, unknown>).path as string)
+				: undefined;
+		const skillName = path === undefined ? undefined : rootSkillName(event.toolName, path);
+		if (skillName !== undefined) {
+			this.#skillReads.set(event.toolCallId, skillName);
+			this.#temporalEvidenceStore.observe({
+				kind: "skill-invocation",
+				slot: 0,
+				observedAt: now,
+				payload: { phase: "started", source: "unknown" },
+			});
+		}
+		this.#changed();
+	}
+
+	onToolExecutionStart(event: ToolExecutionStartEvent, ctx: Pick<AnimationsBoxContext, "hasUI">): void {
+		if (!ctx.hasUI) return;
+		this.#toolActivityState.start(event.toolCallId, event.toolName, this.#scheduler.now());
 		this.#changed();
 	}
 
 	onToolExecutionUpdate(event: ToolExecutionUpdateEvent, ctx: Pick<AnimationsBoxContext, "hasUI" | "cwd">): void {
 		if (!ctx.hasUI) return;
 		this.#liveFilesState.onTaskProgress(event.toolCallId, event.partialResult, ctx.cwd);
-		this.#signalState.onTaskProgress(event.partialResult);
 		this.#changed();
 	}
 
 	onToolExecutionEnd(event: ToolExecutionEndEvent, ctx: Pick<AnimationsBoxContext, "hasUI" | "cwd">): void {
 		if (!ctx.hasUI) return;
+		this.#toolActivityState.end(event.toolCallId, event.toolName, event.isError, this.#scheduler.now());
+		this.#signalState.noteToolSettled(event.toolName, event.isError);
 		this.#liveFilesState.onTaskEnd(event.toolCallId, event.result, ctx.cwd);
-		this.#signalState.onTaskProgress(event.result);
 		this.#changed();
 	}
 
 	onAgentStart(_event: AgentStartEvent, ctx: Pick<AnimationsBoxContext, "hasUI">): void {
 		if (!ctx.hasUI) return;
-		this.#breathingBorderState.applyAgentStart(this.#scheduler.now());
+		const now = this.#scheduler.now();
+		this.#toolActivityState.reset();
+		this.#breathingBorderState.applyAgentStart(now);
 		this.#changed();
 	}
 
-	onAgentEnd(_event: AgentEndEvent, ctx: Pick<AnimationsBoxContext, "hasUI" | "hasPendingMessages">): void {
+	onAgentEnd(_event: AgentEndEvent, ctx: Pick<AnimationsBoxContext, "hasUI">): void {
 		if (!ctx.hasUI) return;
-		this.#breathingBorderState.applyAgentEnd(this.#scheduler.now());
-		this.#signalState.setQueuePending(ctx.hasPendingMessages?.() ?? this.#hasPendingMessages?.() ?? false);
+		const now = this.#scheduler.now();
+		this.#breathingBorderState.applyAgentEnd(now);
 		this.#changed();
 	}
 
 	onTurnStart(event: TurnStartEvent, ctx: Pick<AnimationsBoxContext, "hasUI">): void {
 		if (!ctx.hasUI) return;
 		const now = this.#scheduler.now();
+		this.#skillReads.clear();
 		this.#breathingBorderState.applyTurnStart(event.turnIndex, now);
-		this.#signalState.onTurnStart(now);
+		this.#signalState.onTurnStart();
 		this.#changed();
 	}
 
-	onTurnEnd(event: TurnEndEvent, ctx: Pick<AnimationsBoxContext, "hasUI" | "hasPendingMessages">): void {
+	onTurnEnd(event: TurnEndEvent, ctx: Pick<AnimationsBoxContext, "hasUI">): void {
 		if (!ctx.hasUI) return;
+		const now = this.#scheduler.now();
 		if (this.#ownsAuditTrailState) this.#auditTrailState.noteTurn();
-		this.#breathingBorderState.applyTurnEnd(event.turnIndex, this.#scheduler.now());
+		this.#breathingBorderState.applyTurnEnd(event.turnIndex, now);
 		this.#observeContext();
 		this.#contextGaugeState.noteTurn();
-		this.#signalState.onTurnEnd(ctx.hasPendingMessages?.() ?? this.#hasPendingMessages?.() ?? false);
+		this.#signalState.onTurnEnd(now);
+		this.#toolActivityState.settle();
+		this.#skillReads.clear();
 		this.#refreshMemory();
 		this.#changed();
 	}
 
 	onContext(event: ContextEvent, ctx: Pick<AnimationsBoxContext, "hasUI" | "getTranscriptTokens">): void {
 		if (!ctx.hasUI) return;
-		const sent = estimateContentTokens(event.messages);
-		this.#signalState.noteContext(ctx.getTranscriptTokens?.() ?? this.#getTranscriptTokens?.() ?? sent, sent);
+		const estimated = estimateContentTokens(event.messages);
+		const measured = ctx.getTranscriptTokens?.() ?? this.#getTranscriptTokens?.();
+		const shown = measured !== undefined && measured > 0 ? measured : estimated;
+		this.#signalState.noteContext(shown, estimated);
 		this.#changed();
 	}
 
@@ -626,7 +686,7 @@ export class AnimationsBoxController {
 
 	onToolApprovalRequested(event: ToolApprovalRequestedEvent, ctx: Pick<AnimationsBoxContext, "hasUI">): void {
 		if (!ctx.hasUI) return;
-		this.#signalState.noteApprovalRequested(event.toolCallId, event.toolName, event.reason);
+		this.#signalState.noteApprovalRequested(event.toolCallId, event.toolName);
 		this.#changed();
 	}
 
@@ -645,28 +705,45 @@ export class AnimationsBoxController {
 
 	onAutoRetryStart(event: AutoRetryStartEvent, ctx: Pick<AnimationsBoxContext, "hasUI">): void {
 		if (!ctx.hasUI) return;
-		this.#signalState.noteRetryStart(
-			event.attempt,
-			event.maxAttempts,
-			event.delayMs,
-			event.errorMessage,
-			this.#scheduler.now(),
-		);
+		const now = this.#scheduler.now();
+		this.#signalState.noteRetrySchedule(event.attempt, event.maxAttempts, event.delayMs, now);
+		if (
+			Number.isSafeInteger(event.attempt) &&
+			event.attempt > 0 &&
+			Number.isFinite(event.delayMs) &&
+			event.delayMs >= 0
+		) {
+			this.#temporalEvidenceStore.observe({
+				kind: "retry-schedule",
+				slot: 0,
+				observedAt: now,
+				payload: { attempt: event.attempt, delayMs: event.delayMs },
+			});
+		}
 		this.#changed();
 	}
 
 	onAutoRetryEnd(_event: AutoRetryEndEvent, ctx: Pick<AnimationsBoxContext, "hasUI">): void {
 		if (!ctx.hasUI) return;
-		this.#signalState.noteRetryEnd();
+		this.#signalState.noteRetryEnd(this.#scheduler.now());
 		this.#changed();
 	}
 
-	onRetryFallback(
-		event: RetryFallbackAppliedEvent | RetryFallbackSucceededEvent,
-		ctx: Pick<AnimationsBoxContext, "hasUI">,
-	): void {
+	onRetryFallbackApplied(event: RetryFallbackAppliedEvent, ctx: Pick<AnimationsBoxContext, "hasUI">): void {
 		if (!ctx.hasUI) return;
-		this.#signalState.noteFallback(event.type === "retry_fallback_applied" ? event.to : event.model);
+		this.#signalState.noteRetryFallback(event.from, event.to);
+		this.#changed();
+	}
+
+	onRetryFallbackSucceeded(_event: RetryFallbackSucceededEvent, ctx: Pick<AnimationsBoxContext, "hasUI">): void {
+		if (!ctx.hasUI) return;
+		this.#signalState.noteRetryFallbackSucceeded();
+		this.#changed();
+	}
+
+	onCredentialDisabled(event: CredentialDisabledEvent, ctx: Pick<AnimationsBoxContext, "hasUI">): void {
+		if (!ctx.hasUI) return;
+		this.#signalState.noteCredentialDisabled(event.provider);
 		this.#changed();
 	}
 
@@ -677,7 +754,6 @@ export class AnimationsBoxController {
 			goal == null
 				? undefined
 				: {
-						objective: goal.objective,
 						status: goal.status,
 						tokensUsed: goal.tokensUsed,
 						tokenBudget: goal.tokenBudget,
@@ -692,10 +768,17 @@ export class AnimationsBoxController {
 		if (this.#ownsAuditTrailState) this.#auditTrailState.noteSessionSwitch();
 		this.#tidepoolPendingHeaders = undefined;
 		this.#tidepoolState = new RateLimitTidepoolState();
+		this.#providerHealthState.reset();
 		this.#contextGaugeState = new ContextGaugeState(this.#config.contextQuota);
+		this.#toolActivityState.reset();
 		this.#liveFilesState.reset();
+		this.#skillReads.clear();
 		this.#signalState.resetSession();
+		this.#temporalEvidenceSession++;
+		this.#temporalEvidenceStore.switchScope({ root: 0, session: this.#temporalEvidenceSession });
+		this.#temporalEvidenceSnapshot = undefined;
 		this.#memoryEpoch++;
+		this.#memorySequence = 0;
 		this.#refreshMemory();
 		this.#changed();
 	}
@@ -704,12 +787,15 @@ export class AnimationsBoxController {
 		this.#activityUnsubscribe?.();
 		this.#activityUnsubscribe = undefined;
 		this.#activityProbe = undefined;
+		this.#skillReads.clear();
+		this.#temporalEvidenceStore.dispose();
+		this.#temporalEvidenceSnapshot = undefined;
 		if (!this.#mount) return;
 		this.#mount.host.dispose();
 		this.#mount = undefined;
+		this.#motionPolicy = undefined;
 		this.#memoryEpoch++;
 		ctx.setWidget(BOX_WIDGET_KEY, undefined, this.#widgetOptions);
-		ctx.setWidget(SIGNAL_WIDGET_KEY, undefined, this.#signalWidgetOptions);
 		if (this.#extrasConfig.darkroomTitle) (ctx.setTitle ?? this.#setTitle)?.("omp");
 	}
 }

@@ -3,9 +3,7 @@ import { formatNumber } from "@oh-my-pi/pi-utils";
 import {
 	buildAuditTrailBoxSegment,
 	buildCacheMeterSegment,
-	buildCadenceEqualizerSegment,
 	buildRateLimitTidepoolSegment,
-	buildReflectionRippleSegment,
 	buildToolActivitySegment,
 } from "../src/animations-box/segments";
 import { BOX_SEGMENT_IDS } from "../src/animations-box/settings";
@@ -18,17 +16,8 @@ import {
 	type ProbeReading,
 	renderAuditMeterRow,
 } from "../src/audit-trail-box";
-import { CACHE_METER_COLORS, CacheMeterState, formatCost, renderCacheMeterRow } from "../src/cache-meter";
-import {
-	CadenceEqualizerState,
-	cadenceEqualizerColors,
-	renderCompactEqualizer,
-	renderEqualizerRow,
-	renderEqualizerText,
-} from "../src/cadence-equalizer";
-import { MAX_REFERENCE_RATE } from "../src/cadence-equalizer/scale";
-import { RateLimitTidepoolState, refillLevel, renderTidepoolRow, TIDEPOOL_COLORS } from "../src/rate-limit-tidepool";
-import { REFLECTION_RIPPLE_COLORS, ReflectionRippleState, renderReflectionRippleRow } from "../src/reflection-ripple";
+import { CACHE_METER_COLORS, CacheMeterState } from "../src/cache-meter";
+import { ProviderHealthState, RateLimitTidepoolState, refillLevel, TIDEPOOL_COLORS } from "../src/rate-limit-tidepool";
 
 // Identity theme so variant assertions see plain text instead of ANSI escapes.
 // Builders emit PLAIN spans (Plan 018) — the theme only ever reaches the
@@ -94,20 +83,6 @@ describe("buildCacheMeterSegment — active line", () => {
 		return state;
 	}
 
-	it("is active once telemetry lands, with variants matching renderCacheMeterRow at the exact 999/40/18/3 budgets, deduped", () => {
-		const state = warmedState();
-		const snapshot = state.snapshot();
-		const sample = buildCacheMeterSegment(state, 12_345, idTheme);
-		expect(sample.active).toBe(true);
-
-		const expected = [999, 40, 18, 3].map(width =>
-			renderCacheMeterRow(snapshot, width, 12_345, idTheme, "subtle", snapshot.warmth, false, CACHE_METER_COLORS),
-		);
-		const dedupedExpected: string[] = [];
-		for (const v of expected) if (dedupedExpected.at(-1) !== v) dedupedExpected.push(v);
-		expect(sample.variants).toEqual(dedupedExpected);
-	});
-
 	it("consecutive-equal variants never repeat (dedupe held)", () => {
 		const state = warmedState();
 		const sample = buildCacheMeterSegment(state, 0, idTheme);
@@ -124,23 +99,34 @@ describe("buildCacheMeterSegment — active line", () => {
 		expect(sample.line.accent).toBe("syntaxString");
 	});
 
-	it("pct span is '<N>% hit' at the snapshot's true warmth, carrying the D5 up-good gradient", () => {
-		const state = warmedState();
-		const snapshot = state.snapshot();
+	it("distinguishes recent per-request token reuse from session requests with reuse", () => {
+		const state = new CacheMeterState();
+		state.recordUsage(usageSample("anthropic", "claude", { input: 10_000 }));
+		for (let i = 0; i < 10; i++) {
+			state.recordUsage(usageSample("anthropic", "claude", { input: 400, cacheRead: 600, cacheWrite: 200 }));
+		}
 		const sample = buildCacheMeterSegment(state, 999, idTheme);
-		expect(sample.line.spans[0]).toEqual({
-			key: "pct",
-			text: "50% hit",
-			gradient: { ratio: snapshot.warmth, direction: "up-good" },
-		});
+		const phrase = sample.line.spans.map(span => span.text).join(" · ");
+		expect(phrase).toContain("50% recent token reuse");
+		expect(phrase).toContain("10/11 session requests with reuse");
+		expect(sample.line.spans.find(span => span.key === "pct")?.gradient?.ratio).toBe(0.5);
+		for (const variant of sample.variants) {
+			if (variant.includes("%")) expect(variant).toMatch(/50% recent token reuse|reuse 50%/u);
+			if (variant.includes("/")) expect(variant).toContain("10/11 session requests with reuse");
+		}
+		const narrow = sample.variants.find(variant => variant.length <= 18);
+		expect(narrow).toContain("50%");
+		expect(narrow).toMatch(/recent.*reuse/u);
+		const smallest = sample.variants.find(variant => variant.length <= 10);
+		expect(smallest).toContain("50%");
+		expect(smallest).toContain("reuse");
 	});
 
-	it("falls back to a hits span (hit/request counts) when no savings rate is derivable", () => {
-		const state = warmedState(); // no Usage.cost supplied anywhere
-		const snapshot = state.snapshot();
-		expect(snapshot.savedCost).toBeUndefined();
-		const sample = buildCacheMeterSegment(state, 0, idTheme);
-		expect(sample.line.spans[1]).toEqual({ key: "hits", text: `${snapshot.hitCount}/${snapshot.requestCount}` });
+	it("omits money claims in both modes when no savings rate is derivable", () => {
+		const sample = buildCacheMeterSegment(warmedState(), 0, idTheme);
+		expect(sample.line.spans.some(span => span.key === "saved")).toBe(false);
+		expect(sample.line.spans.map(span => span.text).join(" ")).not.toContain("$");
+		for (const variant of sample.variants) expect(variant).not.toContain("$");
 	});
 
 	it("leads with a saved-cost span once a rate is derivable", () => {
@@ -189,40 +175,25 @@ describe("buildCacheMeterSegment — active line", () => {
 		]);
 	});
 
-	// buv.2's parity contract: the box row is the ONLY cache row, so every
-	// figure the deleted footer used to carry must trace back to one snapshot.
-	it("carries the whole ledger in one phrase — hit %, saved, hits/requests, uncached, reused, stored", () => {
+	it("retains invalidation evidence at every compact level without blinking it", () => {
 		const state = new CacheMeterState();
-		state.recordUsage(
-			usageSample("anthropic", "claude", {
-				input: 400,
-				cacheRead: 600,
-				cacheWrite: 200,
-				cost: { input: 0.3, output: 0.05, cacheRead: 0.02, cacheWrite: 0.01, total: 0.38 },
-			}),
-		);
-		const snapshot = state.snapshot();
+		state.recordUsage(usageSample("anthropic", "claude", { cacheRead: 4_000 }));
+		state.recordUsage(usageSample("anthropic", "claude", { input: 3_000, cacheWrite: 1_000 }));
 		const sample = buildCacheMeterSegment(state, 0, idTheme);
-		expect(sample.line.spans.map(span => span.key)).toEqual(["pct", "saved", "hits", "uncached", "read", "write"]);
-		expect(sample.line.spans.map(span => span.text)).toEqual([
-			`${Math.round(snapshot.warmth * 100)}% hit`,
-			`saved ${formatCost(snapshot.savedCost as number)}`,
-			`${snapshot.hitCount}/${snapshot.requestCount}`,
-			`${formatNumber(snapshot.missTokens)} uncached`,
-			`${formatNumber(snapshot.cacheReadTokens)} reused`,
-			`${formatNumber(snapshot.cacheWriteTokens)} stored`,
-		]);
+		expect(sample.line.spans[0]?.text).toContain("1 invalidations");
+		for (const variant of sample.variants) expect(variant).toContain("1 invalidations");
+		expect(buildCacheMeterSegment(state, 1_500, idTheme).variants).toEqual(sample.variants);
 	});
 });
 
-describe("buildCacheMeterSegment — n/a line (D4: undefined ≠ zero)", () => {
+describe("buildCacheMeterSegment cold workload", () => {
 	function uncachedRequests(state: CacheMeterState, count: number): void {
 		for (let i = 0; i < count; i++) {
 			state.recordUsage(usageSample("ollama", "gpt-oss", { input: 100 }));
 		}
 	}
 
-	it("stays on the live phrase below the request floor — too early to call the provider cacheless", () => {
+	it("keeps reporting measured reuse below the sustained cold-workload floor", () => {
 		const state = new CacheMeterState();
 		uncachedRequests(state, 7);
 		const sample = buildCacheMeterSegment(state, 0, idTheme);
@@ -230,138 +201,25 @@ describe("buildCacheMeterSegment — n/a line (D4: undefined ≠ zero)", () => {
 		expect(sample.line.spans[0]?.key).toBe("pct");
 	});
 
-	it("latches the n/a shape at the floor: idle dot, dim words, no numbers — variants (simple mode) untouched", () => {
+	it("reports only the absence of observed reuse after eight cold requests", () => {
 		const state = new CacheMeterState();
 		uncachedRequests(state, 8);
 		const sample = buildCacheMeterSegment(state, 0, idTheme);
-		expect(sample.active).toBe(true); // simple mode unchanged — D4 is a detailed-mode distinction
-		expect(sample.variants.length).toBeGreaterThan(0);
-		expect(sample.line).toEqual({
-			dot: "idle",
-			label: "cache",
-			accent: CACHE_METER_COLORS.badge,
-			spans: [{ key: "na", text: "no caching on this provider", tone: "dim" }],
-		});
+		const phrase = sample.line.spans.map(span => span.text).join(" ");
+		expect(phrase).toContain("no reuse observed");
+		for (const text of [phrase, ...sample.variants]) {
+			expect(text).not.toMatch(/provider|unsupported|unavailable|incapable|n\/a/iu);
+			expect(text).not.toContain("$");
+		}
 	});
 
-	it("a single later cache hit un-latches permanently — the counters are monotone, so the condition can never re-arm", () => {
+	it("stops the no-reuse observation after later reuse, even if subsequent requests are cold", () => {
 		const state = new CacheMeterState();
 		uncachedRequests(state, 8);
 		state.recordUsage(usageSample("ollama", "gpt-oss", { input: 100, cacheRead: 50 }));
 		expect(buildCacheMeterSegment(state, 0, idTheme).line.spans[0]?.key).toBe("pct");
 		uncachedRequests(state, 20); // more uncached traffic afterwards must not re-latch
 		expect(buildCacheMeterSegment(state, 0, idTheme).line.dot).toBe("live");
-	});
-});
-
-describe("buildCacheMeterSegment — glyph preset", () => {
-	it("forwards the preset into the simple-mode variants (ascii badge substitute '#')", () => {
-		const state = new CacheMeterState();
-		state.recordUsage(usageSample("anthropic", "claude", { input: 400, cacheRead: 600, cacheWrite: 200 }));
-		const active = buildCacheMeterSegment(state, 0, idTheme, CACHE_METER_COLORS, "ascii");
-		expect(active.variants[0]?.startsWith("#")).toBe(true);
-	});
-});
-
-describe("buildCadenceEqualizerSegment — priority", () => {
-	it("derives its priority from cadenceEqualizer's position in BOX_SEGMENT_IDS, never a hardcoded literal", () => {
-		const sample = buildCadenceEqualizerSegment(new CadenceEqualizerState(), false, null, 0, idTheme);
-		expect(sample.priority).toBe(BOX_SEGMENT_IDS.indexOf("cadenceEqualizer") + 1);
-	});
-
-	it("id is always cadenceEqualizer", () => {
-		expect(buildCadenceEqualizerSegment(new CadenceEqualizerState(), false, null, 0, idTheme).id).toBe(
-			"cadenceEqualizer",
-		);
-	});
-});
-
-describe("buildCadenceEqualizerSegment — resting line (Decision 5: enabled-but-idle, never absent)", () => {
-	it("is inactive with empty variants before the first assistant message_start (hasStreamed=false)", () => {
-		const sample = buildCadenceEqualizerSegment(new CadenceEqualizerState(), false, null, 0, idTheme);
-		expect(sample.active).toBe(false);
-		expect(sample.variants).toEqual([]);
-	});
-
-	it("still renders a full resting line: idle dot, label 'cadence', burst accent, lone dim em-dash", () => {
-		const sample = buildCadenceEqualizerSegment(new CadenceEqualizerState(), false, null, 0, idTheme);
-		expect(sample.line).toEqual({
-			dot: "idle",
-			label: "cadence",
-			accent: cadenceEqualizerColors().burst,
-			spans: IDLE_SPANS,
-		});
-	});
-});
-
-describe("buildCadenceEqualizerSegment — active line", () => {
-	function warmedCadenceState(): CadenceEqualizerState {
-		const state = new CadenceEqualizerState();
-		for (let i = 0; i < 10; i++) state.pushSample(0.9);
-		return state;
-	}
-
-	it("is active once hasStreamed is true, with variants matching the renderEqualizerRow -> renderCompactEqualizer -> renderEqualizerText ladder, deduped", () => {
-		const state = warmedCadenceState();
-		const bands = state.snapshotBands();
-		const peaks = state.snapshotPeaks();
-		const sample = buildCadenceEqualizerSegment(state, true, 41, 0, idTheme);
-		expect(sample.active).toBe(true);
-
-		const expected = [
-			renderEqualizerRow(bands, peaks, idTheme, cadenceEqualizerColors()),
-			renderCompactEqualizer(bands, idTheme, cadenceEqualizerColors()),
-			renderEqualizerText(41),
-		];
-		const dedupedExpected: string[] = [];
-		for (const v of expected) if (dedupedExpected.at(-1) !== v) dedupedExpected.push(v);
-		expect(sample.variants).toEqual(dedupedExpected);
-	});
-
-	it("consecutive-equal variants never repeat (dedupe held)", () => {
-		const state = warmedCadenceState();
-		const sample = buildCadenceEqualizerSegment(state, true, 41, 0, idTheme);
-		for (let i = 1; i < sample.variants.length; i++) {
-			expect(sample.variants[i]).not.toBe(sample.variants[i - 1]);
-		}
-	});
-
-	it("rate span is '<N> t/s', rounded, when a live rate is sampled", () => {
-		const state = warmedCadenceState();
-		const sample = buildCadenceEqualizerSegment(state, true, 41.6, 0, idTheme);
-		expect(sample.line.dot).toBe("live");
-		expect(sample.line.spans[0]).toEqual({ key: "rate", text: "42 t/s" });
-	});
-
-	it("rate span uses the box-wide em-dash once cadence exists but nothing is currently sampled", () => {
-		const state = warmedCadenceState();
-		const sample = buildCadenceEqualizerSegment(state, true, null, 0, idTheme);
-		expect(sample.line.spans[0]).toEqual({ key: "rate", text: "—" });
-	});
-
-	it("stays idle when message_start arrives before the first measurable sample", () => {
-		const sample = buildCadenceEqualizerSegment(new CadenceEqualizerState(), true, null, 0, idTheme);
-		expect(sample.active).toBe(false);
-		expect(sample.line.spans).toEqual(IDLE_SPANS);
-	});
-
-	it("peak span is 'peak <N>', the highest band-peak amplitude denormalized back through MAX_REFERENCE_RATE", () => {
-		const state = warmedCadenceState();
-		const peaks = state.snapshotPeaks();
-		let peakAmplitude = 0;
-		for (const peak of peaks) if (peak > peakAmplitude) peakAmplitude = peak;
-		const sample = buildCadenceEqualizerSegment(state, true, 41, 0, idTheme);
-		expect(sample.line.spans[1]).toEqual({
-			key: "peak",
-			text: `peak ${Math.round(peakAmplitude * MAX_REFERENCE_RATE)}`,
-		});
-	});
-
-	it("keeps the burst accent, honoring an accent override", () => {
-		const state = warmedCadenceState();
-		const colors = cadenceEqualizerColors("syntaxString");
-		const sample = buildCadenceEqualizerSegment(state, true, 41, 0, idTheme, colors);
-		expect(sample.line.accent).toBe(colors.burst);
 	});
 });
 
@@ -425,7 +283,7 @@ describe("buildAuditTrailBoxSegment — active line", () => {
 		const sample = buildAuditTrailBoxSegment(state, 0, idTheme);
 		expect(sample.line.dot).toBe("live");
 		expect(sample.line.spans[0]).toEqual({ key: "reads", text: "1 read" });
-		expect(sample.line.spans[1]).toEqual({ key: "writes", text: "0 writes" });
+		expect(sample.line.spans.some(span => span.key === "writes")).toBe(false);
 		expect(sample.line.spans.some(span => span.key === "poisoned" || span.key === "dirty")).toBe(false);
 	});
 
@@ -434,7 +292,7 @@ describe("buildAuditTrailBoxSegment — active line", () => {
 		state.noteWrite("/repo/src/foo.ts", 0);
 		const sample = buildAuditTrailBoxSegment(state, 0, idTheme);
 		expect(sample.line.dot).toBe("notable");
-		expect(sample.line.spans[2]).toEqual({ key: "dirty", text: "1 edited", tone: "notable" });
+		expect(sample.line.spans[1]).toEqual({ key: "dirty", text: "1 edited", tone: "notable" });
 	});
 
 	it("a poisoned path surfaces as 'changed on disk' with the alert tone and dot, outranking dirty (D6: alerts persist)", () => {
@@ -448,13 +306,13 @@ describe("buildAuditTrailBoxSegment — active line", () => {
 		expect(sample.line.spans[3]).toEqual({ key: "dirty", text: "1 edited", tone: "notable" });
 	});
 
-	it("last span is the basename of the most recently touched path, wide-only, always the phrase tail", () => {
+	it("last span is labeled 'last <basename>' of the most recently touched path, wide-only, always the phrase tail (daw.8)", () => {
 		const state = new AuditLedgerState();
 		state.noteRead("/repo/src/foo.ts");
 		state.noteTurn(); // advance the turn clock so bar.ts's touch is unambiguously later
 		state.noteWrite("/repo/src/bar.ts", 0);
 		const sample = buildAuditTrailBoxSegment(state, 0, idTheme);
-		expect(sample.line.spans.at(-1)).toEqual({ key: "last", text: "bar.ts", wideOnly: true });
+		expect(sample.line.spans.at(-1)).toEqual({ key: "last", text: "last bar.ts", wideOnly: true });
 	});
 
 	it("keeps the badge accent, honoring an accent override", () => {
@@ -495,6 +353,54 @@ describe("buildRateLimitTidepoolSegment — resting line (Decision 5: enabled-bu
 	});
 });
 
+describe("buildRateLimitTidepoolSegment — 'no data available' never collapses into 'no limits pressure' (daw.5)", () => {
+	// daw.5: subagent provider responses never reach this plugin's
+	// after_provider_response handler — each subagent turn runs through its
+	// own ExtensionRunner instance (node_modules/@oh-my-pi/pi-coding-agent's
+	// sdk.ts constructs exactly one ExtensionRunner per process; a plugin's
+	// hooks are wired to that instance only), the same host limitation
+	// AGENTS.md already documents for AgentRegistry.global(). The row cannot
+	// be made to activate for headroom it structurally cannot observe. What
+	// this pins instead is that the row never *misreports*: an unobserved
+	// session (idle) and a real near-empty-but-observed reading are
+	// structurally distinct states, not the same dash read two ways.
+	it("idle (never observed) and a real near-zero reading render different dots, activity, and text", () => {
+		const idle = buildRateLimitTidepoolSegment(new RateLimitTidepoolState(), 0, idTheme);
+		const critical = buildRateLimitTidepoolSegment(
+			pooledState(0.02),
+			0,
+			idTheme,
+			undefined,
+			undefined,
+			healthSnapshot(),
+		);
+
+		expect(idle.active).toBe(false);
+		expect(idle.line.dot).toBe("idle");
+		expect(idle.line.spans).toEqual(IDLE_SPANS);
+
+		expect(critical.active).toBe(true);
+		expect(critical.line.dot).toBe("alert");
+		// Health + low tidepool: alert dot from tidepool escalation
+		expect(critical.line.spans[0]?.key).toBe("status");
+		expect(critical.active).toBe(true);
+	});
+
+	it("a healthy observed reading also never renders as the idle dash — real low pressure looks nothing like no data", () => {
+		const healthy = buildRateLimitTidepoolSegment(
+			pooledState(0.95),
+			0,
+			idTheme,
+			undefined,
+			undefined,
+			healthSnapshot(),
+		);
+		expect(healthy.active).toBe(true);
+		expect(healthy.line.dot).toBe("live");
+		expect(healthy.line.spans[0]?.key).toBe("status"); // health leads
+	});
+});
+
 function pooledState(
 	level = 0.78,
 	resetAtMs: number | undefined = undefined,
@@ -505,114 +411,245 @@ function pooledState(
 	return state;
 }
 
-describe("buildRateLimitTidepoolSegment — active line", () => {
-	it("is active once a snapshot lands, with variants matching renderTidepoolRow at the exact 999/30/12 budgets, deduped", () => {
-		const state = pooledState();
-		const sample = buildRateLimitTidepoolSegment(state, 0, idTheme);
-		expect(sample.active).toBe(true);
+function healthSnapshot(status = 200, okCount = 1) {
+	return { okCount, lastStatus: status, troubleCounts: {}, lastTrouble: undefined };
+}
 
-		const level = refillLevel(0.78, 0, 0, undefined);
-		const expected = [999, 30, 12].map(width =>
-			renderTidepoolRow(level, "anthropic", 0, width, idTheme, "subtle", TIDEPOOL_COLORS),
+function healthAfter(statuses: readonly number[]) {
+	const state = new ProviderHealthState();
+	for (const [index, status] of statuses.entries()) state.noteStatus(status, (index + 1) * 1_000);
+	const snapshot = state.snapshot();
+	if (snapshot === undefined) throw new Error("expected a health snapshot");
+	return snapshot;
+}
+
+describe("buildRateLimitTidepoolSegment — active line", () => {
+	it("variants step from every span, to the narrow-safe spans, to the bare health lead, deduped", () => {
+		const state = pooledState(0.784, 12 * 60_000, 0);
+		const sample = buildRateLimitTidepoolSegment(state, 0, idTheme, undefined, undefined, healthSnapshot(200, 7));
+		expect(sample.active).toBe(true);
+		expect(sample.variants).toEqual([
+			"http 200 · 7 ok · 78% left · resets 12m · anthropic",
+			"http 200 · 7 ok",
+			"http 200",
+		]);
+	});
+
+	it("healthy lead reports the actual last status, not a fixed 200", () => {
+		const sample = buildRateLimitTidepoolSegment(
+			new RateLimitTidepoolState(),
+			0,
+			idTheme,
+			undefined,
+			undefined,
+			healthAfter([200, 304]),
 		);
-		const dedupedExpected: string[] = [];
-		for (const v of expected) if (dedupedExpected.at(-1) !== v) dedupedExpected.push(v);
-		expect(sample.variants).toEqual(dedupedExpected);
+		expect(sample.line.dot).toBe("live");
+		expect(sample.line.spans.map(span => span.text)).toEqual(["http 304", "2 ok"]);
 	});
 
 	it("consecutive-equal variants never repeat (dedupe held)", () => {
 		const state = pooledState();
-		const sample = buildRateLimitTidepoolSegment(state, 0, idTheme);
+		const sample = buildRateLimitTidepoolSegment(state, 0, idTheme, undefined, undefined, healthSnapshot());
 		for (let i = 1; i < sample.variants.length; i++) {
 			expect(sample.variants[i]).not.toBe(sample.variants[i - 1]);
 		}
 	});
 
-	it("pct span is '<N>% left' at the refill-adjusted level, carrying the D5 up-good gradient (the ratio is the remaining fraction)", () => {
+	it("pct span is '<N>% left' at the refill-adjusted level as wide-only tail", () => {
 		const state = pooledState(0.784);
-		const sample = buildRateLimitTidepoolSegment(state, 0, idTheme);
+		const sample = buildRateLimitTidepoolSegment(state, 0, idTheme, undefined, undefined, healthSnapshot());
 		expect(sample.line.dot).toBe("live");
-		expect(sample.line.spans[0]).toEqual({
-			key: "pct",
-			text: "78% left",
-			gradient: { ratio: refillLevel(0.784, 0, 0, undefined), direction: "up-good" },
-		});
+		const pctSpan = sample.line.spans.find(s => s.key === "pct");
+		expect(pctSpan?.text).toBe("78% left");
+		expect(pctSpan?.wideOnly).toBe(true);
+		expect(pctSpan?.gradient).toEqual({ ratio: refillLevel(0.784, 0, 0, undefined), direction: "up-good" });
 	});
 
 	it("pct span eases toward full as now advances from observedAtMs toward resetAtMs (refillLevel)", () => {
 		const state = pooledState(0.5, 10_000, 0);
-		const sample = buildRateLimitTidepoolSegment(state, 5_000, idTheme);
+		const sample = buildRateLimitTidepoolSegment(state, 5_000, idTheme, undefined, undefined, healthSnapshot());
 		const expectedLevel = refillLevel(0.5, 5_000, 0, 10_000);
-		expect(sample.line.spans[0]).toEqual({
-			key: "pct",
-			text: `${Math.round(expectedLevel * 100)}% left`,
-			gradient: { ratio: expectedLevel, direction: "up-good" },
-		});
-		expect(Math.round(expectedLevel * 100)).not.toBe(50); // must have actually refilled, not held the raw observed level
+		const pctSpan = sample.line.spans.find(s => s.key === "pct");
+		expect(pctSpan?.text).toBe(`${Math.round(expectedLevel * 100)}% left`);
+		expect(Math.round(expectedLevel * 100)).not.toBe(50);
 	});
 
-	it("provider span trails the phrase (spec order: pct · reset · provider)", () => {
-		const noReset = buildRateLimitTidepoolSegment(pooledState(), 0, idTheme);
-		expect(noReset.line.spans[1]).toEqual({ key: "provider", text: "anthropic" });
-		const withReset = buildRateLimitTidepoolSegment(pooledState(0.5, 12 * 60_000, 0), 0, idTheme);
-		expect(withReset.line.spans[2]).toEqual({ key: "provider", text: "anthropic" });
+	it("provider span trails as wide-only tail", () => {
+		const noReset = buildRateLimitTidepoolSegment(pooledState(), 0, idTheme, undefined, undefined, healthSnapshot());
+		expect(noReset.line.spans.find(s => s.key === "provider")?.text).toBe("anthropic");
+		const withReset = buildRateLimitTidepoolSegment(
+			pooledState(0.5, 12 * 60_000, 0),
+			0,
+			idTheme,
+			undefined,
+			undefined,
+			healthSnapshot(),
+		);
+		expect(withReset.line.spans.find(s => s.key === "provider")?.text).toBe("anthropic");
 	});
 
 	it("reset span is 'resets <N>m' for a reset more than a minute out", () => {
 		const state = pooledState(0.5, 12 * 60_000, 0);
-		const sample = buildRateLimitTidepoolSegment(state, 0, idTheme);
-		expect(sample.line.spans[1]).toEqual({ key: "reset", text: "resets 12m" });
+		const sample = buildRateLimitTidepoolSegment(state, 0, idTheme, undefined, undefined, healthSnapshot());
+		expect(sample.line.spans.find(s => s.key === "reset")?.text).toBe("resets 12m");
 	});
 
 	it("reset span is 'resets <N>s' for a sub-minute reset", () => {
 		const state = pooledState(0.5, 30_000, 0);
-		const sample = buildRateLimitTidepoolSegment(state, 0, idTheme);
-		expect(sample.line.spans[1]).toEqual({ key: "reset", text: "resets 30s" });
+		const sample = buildRateLimitTidepoolSegment(state, 0, idTheme, undefined, undefined, healthSnapshot());
+		expect(sample.line.spans.find(s => s.key === "reset")?.text).toBe("resets 30s");
 	});
 
 	it("reset span is absent when the binding bucket reported no reset", () => {
 		const state = pooledState(0.5, undefined, 0);
-		const sample = buildRateLimitTidepoolSegment(state, 0, idTheme);
-		expect(sample.line.spans).toHaveLength(2);
+		const sample = buildRateLimitTidepoolSegment(state, 0, idTheme, undefined, undefined, healthSnapshot());
 		expect(sample.line.spans.some(span => span.key === "reset")).toBe(false);
 	});
 
 	it("reset span reads 'resets now' once the reset has already passed", () => {
 		const state = pooledState(0.5, 1_000, 0);
-		const sample = buildRateLimitTidepoolSegment(state, 5_000, idTheme);
-		expect(sample.line.spans[1]).toEqual({ key: "reset", text: "resets now" });
+		const sample = buildRateLimitTidepoolSegment(state, 5_000, idTheme, undefined, undefined, healthSnapshot());
+		expect(sample.line.spans.find(s => s.key === "reset")?.text).toBe("resets now");
 	});
 
-	it("keeps the water accent, honoring an accent override — the sand alarm color stays fixed regardless", () => {
+	it("keeps the water accent, honoring an accent override", () => {
 		const state = pooledState();
 		const colors = { ...TIDEPOOL_COLORS, water: "syntaxString" as const };
-		const sample = buildRateLimitTidepoolSegment(state, 0, idTheme, colors);
+		const sample = buildRateLimitTidepoolSegment(state, 0, idTheme, colors, undefined, healthSnapshot());
 		expect(sample.line.accent).toBe("syntaxString");
-		expect(colors.sand).toBe(TIDEPOOL_COLORS.sand);
 	});
 });
 
 describe("buildRateLimitTidepoolSegment — dot escalation (D6: alerts persist, no blinking)", () => {
 	it("≤ 20% remaining escalates to the notable dot with an amber pct tone replacing the gradient", () => {
-		const sample = buildRateLimitTidepoolSegment(pooledState(0.2), 0, idTheme);
+		const sample = buildRateLimitTidepoolSegment(
+			pooledState(0.2),
+			0,
+			idTheme,
+			undefined,
+			undefined,
+			healthSnapshot(),
+		);
 		expect(sample.line.dot).toBe("notable");
-		expect(sample.line.spans[0]).toEqual({ key: "pct", text: "20% left", tone: "notable" });
+		const pctSpan = sample.line.spans.find(s => s.key === "pct");
+		expect(pctSpan?.text).toBe("20% left");
+		expect(pctSpan?.tone).toBe("notable");
 	});
 
 	it("≤ 10% remaining escalates to the alert dot with a red pct tone", () => {
-		const sample = buildRateLimitTidepoolSegment(pooledState(0.1), 0, idTheme);
+		const sample = buildRateLimitTidepoolSegment(
+			pooledState(0.1),
+			0,
+			idTheme,
+			undefined,
+			undefined,
+			healthSnapshot(),
+		);
 		expect(sample.line.dot).toBe("alert");
-		expect(sample.line.spans[0]).toEqual({ key: "pct", text: "10% left", tone: "alert" });
+		const pctSpan = sample.line.spans.find(s => s.key === "pct");
+		expect(pctSpan?.text).toBe("10% left");
+		expect(pctSpan?.tone).toBe("alert");
 	});
 
-	it("just above the notable threshold stays live with the gradient — escalation replaces the gradient, never stacks", () => {
-		const sample = buildRateLimitTidepoolSegment(pooledState(0.21), 0, idTheme);
+	it("just above the notable threshold stays live with the gradient", () => {
+		const sample = buildRateLimitTidepoolSegment(
+			pooledState(0.21),
+			0,
+			idTheme,
+			undefined,
+			undefined,
+			healthSnapshot(),
+		);
 		expect(sample.line.dot).toBe("live");
-		expect(sample.line.spans[0]?.tone).toBeUndefined();
-		expect(sample.line.spans[0]?.gradient).toEqual({
-			ratio: refillLevel(0.21, 0, 0, undefined),
-			direction: "up-good",
-		});
+		const pctSpan = sample.line.spans.find(s => s.key === "pct");
+		expect(pctSpan?.tone).toBeUndefined();
+		expect(pctSpan?.gradient).toEqual({ ratio: refillLevel(0.21, 0, 0, undefined), direction: "up-good" });
+	});
+});
+
+describe("buildRateLimitTidepoolSegment — provider health trouble", () => {
+	it("is idle until the first provider response, even with a pool sample", () => {
+		const sample = buildRateLimitTidepoolSegment(pooledState(), 0, idTheme);
+		expect(sample.active).toBe(false);
+		expect(sample.line.dot).toBe("idle");
+	});
+
+	it("lists trouble classes worst-first with their own counts, then the newest failure's status and age", () => {
+		// 401 at t=1s, 429 at 2s, 500 at 3s, 200 at 4s → viewed at 10s.
+		const sample = buildRateLimitTidepoolSegment(
+			new RateLimitTidepoolState(),
+			10_000,
+			idTheme,
+			undefined,
+			undefined,
+			healthAfter([401, 429, 500, 200]),
+		);
+		expect(sample.line.spans.map(span => span.text)).toEqual([
+			"throttle ×1",
+			"server ×1",
+			"auth ×1",
+			"last 500 7s ago",
+			"1 ok",
+		]);
+		expect(sample.variants.at(-1)).toBe("throttle ×1 · 7s");
+	});
+
+	it("holds the alert dot after a trailing 200: one success does not erase five 429s", () => {
+		const sample = buildRateLimitTidepoolSegment(
+			new RateLimitTidepoolState(),
+			60_000,
+			idTheme,
+			undefined,
+			undefined,
+			healthAfter([429, 429, 429, 429, 429, 200]),
+		);
+		expect(sample.line.dot).toBe("alert");
+		expect(sample.line.spans[0]).toEqual({ key: "throttle", text: "throttle ×5", tone: "alert" });
+		expect(sample.line.spans.find(span => span.key === "ok")?.text).toBe("1 ok");
+	});
+
+	it("an unclassified status is notable, not alert, and omits the ok span when nothing succeeded", () => {
+		const sample = buildRateLimitTidepoolSegment(
+			new RateLimitTidepoolState(),
+			1_500,
+			idTheme,
+			undefined,
+			undefined,
+			healthAfter([418]),
+		);
+		expect(sample.line.dot).toBe("notable");
+		expect(sample.line.spans.map(span => span.text)).toEqual(["other ×1", "last 418 <1s ago"]);
+	});
+
+	it("a near-empty pool escalates a healthy row, but never softens an alerted one", () => {
+		const healthyLowPool = buildRateLimitTidepoolSegment(
+			pooledState(0.05),
+			0,
+			idTheme,
+			undefined,
+			undefined,
+			healthSnapshot(),
+		);
+		expect(healthyLowPool.line.dot).toBe("alert");
+		const troubledFullPool = buildRateLimitTidepoolSegment(
+			pooledState(1),
+			2_000,
+			idTheme,
+			undefined,
+			undefined,
+			healthAfter([500]),
+		);
+		expect(troubledFullPool.line.dot).toBe("alert");
+		const troubledNotablePool = buildRateLimitTidepoolSegment(
+			pooledState(0.15),
+			2_000,
+			idTheme,
+			undefined,
+			undefined,
+			healthAfter([500]),
+		);
+		expect(troubledNotablePool.line.dot).toBe("alert");
 	});
 });
 
@@ -652,30 +689,24 @@ describe("buildToolActivitySegment — active line", () => {
 		return state;
 	}
 
-	it("total span counts every call, file tools included — the audit row owns their breakdown, not their existence", () => {
-		const sample = buildToolActivitySegment(stateWith("read", "read", "bash"), 0, idTheme);
+	it("counts every call and keeps file tools out of the compact category breakdown", () => {
+		const sample = buildToolActivitySegment(stateWith("read", "read", "edit", "bash"), 0, idTheme);
 		expect(sample.active).toBe(true);
 		expect(sample.line.dot).toBe("live");
-		expect(sample.line.spans[0]).toEqual({ key: "total", text: "3 calls" });
+		expect(sample.line.activity).toBe(false);
+		expect(sample.line.spans).toEqual([
+			{ key: "total", text: "4 calls" },
+			{ key: "cat:bash", text: "bash (1)" },
+		]);
 	});
 
-	it("singularizes a lone call", () => {
-		expect(buildToolActivitySegment(stateWith("bash"), 0, idTheme).line.spans[0]?.text).toBe("1 call");
+	it("singularizes a lone call without adding internal phase terminology", () => {
+		const sample = buildToolActivitySegment(stateWith("write"), 0, idTheme);
+		expect(sample.line.spans[0]?.text).toBe("1 call");
+		expect(sample.variants).toEqual(["1 call"]);
 	});
 
-	it("never names read or write in the breakdown — that is the audit row's duplication this row removes", () => {
-		const sample = buildToolActivitySegment(stateWith("read", "read", "read", "edit", "bash"), 0, idTheme);
-		expect(sample.line.spans.map(span => span.key)).toEqual(["total", "cat:bash"]);
-		expect(sample.variants).toEqual(["5 calls — bash (1)", "5 calls"]);
-	});
-
-	it("collapses to the bare total when only file tools have fired", () => {
-		const sample = buildToolActivitySegment(stateWith("read", "write"), 0, idTheme);
-		expect(sample.variants).toEqual(["2 calls"]);
-		expect(sample.line.spans).toEqual([{ key: "total", text: "2 calls" }]);
-	});
-
-	it("orders the breakdown busiest-first and caps it at two categories (TOP_CATEGORY_LIMIT)", () => {
+	it("orders the category breakdown busiest-first and caps it at two categories", () => {
 		const sample = buildToolActivitySegment(
 			stateWith("grep", "glob", "grep", "bash", "task", "task", "task", "task"),
 			0,
@@ -683,132 +714,65 @@ describe("buildToolActivitySegment — active line", () => {
 		);
 		expect(sample.line.spans).toEqual([
 			{ key: "total", text: "8 calls" },
-			{ key: "cat:agent", text: "agent (4)", sep: " — " },
-			{ key: "cat:search", text: "search (3)", sep: undefined },
+			{ key: "cat:agent", text: "agent (4)" },
+			{ key: "cat:search", text: "search (3)" },
 		]);
 	});
 
-	it("breaks a tied count by REPORTED_CATEGORIES order, not insertion order", () => {
-		const sample = buildToolActivitySegment(stateWith("task", "bash"), 0, idTheme);
-		expect(sample.line.spans.map(span => span.text)).toEqual(["2 calls", "bash (1)", "agent (1)"]);
+	it("breaks tied categories by display order and classifies MCP plus unknown tools", () => {
+		const tie = buildToolActivitySegment(stateWith("task", "bash"), 0, idTheme);
+		expect(tie.line.spans.map(span => span.text)).toEqual(["2 calls", "bash (1)", "agent (1)"]);
+
+		const bridges = buildToolActivitySegment(stateWith("mcp__qmd_query", "some_plugin_tool"), 0, idTheme);
+		expect(bridges.line.spans.map(span => span.text)).toEqual(["2 calls", "mcp (1)", "other (1)"]);
 	});
 
-	it("routes mcp bridge names to the mcp category and unknown tools to other", () => {
-		const sample = buildToolActivitySegment(stateWith("mcp__qmd_query", "some_plugin_tool"), 0, idTheme);
-		expect(sample.line.spans.map(span => span.text)).toEqual(["2 calls", "mcp (1)", "other (1)"]);
+	it("leads with the active tool and elapsed time, then pulses the row", () => {
+		const state = stateWith("bash", "read");
+		state.start("bash", "bash", 100);
+		state.start("read", "read", 200);
+		const sample = buildToolActivitySegment(state, 4_900, idTheme);
+		expect(sample.line.activity).toBe(true);
+		expect(sample.line.spans.slice(0, 3)).toEqual([
+			{ key: "active", text: "bash" },
+			{ key: "elapsed", text: "4.8s active", flash: false },
+			{ key: "total", text: "2 calls" },
+		]);
 	});
 
-	it("spells the simple-mode ladder with the same phrase the detailed line renders, dropping the tail first", () => {
+	it("keeps settled latency statistics out of the display row", () => {
+		const state = new ToolActivityState();
+		const samples = [
+			["read", 100],
+			["read", 200],
+			["read", 300],
+			["read", 400],
+			["bash", 4_800],
+		] as const;
+		for (const [index, [toolName, duration]] of samples.entries()) {
+			const id = String(index);
+			state.record(toolName);
+			state.start(id, toolName, index * 10_000);
+			state.end(id, toolName, false, index * 10_000 + duration);
+		}
+		state.settle();
+		const sample = buildToolActivitySegment(state, 50_000, idTheme);
+		expect(sample.line.activity).toBe(false);
+		expect(sample.line.spans).toEqual([
+			{ key: "total", text: "5 calls" },
+			{ key: "cat:bash", text: "bash (1)" },
+		]);
+	});
+
+	it("spells the simple-mode ladder from categories down to the bare total", () => {
 		const sample = buildToolActivitySegment(stateWith("bash", "bash", "grep"), 0, idTheme);
-		expect(sample.variants).toEqual(["3 calls — bash (2) · search (1)", "3 calls — bash (2)", "3 calls"]);
+		expect(sample.variants).toEqual(["3 calls · bash (2) · search (1)", "3 calls"]);
 	});
 
-	it("uses one accent for the whole row — the deleted constellation's per-category rainbow is gone", () => {
+	it("uses one accent for the whole row", () => {
 		const bash = buildToolActivitySegment(stateWith("bash"), 0, idTheme);
 		const agent = buildToolActivitySegment(stateWith("task"), 0, idTheme);
 		expect(bash.line.accent).toBe(agent.line.accent);
 		expect(bash.line.accent).not.toBe("dim");
-	});
-});
-
-describe("buildReflectionRippleSegment — priority", () => {
-	it("derives its priority from reflectionRipple's position in BOX_SEGMENT_IDS, never a hardcoded literal", () => {
-		const sample = buildReflectionRippleSegment(new ReflectionRippleState(), 0, idTheme);
-		expect(sample.priority).toBe(BOX_SEGMENT_IDS.indexOf("reflectionRipple") + 1);
-	});
-
-	it("id is always reflectionRipple", () => {
-		expect(buildReflectionRippleSegment(new ReflectionRippleState(), 0, idTheme).id).toBe("reflectionRipple");
-	});
-});
-
-describe("buildReflectionRippleSegment — resting line (Decision 1: idle is the COMMON state, not a startup gap)", () => {
-	it("is inactive with empty variants before any ttsr_triggered event, and again once a ripple has settled", () => {
-		const state = new ReflectionRippleState();
-		const sample = buildReflectionRippleSegment(state, 0, idTheme);
-		expect(sample.active).toBe(false);
-		expect(sample.variants).toEqual([]);
-
-		state.applyTrigger(["rule"], 0);
-		state.settleIfDone(999_999); // force-settle far past SETTLE_MS
-		expect(state.phase).toBe("idle");
-		const settledSample = buildReflectionRippleSegment(state, 999_999, idTheme);
-		expect(settledSample.active).toBe(false);
-		expect(settledSample.variants).toEqual([]);
-	});
-
-	it("still renders a full resting line: idle dot, label 'reflect', ring accent, lone dim em-dash", () => {
-		const sample = buildReflectionRippleSegment(new ReflectionRippleState(), 0, idTheme);
-		expect(sample.line).toEqual({
-			dot: "idle",
-			label: "reflect",
-			accent: REFLECTION_RIPPLE_COLORS.ring,
-			spans: IDLE_SPANS,
-		});
-	});
-});
-
-describe("buildReflectionRippleSegment — active line", () => {
-	function ripplingState(ruleNames: readonly string[] = ["myRule"], triggeredAt = 0): ReflectionRippleState {
-		const state = new ReflectionRippleState();
-		state.applyTrigger(ruleNames, triggeredAt);
-		return state;
-	}
-
-	it("is active while phase is rippling, with variants matching renderReflectionRippleRow at the exact 999/40/12 budgets, deduped", () => {
-		const state = ripplingState(["myRule"], 100);
-		const sample = buildReflectionRippleSegment(state, 150, idTheme);
-		expect(sample.active).toBe(true);
-
-		const elapsed = state.rippleElapsedMs(150);
-		expect(elapsed).toBe(50);
-		const expected = [999, 40, 12].map(width =>
-			renderReflectionRippleRow(elapsed, width, idTheme, "subtle", REFLECTION_RIPPLE_COLORS),
-		);
-		const dedupedExpected: string[] = [];
-		for (const v of expected) if (dedupedExpected.at(-1) !== v) dedupedExpected.push(v);
-		expect(sample.variants).toEqual(dedupedExpected);
-	});
-
-	it("consecutive-equal variants never repeat (dedupe held)", () => {
-		const state = ripplingState(["myRule"], 0);
-		const sample = buildReflectionRippleSegment(state, 200, idTheme);
-		for (let i = 1; i < sample.variants.length; i++) {
-			expect(sample.variants[i]).not.toBe(sample.variants[i - 1]);
-		}
-	});
-
-	it("rules span joins every matched rule name, in event order", () => {
-		const state = ripplingState(["ruleA", "ruleB"], 0);
-		const sample = buildReflectionRippleSegment(state, 0, idTheme);
-		expect(sample.line.dot).toBe("live");
-		expect(sample.line.spans[0]).toEqual({ key: "rules", text: "ruleA, ruleB" });
-	});
-
-	it("count span is the bare session trigger count", () => {
-		const state = new ReflectionRippleState();
-		state.applyTrigger(["a"], 0);
-		state.applyTrigger(["b"], 10);
-		const sample = buildReflectionRippleSegment(state, 10, idTheme);
-		expect(sample.line.spans[1]).toEqual({ key: "count", text: "2" });
-	});
-
-	it("keeps the ring accent, honoring an accent override", () => {
-		const state = ripplingState();
-		const colors = { ...REFLECTION_RIPPLE_COLORS, ring: "syntaxString" as const };
-		const sample = buildReflectionRippleSegment(state, 0, idTheme, colors);
-		expect(sample.line.accent).toBe("syntaxString");
-	});
-
-	it("phase math is a pure function of (now - trigger timestamp) on the injected clock, never mount/render-relative", () => {
-		const state = ripplingState(["a"], 1_000); // triggered at wall-clock t=1000
-		const sampleAt1500 = buildReflectionRippleSegment(state, 1_500, idTheme);
-		const sampleAt1500Again = buildReflectionRippleSegment(state, 1_500, idTheme);
-		expect(sampleAt1500.variants).toEqual(sampleAt1500Again.variants);
-		expect(sampleAt1500.variants).toEqual(
-			[999, 40, 12]
-				.map(width => renderReflectionRippleRow(500, width, idTheme, "subtle", REFLECTION_RIPPLE_COLORS))
-				.filter((v, i, arr) => i === 0 || arr[i - 1] !== v),
-		);
 	});
 });

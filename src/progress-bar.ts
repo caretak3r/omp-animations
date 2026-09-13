@@ -11,12 +11,12 @@
  * — hence `box.bar.*` in `glyph-presets.ts` rather than a
  * `rateLimitTidepool.*`/`cacheMeter.*` key.
  */
-import type { SymbolPreset, Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+
 import type { GlyphKey } from "./glyph-presets";
 import { resolveGlyph } from "./glyph-presets";
-import type { RenderTier } from "./terminal-capabilities";
+import type { SymbolPreset, Theme, ThemeColor } from "./host/types";
 
-/** The slice of {@link Theme} the renderer needs — foreground coloring, optionally color hex extraction for gradients. */
+/** Foreground coloring for bars, with optional hex colors for threshold interpolation. */
 export type ProgressBarTheme = Pick<Theme, "fg"> & Partial<Pick<Theme, "getColorHex">>;
 
 /** Fixed cell count every bar renders at — same width regardless of caller, so rows stay column-aligned. */
@@ -77,7 +77,7 @@ function interpolateRgb(
 }
 
 /**
- * Compute gradient color for a cell at given ratio.
+ * Compute a threshold color for the overall ratio.
  * Routes through warning (yellow) midpoint for better visual read.
  * @param ratio - Fill ratio [0, 1]
  * @param direction - "up-good" (low→red, high→green) or "down-good" (inverse)
@@ -159,8 +159,6 @@ export function renderProgressBar(
 	emptyColor: ThemeColor = "dim",
 	preset: SymbolPreset = "unicode",
 	cells: number = PROGRESS_BAR_CELLS,
-	renderTier?: RenderTier,
-	gradientDirection?: GradientDirection,
 ): string {
 	const clamped = clamp01(ratio);
 
@@ -172,12 +170,7 @@ export function renderProgressBar(
 		const bar: string[] = [];
 		for (let i = 0; i < cells; i++) {
 			if (i < filled) {
-				if (renderTier?.colorMode === "truecolor" && gradientDirection && theme.getColorHex) {
-					const cellColor = gradientColorAt(ratio, gradientDirection, theme as Required<ProgressBarTheme>);
-					bar.push(`\x1b[38;2;${parseHex(cellColor).join(";")}m${filledGlyph}\x1b[0m`);
-				} else {
-					bar.push(theme.fg(filledColor, filledGlyph));
-				}
+				bar.push(theme.fg(filledColor, filledGlyph));
 			} else {
 				bar.push(theme.fg(emptyColor, emptyGlyph));
 			}
@@ -203,21 +196,11 @@ export function renderProgressBar(
 	for (let i = 0; i < cells; i++) {
 		if (i < full) {
 			// Full cell
-			if (renderTier?.colorMode === "truecolor" && gradientDirection && theme.getColorHex) {
-				const cellColor = gradientColorAt(ratio, gradientDirection, theme as Required<ProgressBarTheme>);
-				bar.push(`\x1b[38;2;${parseHex(cellColor).join(";")}m${filledGlyph}\x1b[0m`);
-			} else {
-				bar.push(theme.fg(filledColor, filledGlyph));
-			}
+			bar.push(theme.fg(filledColor, filledGlyph));
 		} else if (i === full && eighths > 0) {
 			// Boundary cell with partial fill
 			const partialGlyph = resolveGlyph(`box.bar.eighths.${eighths}` as GlyphKey, preset);
-			if (renderTier?.colorMode === "truecolor" && gradientDirection && theme.getColorHex) {
-				const cellColor = gradientColorAt(ratio, gradientDirection, theme as Required<ProgressBarTheme>);
-				bar.push(`\x1b[38;2;${parseHex(cellColor).join(";")}m${partialGlyph}\x1b[0m`);
-			} else {
-				bar.push(theme.fg(filledColor, partialGlyph));
-			}
+			bar.push(theme.fg(filledColor, partialGlyph));
 		} else {
 			// Empty cell
 			bar.push(theme.fg(emptyColor, emptyGlyph));

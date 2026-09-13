@@ -1,10 +1,8 @@
 /**
- * Pure math for the breathing border: an inhale/exhale luminance envelope, an
- * exhale decay curve for the post-`agent_end` wind-down, cadence modulation
- * from turn duration, and brightness->token bucketing for the Audit Box's
- * border chrome. Every function is a deterministic function of its numeric
- * inputs — no wall-clock reads — so frames are byte-stable given an injected
- * clock.
+ * Pure math for the breathing border: its luminance envelope, fixed-speed
+ * perimeter gloss, post-`agent_end` wind-down, cadence modulation, and border
+ * token bucketing. Every function is deterministic from numeric inputs, with
+ * no wall-clock reads, so frames are byte-stable given an injected clock.
  */
 
 /** Default full inhale+exhale cycle while the agent is actively working. */
@@ -15,6 +13,10 @@ export const MIN_BREATH_PERIOD_MS = 4000;
 export const MAX_BREATH_PERIOD_MS = 12_000;
 /** Duration of the single wind-down exhale fired on `agent_end`. */
 export const EXHALE_DURATION_MS = 2000;
+/** Duration of one clockwise gloss lap, independent of breathing cadence. */
+export const GLOSS_LAP_DURATION_MS = 16_000;
+
+const GLOSS_TRAIL_FRACTION = 0.1;
 
 /**
  * Map a recent turn's wall-clock duration to a breath period: quicker turns
@@ -52,6 +54,47 @@ export function exhaleEnvelope(elapsedSinceEndMs: number, durationMs: number): n
 	if (durationMs <= 0 || elapsedSinceEndMs >= durationMs) return 0;
 	if (elapsedSinceEndMs <= 0) return 1;
 	return (1 + Math.cos(Math.PI * (elapsedSinceEndMs / durationMs))) / 2;
+}
+
+/** Fixed-clock gloss position in `[0, 1)`, with invalid or backward time held at top-left. */
+export function glossLapProgress(elapsedMs: number): number {
+	if (!Number.isFinite(elapsedMs) || elapsedMs <= 0) return 0;
+	return (elapsedMs % GLOSS_LAP_DURATION_MS) / GLOSS_LAP_DURATION_MS;
+}
+
+/**
+ * Local gloss strength for one perimeter cell. The head is brightest and the
+ * short trailing band wraps across the top-left boundary; all malformed inputs
+ * safely rest at zero.
+ */
+export function borderGlossIntensity(
+	cellIndex: number,
+	perimeterLength: number,
+	headProgress: number,
+	strength: number,
+): number {
+	if (
+		!Number.isInteger(cellIndex) ||
+		!Number.isInteger(perimeterLength) ||
+		!Number.isFinite(headProgress) ||
+		!Number.isFinite(strength) ||
+		perimeterLength <= 0 ||
+		cellIndex < 0 ||
+		cellIndex >= perimeterLength
+	) {
+		return 0;
+	}
+
+	const clampedStrength = Math.min(1, Math.max(0, strength));
+	if (clampedStrength === 0) return 0;
+
+	const normalizedHead = ((headProgress % 1) + 1) % 1;
+	const cellProgress = cellIndex / perimeterLength;
+	const trailDistance = (normalizedHead - cellProgress + 1) % 1;
+	if (trailDistance >= GLOSS_TRAIL_FRACTION) return 0;
+
+	const falloff = 1 - trailDistance / GLOSS_TRAIL_FRACTION;
+	return clampedStrength * falloff * falloff;
 }
 
 export type BorderBrightnessToken = "borderMuted" | "border" | "borderAccent";

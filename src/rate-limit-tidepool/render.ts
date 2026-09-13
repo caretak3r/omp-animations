@@ -8,9 +8,10 @@
  * parameter of the renderer, not of any one caller. Everything here is
  * deterministic given its numeric inputs — no wall-clock reads, no state.
  */
-import type { SymbolPreset, Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+
 import { type AccentColor, accentToThemeColor } from "../appearance";
 import { resolveGlyph } from "../glyph-presets";
+import type { SymbolPreset, Theme, ThemeColor } from "../host/types";
 import { type PoolTier, poolFilledCells, poolTier } from "./tidepool";
 
 /** The slice of {@link Theme} the renderers need — just foreground coloring. */

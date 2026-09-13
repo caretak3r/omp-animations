@@ -1,14 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import type { ExtensionContext } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
-import { BOX_WIDGET_KEY, SIGNAL_WIDGET_KEY } from "../src/animations-box/controller";
+import { BOX_WIDGET_KEY } from "../src/animations-box/controller";
 import { DEFAULT_FRAME_SCHEDULER } from "../src/kit";
 import { createAnimationsPlugin } from "../src/registrar";
 
 /**
- * Boot smoke through the production registrar. The session mounts two widget
- * factories on one host, starts one scheduler when both widgets subscribe,
- * and tears the shared host down on shutdown.
+ * Boot smoke through the production registrar. The session mounts one complete
+ * widget on one host, starts one scheduler when it subscribes, and tears the
+ * shared host down on shutdown.
  *
  * `createAnimationsPlugin`/`createAuditTrailBoxExtension` accept no injectable
  * scheduler (the registrar always uses `DEFAULT_FRAME_SCHEDULER`, real
@@ -130,7 +130,7 @@ describe("boot smoke (loads the plugin, mounts a widget, disposes it)", () => {
 		expect(liveTimers).toBe(0);
 	});
 
-	it("mounts both widgets and leaves zero subscriptions or timers after shutdown", () => {
+	it("mounts one complete widget and leaves zero subscriptions or timers after shutdown", () => {
 		const { api, fire } = makeApi();
 		createAnimationsPlugin({ settings: {}, env: {} })(api);
 
@@ -139,10 +139,10 @@ describe("boot smoke (loads the plugin, mounts a widget, disposes it)", () => {
 		expect(liveTimers).toBe(0);
 		fire("session_start", sessionStart(), ctx);
 
-		// The controller hands the UI two widget factories. No timer exists until
-		// the real TUI invokes a factory.
-		expect(widgetCalls).toHaveLength(2);
-		expect(new Set(widgetCalls.map(call => call.key))).toEqual(new Set([BOX_WIDGET_KEY, SIGNAL_WIDGET_KEY]));
+		// The controller hands the UI one widget factory. No timer exists until
+		// the real TUI invokes it.
+		expect(widgetCalls).toHaveLength(1);
+		expect(widgetCalls.map(call => call.key)).toEqual([BOX_WIDGET_KEY]);
 		expect(liveTimers).toBe(0);
 
 		const widgets = widgetCalls.map(call => {
@@ -153,7 +153,7 @@ describe("boot smoke (loads the plugin, mounts a widget, disposes it)", () => {
 			return factory(noopTui, idTheme);
 		});
 
-		// Both widgets subscribe to the same host and therefore start one timer.
+		// The complete widget subscribes to the host and starts one timer.
 		expect(liveTimers).toBe(1);
 
 		fire("tool_result", writeToolResult(), ctx);
@@ -163,7 +163,7 @@ describe("boot smoke (loads the plugin, mounts a widget, disposes it)", () => {
 		fire("session_shutdown", { type: "session_shutdown" }, ctx);
 
 		expect(liveTimers).toBe(0);
-		expect(widgetCalls.slice(-2).every(call => call.content === undefined)).toBe(true);
+		expect(widgetCalls.slice(-1).every(call => call.content === undefined)).toBe(true);
 	});
 
 	it("no UI surface: the box never mounts, so nothing leaks", () => {

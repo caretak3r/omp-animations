@@ -1,15 +1,18 @@
 import { describe, expect, it } from "bun:test";
 import {
 	BASE_BREATH_PERIOD_MS,
+	BreathingBorderState,
+	borderGlossIntensity,
 	breathEnvelope,
 	breathPeriodMsForTurnDuration,
 	brightnessToken,
 	EXHALE_DURATION_MS,
 	exhaleEnvelope,
+	GLOSS_LAP_DURATION_MS,
+	glossLapProgress,
 	MAX_BREATH_PERIOD_MS,
 	MIN_BREATH_PERIOD_MS,
-} from "../src/breathing-border/breath";
-import { BreathingBorderState } from "../src/breathing-border/state";
+} from "../src/breathing-border";
 
 describe("breathing border pure math", () => {
 	it("breathEnvelope starts at 0, peaks mid-cycle, and returns to 0 at the boundary", () => {
@@ -60,6 +63,52 @@ describe("breathing border pure math", () => {
 		expect(breathPeriodMsForTurnDuration(1)).toBe(MIN_BREATH_PERIOD_MS);
 		expect(breathPeriodMsForTurnDuration(100_000)).toBe(MAX_BREATH_PERIOD_MS);
 	});
+
+	it("glossLapProgress starts at top-left, reaches each corner, and loops at one fixed lap", () => {
+		expect(glossLapProgress(0)).toBe(0);
+		expect(glossLapProgress(GLOSS_LAP_DURATION_MS / 4)).toBe(0.25);
+		expect(glossLapProgress(GLOSS_LAP_DURATION_MS / 2)).toBe(0.5);
+		expect(glossLapProgress((GLOSS_LAP_DURATION_MS * 3) / 4)).toBe(0.75);
+		expect(glossLapProgress(GLOSS_LAP_DURATION_MS)).toBe(0);
+		expect(glossLapProgress(GLOSS_LAP_DURATION_MS * 1.25)).toBe(0.25);
+	});
+
+	it("glossLapProgress keeps fixed speed when turn duration changes the breath cadence", () => {
+		expect(breathPeriodMsForTurnDuration(1)).not.toBe(breathPeriodMsForTurnDuration(100_000));
+		expect(glossLapProgress(GLOSS_LAP_DURATION_MS / 3)).toBeCloseTo(1 / 3, 12);
+	});
+
+	it("borderGlossIntensity keeps a bright head, a short wrapped trail, and a resting majority", () => {
+		const perimeterLength = 40;
+		const intensities = Array.from({ length: perimeterLength }, (_, cellIndex) =>
+			borderGlossIntensity(cellIndex, perimeterLength, 0, 0.8),
+		);
+
+		expect(intensities[0]).toBe(0.8);
+		expect(intensities[39]).toBeGreaterThan(0);
+		expect(intensities[39]).toBeLessThan(intensities[0]!);
+		expect(intensities[38]).toBeGreaterThan(0);
+		expect(intensities[1]).toBe(0);
+		expect(intensities.filter(intensity => intensity === 0).length).toBeGreaterThan(32);
+	});
+
+	it("borderGlossIntensity clamps strength and malformed numeric inputs to finite output", () => {
+		expect(borderGlossIntensity(0, 40, 0, 2)).toBe(1);
+		expect(borderGlossIntensity(0, 40, 0, -1)).toBe(0);
+
+		const malformed = [
+			borderGlossIntensity(Number.NaN, 40, 0, 1),
+			borderGlossIntensity(0, 0, 0, 1),
+			borderGlossIntensity(0, Number.POSITIVE_INFINITY, 0, 1),
+			borderGlossIntensity(0, 40, Number.NaN, 1),
+			borderGlossIntensity(0, 40, 0, Number.NaN),
+		];
+		for (const intensity of malformed) {
+			expect(Number.isFinite(intensity)).toBe(true);
+			expect(intensity).toBeGreaterThanOrEqual(0);
+			expect(intensity).toBeLessThanOrEqual(1);
+		}
+	});
 });
 
 describe("BreathingBorderState", () => {
@@ -69,6 +118,19 @@ describe("BreathingBorderState", () => {
 		state.applyAgentStart(1000);
 		expect(state.phase).toBe("active");
 		expect(state.breathElapsedMs(1500)).toBe(500);
+	});
+
+	it("agent_start begins a fixed-speed gloss lap at top-left regardless of breath cadence", () => {
+		const state = new BreathingBorderState();
+		state.applyAgentStart(1000);
+
+		expect(state.glossProgress(1000)).toBe(0);
+		expect(state.glossProgress(1000 + GLOSS_LAP_DURATION_MS / 4)).toBe(0.25);
+
+		state.applyTurnStart(1, 1000);
+		state.applyTurnEnd(1, 1001);
+		expect(state.breathPeriodMs()).toBe(MIN_BREATH_PERIOD_MS);
+		expect(state.glossProgress(1000 + GLOSS_LAP_DURATION_MS / 2)).toBe(0.5);
 	});
 
 	it("agent_end from idle is a no-op (nothing to wind down)", () => {
@@ -102,6 +164,41 @@ describe("BreathingBorderState", () => {
 		expect(state.breathElapsedMs(1300)).toBe(100);
 	});
 
+	it("agent_end freezes gloss progress through repeated ends and settled idle", () => {
+		const state = new BreathingBorderState();
+		state.applyAgentStart(0);
+		state.applyAgentEnd(GLOSS_LAP_DURATION_MS / 4);
+
+		expect(state.glossProgress(GLOSS_LAP_DURATION_MS / 2)).toBe(0.25);
+		state.applyAgentEnd(GLOSS_LAP_DURATION_MS / 2);
+		expect(state.glossProgress(GLOSS_LAP_DURATION_MS * 2)).toBe(0.25);
+
+		state.settleIfDone(GLOSS_LAP_DURATION_MS / 2 + EXHALE_DURATION_MS);
+		expect(state.phase).toBe("idle");
+		expect(state.glossProgress(Number.POSITIVE_INFINITY)).toBe(0.25);
+	});
+
+	it("agent_start interrupts exhale and restarts gloss at top-left", () => {
+		const state = new BreathingBorderState();
+		state.applyAgentStart(0);
+		state.applyAgentEnd(GLOSS_LAP_DURATION_MS / 4);
+		state.applyAgentStart(GLOSS_LAP_DURATION_MS / 2);
+
+		expect(state.glossProgress(GLOSS_LAP_DURATION_MS / 2)).toBe(0);
+		expect(state.glossProgress((GLOSS_LAP_DURATION_MS * 3) / 4)).toBe(0.25);
+	});
+
+	it("gloss progress is stable while idle and malformed or backward queries do not mutate it", () => {
+		const state = new BreathingBorderState();
+		expect(state.glossProgress(10_000)).toBe(0);
+		expect(state.glossProgress(Number.NaN)).toBe(0);
+
+		state.applyAgentStart(5000);
+		expect(state.glossProgress(1000)).toBe(0);
+		expect(state.glossProgress(Number.POSITIVE_INFINITY)).toBe(0);
+		expect(state.glossProgress(5000 + GLOSS_LAP_DURATION_MS / 4)).toBe(0.25);
+	});
+
 	it("turn_start/turn_end measure duration via the injected clock, not the raw event fields", () => {
 		const state = new BreathingBorderState();
 		expect(state.breathPeriodMs()).toBe(BASE_BREATH_PERIOD_MS);
@@ -130,6 +227,13 @@ describe("breathing border hardening: adversarial/non-finite inputs", () => {
 		expect(breathEnvelope(Number.NaN, BASE_BREATH_PERIOD_MS)).toBeNaN();
 		expect(breathEnvelope(100, Number.NaN)).toBeNaN();
 		expect(exhaleEnvelope(Number.NaN, EXHALE_DURATION_MS)).toBeNaN();
+	});
+
+	it("glossLapProgress holds at top-left for negative, backward, or non-finite elapsed time", () => {
+		expect(glossLapProgress(-1)).toBe(0);
+		expect(glossLapProgress(Number.NaN)).toBe(0);
+		expect(glossLapProgress(Number.POSITIVE_INFINITY)).toBe(0);
+		expect(glossLapProgress(Number.NEGATIVE_INFINITY)).toBe(0);
 	});
 
 	it("exhaleEnvelope clamps any non-positive elapsed (not just 0) to full brightness", () => {

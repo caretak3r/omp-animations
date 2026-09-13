@@ -1,4 +1,4 @@
-import type { ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { ThemeColor } from "../host/types";
 
 /**
  * Named color map for Palimpsest's three glow tiers, keyed by how hard a

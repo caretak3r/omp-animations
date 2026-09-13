@@ -1,15 +1,14 @@
 /**
  * Animations Box — the bordered widget itself.
  *
- * Each instance hosts required and optional sample groups. The Audit Box uses
- * both groups. The signal sidecar uses only the optional group. The border
+ * The single instance hosts required and optional sample groups. The border
  * costs 2 rows and 4 columns (`"│ "` + `" │"`). Each content line uses
- * `width - 4` columns and is padded or truncated to the target width.
+ * `width - 4` columns. The widget pads or truncates each line to this width.
  *
  * `simple` draws one composed row from active segments. `detailed` draws the
- * required rows, then one separator only when both groups have rows, then the
- * optional rows. An idle required segment still draws its dim resting line.
- * A sidecar with no meaningful optional rows returns zero rows.
+ * required rows and then the active optional rows. It draws one separator
+ * when both groups have rows. An idle required segment draws its dim resting
+ * line. An optional segment with no meaningful state uses no row.
  *
  * `status-line.ts` renders the plain spans that each segment source emits.
  * This widget applies dot tone, span tones, gradient percentages, and change
@@ -17,28 +16,27 @@
  * only composition input; this class contains no segment-specific business
  * logic.
  *
- * The border chrome itself breathes (Decision 2): every glyph of the top
- * row, bottom row, and side pipes is colored uniformly, per frame, via
- * `#resolveBorderColor` — the live envelope from `getBorderBrightness`
- * bucketed through `../breathing-border`'s `brightnessToken` classification
- * and this widget's accent-aware palette. `undefined` (motion tier `off`,
- * checked directly against this widget's own `policy`, or `breathingBorder`
- * disabled in config, reported by `getBorderBrightness` itself) falls back to
- * the plain, uncolored chrome.
+ * The border chrome layers one clockwise cell gloss over the uniform breathing
+ * envelope. Both inputs arrive in one `getBorderFrame` sample derived from the
+ * shared clock and Phase 4A state. `undefined` (motion tier `off`, checked
+ * directly against this widget's policy, or `breathingBorder` disabled in
+ * config) falls back to the plain, uncolored chrome.
  */
 
-import type { SymbolPreset, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
-import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
+import { sliceWithWidth, truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
 import type { AgentBonsaiSnapshot } from "../agent-bonsai";
-import { hyperlinksSupported, renderAgentBonsaiRows } from "../agent-bonsai";
+import { hyperlinksSupported, renderAgentBonsaiRows, sharedBonsaiModel } from "../agent-bonsai";
 import type { AccentColor } from "../appearance";
 import {
 	type BorderBrightnessToken,
 	type BreathingBorderColors,
+	type BreathingBorderPhase,
+	borderGlossIntensity,
 	breathingBorderColors,
 	brightnessToken,
 } from "../breathing-border";
-import type { AnimatedWidgetOptions, FrameScheduler, MotionPolicy } from "../kit";
+import type { SymbolPreset, ThemeColor } from "../host/types";
+import type { AnimatedWidgetOptions, AnimationHost, FrameScheduler, MotionPolicy } from "../kit";
 import { AnimatedWidget, composeSegments, segment as toKitSegment } from "../kit";
 import { resolveRenderTier, styledUnderlineProgram } from "../terminal-capabilities";
 import type { BoxTheme, SegmentSample } from "./segments";
@@ -61,8 +59,9 @@ function cell(text: string, width: number): string {
 }
 
 /** `color === undefined` is the plain, uncolored fallback — never wraps `theme.fg` at all. */
-function colorize(theme: BoxTheme, color: ThemeColor | undefined, text: string): string {
-	return color === undefined ? text : theme.fg(color, text);
+function borderText(theme: BoxTheme, color: ThemeColor | undefined, text: string, heavy: boolean): string {
+	const colored = color === undefined ? text : theme.fg(color, text);
+	return heavy && theme.bold !== undefined ? theme.bold(colored) : colored;
 }
 
 /** Resolve a raw {@link brightnessToken} classification through the configured palette. The palette slots come from `../breathing-border/colors.ts`; picking one per token is this widget's job, because it owns the chrome. */
@@ -72,27 +71,140 @@ function colorForToken(token: BorderBrightnessToken, colors: BreathingBorderColo
 	return colors.peak;
 }
 
-function borderTop(width: number, theme: BoxTheme, color: ThemeColor | undefined): string {
-	if (width <= 2) return colorize(theme, color, "─".repeat(Math.max(0, width)));
-	return colorize(theme, color, `╭${"─".repeat(width - 2)}╮`);
+export interface AnimationsBoxBorderFrame {
+	readonly phase: BreathingBorderPhase;
+	readonly brightness: number;
+	readonly glossProgress: number;
+	readonly glossStrength: number;
 }
 
-function borderBottom(width: number, theme: BoxTheme, color: ThemeColor | undefined): string {
-	if (width <= 2) return colorize(theme, color, "─".repeat(Math.max(0, width)));
-	return colorize(theme, color, `╰${"─".repeat(width - 2)}╯`);
+interface BorderPaint {
+	readonly frame: AnimationsBoxBorderFrame;
+	readonly perimeterLength: number;
+	readonly baseToken: BorderBrightnessToken;
+	readonly heavy: boolean;
+	readonly colors: BreathingBorderColors;
+	readonly theme: BoxTheme;
 }
 
-/** Wrap one content line in the box's side borders, padded to exactly `width`. Only the pipes take the border color — the inner content is colored (or not) by whatever built `text`. */
+function hasSpatialGloss(paint: BorderPaint | undefined): paint is BorderPaint {
+	return paint !== undefined && paint.frame.glossStrength > 0;
+}
+
+function uniformBorderText(text: string, paint: BorderPaint | undefined): string {
+	if (paint === undefined) return text;
+	return borderText(paint.theme, colorForToken(paint.baseToken, paint.colors), text, paint.heavy);
+}
+
+function borderCell(text: string, perimeterIndex: number, paint: BorderPaint | undefined): string {
+	if (paint === undefined) return text;
+	const progress = Number.isFinite(paint.frame.glossProgress)
+		? paint.frame.glossProgress - Math.floor(paint.frame.glossProgress)
+		: 0;
+	const headIndex = Math.floor(progress * paint.perimeterLength);
+	const trail = borderGlossIntensity(
+		perimeterIndex,
+		paint.perimeterLength,
+		paint.frame.glossProgress,
+		paint.frame.glossStrength,
+	);
+	const glossAlpha = perimeterIndex === headIndex ? paint.frame.glossStrength : trail;
+	const brightness = paint.frame.brightness + (1 - paint.frame.brightness) * glossAlpha;
+	let token = brightnessToken(brightness);
+	if (perimeterIndex !== headIndex && token === "borderAccent") token = "border";
+	return borderText(paint.theme, colorForToken(token, paint.colors), text, paint.heavy);
+}
+
+function diffractionCells(token: string): readonly string[] {
+	const cells: string[] = [];
+	const width = visibleWidth(token);
+	for (let column = 0; column < width; column++) {
+		cells.push(sliceWithWidth(token, column, 1, true).text);
+	}
+	return cells;
+}
+
+function borderTop(
+	width: number,
+	diffraction: string | undefined,
+	heavy: boolean,
+	paint: BorderPaint | undefined,
+): string {
+	const horizontal = heavy ? "━" : "─";
+	if (width <= 2) {
+		if (!hasSpatialGloss(paint)) return uniformBorderText(horizontal.repeat(Math.max(0, width)), paint);
+		let row = "";
+		for (let column = 0; column < Math.max(0, width); column++) {
+			row += borderCell(horizontal, column, paint);
+		}
+		return row;
+	}
+	const inner = width - 2;
+	const token = diffraction === undefined ? "" : truncateToWidth(diffraction, inner);
+	const tokenWidth = visibleWidth(token);
+	const leftCorner = heavy ? "┏" : "┌";
+	const rightCorner = heavy ? "┓" : "┐";
+	const left = Math.floor((inner - tokenWidth) / 2);
+	const right = inner - tokenWidth - left;
+	if (!hasSpatialGloss(paint)) {
+		return uniformBorderText(
+			`${leftCorner}${horizontal.repeat(left)}${token}${horizontal.repeat(right)}${rightCorner}`,
+			paint,
+		);
+	}
+	let row = borderCell(leftCorner, 0, paint);
+	let column = 1;
+	for (let count = 0; count < left; count++, column++) row += borderCell(horizontal, column, paint);
+	for (const tokenCell of diffractionCells(token)) {
+		row += borderCell(tokenCell, column, paint);
+		column++;
+	}
+	for (let count = 0; count < right; count++, column++) row += borderCell(horizontal, column, paint);
+	return row + borderCell(rightCorner, width - 1, paint);
+}
+
+function borderBottom(width: number, contentRows: number, heavy: boolean, paint: BorderPaint | undefined): string {
+	const horizontal = heavy ? "━" : "─";
+	const firstIndex = paint === undefined ? 0 : width + (width >= BORDER_COLS ? contentRows : 0);
+	if (width <= 2) {
+		if (!hasSpatialGloss(paint)) return uniformBorderText(horizontal.repeat(Math.max(0, width)), paint);
+		let row = "";
+		for (let column = 0; column < Math.max(0, width); column++) {
+			row += borderCell(horizontal, firstIndex + width - 1 - column, paint);
+		}
+		return row;
+	}
+	const leftCorner = heavy ? "┗" : "└";
+	const rightCorner = heavy ? "┛" : "┘";
+	if (!hasSpatialGloss(paint)) {
+		return uniformBorderText(`${leftCorner}${horizontal.repeat(width - 2)}${rightCorner}`, paint);
+	}
+	let row = borderCell(leftCorner, firstIndex + width - 1, paint);
+	for (let column = 1; column < width - 1; column++) {
+		row += borderCell(horizontal, firstIndex + width - 1 - column, paint);
+	}
+	return row + borderCell(rightCorner, firstIndex, paint);
+}
+
+/** Wrap one content line in the box's side borders, padded to exactly `width`. Only the pipes take the border treatment — the inner content is colored (or not) by whatever built `text`. */
 function contentLine(
 	text: string,
 	inner: number,
 	width: number,
-	theme: BoxTheme,
-	color: ThemeColor | undefined,
+	rowIndex: number,
+	contentRows: number,
+	paint: BorderPaint | undefined,
 ): string {
 	if (width < BORDER_COLS) return cell(text, width);
-	const pipe = colorize(theme, color, "│");
-	return `${pipe} ${cell(text, inner)} ${pipe}`;
+	const heavy = paint?.heavy ?? false;
+	const pipe = heavy ? "┃" : "│";
+	if (!hasSpatialGloss(paint)) {
+		const styledPipe = uniformBorderText(pipe, paint);
+		return `${styledPipe} ${cell(text, inner)} ${styledPipe}`;
+	}
+	const leftIndex = width + contentRows + width + (contentRows - 1 - rowIndex);
+	const rightIndex = width + rowIndex;
+	return `${borderCell(pipe, leftIndex, paint)} ${cell(text, inner)} ${borderCell(pipe, rightIndex, paint)}`;
 }
 
 /** Composition groups the box controller builds each frame. The widget alone decides how those groups are separated on screen. */
@@ -113,14 +225,15 @@ export interface AnimationsBoxWidgetOptions extends AnimatedWidgetOptions {
 	/** Live detail level. Re-read every call — the controller updates its backing value on settings changes, not just at construction. */
 	getDetail: () => BoxDetail;
 	/**
-	 * Live border brightness for this frame (Decision 2): the breathing
-	 * border's `0..1` envelope, re-read every call same as `getDetail`.
-	 * `undefined` means `breathingBorder` is disabled in config — this
-	 * widget's cue to fall back to the plain, uncolored chrome. Motion tier
-	 * `off` is a separate, harder override this widget checks itself against
-	 * its own `policy`, so the seam never needs to encode that case.
+	 * One live border sample for this frame, re-read every call from the shared
+	 * clock. `undefined` means `breathingBorder` is disabled in config. Motion
+	 * tier `off` is a harder override checked against this widget's own policy.
 	 */
-	getBorderBrightness: (nowMs: number) => number | undefined;
+	getBorderFrame: (nowMs: number) => AnimationsBoxBorderFrame | undefined;
+	/** A finite fixed-width diffraction token for simultaneous facts in this frame. */
+	getCollisionDiffraction?: (nowMs: number, width: number) => string | undefined;
+	/** Whether any credential alert exists; escalates the border peak token to error. */
+	getBorderAlert?: () => boolean;
 	/** Accent override for the border's peak brightness — the existing `breathingBorderAccentColor` setting; `undefined` keeps the palette `../breathing-border/colors.ts` ships. */
 	accentColor?: AccentColor;
 	/** Host glyph preset for the semantic status dots (detailed mode). Mirrors the controller's mount-captured preset; defaults to `unicode`. */
@@ -146,7 +259,10 @@ export class AnimationsBoxWidget extends AnimatedWidget {
 	#buildSampleGroups: (nowMs: number) => AnimationsBoxSampleGroups;
 	#getDetail: () => BoxDetail;
 	#policy: MotionPolicy;
-	#getBorderBrightness: (nowMs: number) => number | undefined;
+	#motionHost: AnimationHost;
+	#getBorderFrame: (nowMs: number) => AnimationsBoxBorderFrame | undefined;
+	#getCollisionDiffraction: (nowMs: number, width: number) => string | undefined;
+	#getBorderAlert: () => boolean;
 	#colors: BreathingBorderColors;
 	#preset: SymbolPreset;
 	#flash = new FlashTracker();
@@ -163,7 +279,10 @@ export class AnimationsBoxWidget extends AnimatedWidget {
 		this.#buildSampleGroups = options.buildSampleGroups;
 		this.#getDetail = options.getDetail;
 		this.#policy = options.policy;
-		this.#getBorderBrightness = options.getBorderBrightness;
+		this.#motionHost = options.host;
+		this.#getBorderFrame = options.getBorderFrame;
+		this.#getCollisionDiffraction = options.getCollisionDiffraction ?? (() => undefined);
+		this.#getBorderAlert = options.getBorderAlert ?? (() => false);
 		this.#colors = breathingBorderColors(options.accentColor);
 		this.#preset = options.preset ?? "unicode";
 		this.#getAgentBonsai = options.getAgentBonsai ?? (() => ({ nodes: [], hiddenCount: 0, visible: false }));
@@ -182,12 +301,11 @@ export class AnimationsBoxWidget extends AnimatedWidget {
 		if (groups.required.length === 0 && groups.optional.length === 0) return [];
 		const inner = Math.max(0, width - BORDER_COLS);
 		const theme = this.#theme;
-		const borderColor = this.#resolveBorderColor(now);
-
-		// Reduced-motion forces off-tier flash regardless of setting (D6/jj7.7);
-		// otherwise the flash rides the motion tier itself.
-		const flashTier: FlashTier = this.#policy.reducedMotion ? "off" : this.#policy.tier;
-		const bonsaiRows = renderAgentBonsaiRows(this.#getAgentBonsai(), inner, {
+		const borderFrame = this.#resolveBorderFrame(now);
+		// Optional emphasis follows the governor without changing semantic status.
+		const flashTier: FlashTier = this.#policy.reducedMotion ? "off" : this.#motionHost.effectiveTier;
+		const bonsaiSnapshot = this.#getAgentBonsai();
+		const bonsaiRows = renderAgentBonsaiRows(bonsaiSnapshot, inner, {
 			theme,
 			glyphPreset: this.#preset,
 			now,
@@ -196,40 +314,37 @@ export class AnimationsBoxWidget extends AnimatedWidget {
 			seenIds: this.#bonsaiSeen,
 			hyperlinks: this.#hyperlinks,
 		});
+		// Every visible agent on one model: state it once here rather than on
+		// each row, where it would repeat without distinguishing anything.
+		const sharedModel = sharedBonsaiModel(bonsaiSnapshot.nodes);
+		const bonsaiHeader = sharedModel === undefined ? "agents" : `agents · ${sharedModel}`;
 
 		if (this.#getDetail() === "detailed") {
-			const rows: string[] = [borderTop(width, theme, borderColor)];
+			const contentRows: string[] = [];
 			const appendSample = (sample: SegmentSample): void => {
-				rows.push(
-					contentLine(
-						renderStatusLine(sample.line, inner, {
-							theme,
-							preset: this.#preset,
-							colorMode: RENDER_TIER.colorMode,
-							program: TERMINAL_PROGRAM,
-							segmentId: sample.id,
-							now,
-							flashTier,
-							flash: this.#flash,
-						}),
-						inner,
-						width,
+				contentRows.push(
+					renderStatusLine(sample.line, inner, {
 						theme,
-						borderColor,
-					),
+						preset: this.#preset,
+						colorMode: RENDER_TIER.colorMode,
+						program: TERMINAL_PROGRAM,
+						segmentId: sample.id,
+						now,
+						flashTier,
+						flash: this.#flash,
+					}),
 				);
 			};
 			for (const sample of groups.required) appendSample(sample);
 			if (groups.required.length > 0 && (groups.optional.length > 0 || bonsaiRows.length > 0)) {
-				rows.push(contentLine("", inner, width, theme, borderColor));
+				contentRows.push("");
 			}
 			for (const sample of groups.optional) appendSample(sample);
 			if (bonsaiRows.length > 0) {
-				rows.push(contentLine(theme.fg("dim", "agents"), inner, width, theme, borderColor));
-				for (const row of bonsaiRows) rows.push(contentLine(row, inner, width, theme, borderColor));
+				contentRows.push(theme.fg("dim", bonsaiHeader));
+				for (const row of bonsaiRows) contentRows.push(row);
 			}
-			rows.push(borderBottom(width, theme, borderColor));
-			return rows;
+			return this.#renderBox(contentRows, width, now, borderFrame);
 		}
 
 		// Simple mode keeps its composed status row, then appends Agent Bonsai as
@@ -242,31 +357,68 @@ export class AnimationsBoxWidget extends AnimatedWidget {
 			if (sample.active) activeSegments.push(toKitSegment(sample.id, sample.priority, sample.variants));
 		}
 		const { row } = composeSegments(activeSegments, inner);
-		const rows = [borderTop(width, theme, borderColor), contentLine(row, inner, width, theme, borderColor)];
+		const contentRows = [row];
 		if (bonsaiRows.length > 0) {
-			rows.push(contentLine("", inner, width, theme, borderColor));
-			rows.push(contentLine(theme.fg("dim", "agents"), inner, width, theme, borderColor));
+			contentRows.push("");
+			contentRows.push(theme.fg("dim", bonsaiHeader));
 			for (const bonsaiRow of bonsaiRows) {
-				rows.push(contentLine(bonsaiRow, inner, width, theme, borderColor));
+				contentRows.push(bonsaiRow);
 			}
 		}
-		rows.push(borderBottom(width, theme, borderColor));
+		return this.#renderBox(contentRows, width, now, borderFrame);
+	}
+
+	#renderBox(
+		contentRows: readonly string[],
+		width: number,
+		now: number,
+		frame: AnimationsBoxBorderFrame | undefined,
+	): readonly string[] {
+		const perimeterLength = 2 * width + (width >= BORDER_COLS ? 2 * contentRows.length : 0);
+		const baseToken = frame === undefined ? undefined : brightnessToken(frame.brightness);
+		const colors = this.#getBorderAlert() ? { ...this.#colors, peak: "error" as ThemeColor } : this.#colors;
+		const paint: BorderPaint | undefined =
+			frame === undefined || baseToken === undefined
+				? undefined
+				: {
+						frame,
+						perimeterLength,
+						baseToken,
+						heavy: baseToken === "borderAccent",
+						colors,
+						theme: this.#theme,
+					};
+		const heavy = paint?.heavy ?? false;
+		const rows = [borderTop(width, this.#getCollisionDiffraction(now, width), heavy, paint)];
+		for (let rowIndex = 0; rowIndex < contentRows.length; rowIndex++) {
+			rows.push(
+				contentLine(
+					contentRows[rowIndex] ?? "",
+					Math.max(0, width - BORDER_COLS),
+					width,
+					rowIndex,
+					contentRows.length,
+					paint,
+				),
+			);
+		}
+		rows.push(borderBottom(width, contentRows.length, heavy, paint));
 		return rows;
 	}
 
-	/**
-	 * Border color for this frame. `undefined` — the plain, uncolored chrome —
-	 * when the motion tier is `off`, a hard override applied before anything
-	 * else, or when `getBorderBrightness` reports `breathingBorder` is
-	 * disabled. Otherwise the live envelope buckets through
-	 * `../breathing-border`'s `brightnessToken` classification, resolved
-	 * through this widget's own accent-aware palette.
-	 */
-	#resolveBorderColor(now: number): ThemeColor | undefined {
+	/** Border state for this frame. `undefined` means plain, static chrome. */
+	#resolveBorderFrame(now: number): AnimationsBoxBorderFrame | undefined {
 		if (this.#policy.tier === "off") return undefined;
-		const brightness = this.#getBorderBrightness(now);
-		if (brightness === undefined) return undefined;
-		return colorForToken(brightnessToken(brightness), this.#colors);
+		const frame = this.#getBorderFrame(now);
+		if (frame === undefined || (!this.#policy.reducedMotion && this.#motionHost.effectiveTier !== "off")) {
+			return frame;
+		}
+		return {
+			...frame,
+			brightness: frame.phase === "idle" ? 0 : 0.3,
+			glossProgress: 0,
+			glossStrength: 0,
+		};
 	}
 }
 

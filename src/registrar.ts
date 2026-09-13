@@ -1,17 +1,15 @@
 /**
  * @oh-my-pi/animations — the single config-driven plugin entry.
  *
- * The manifest declares this one extension. It wires one headless Audit Trail
- * service, one shared controller, and one optional Agent Bonsai observer. The
- * controller registers the Audit Box and signal sidecar on one host. No
+ * The manifest declares this extension. It wires one headless Audit Trail
+ * service, one shared controller, and one optional Agent Bonsai observer.
+ * The controller registers one complete Animations Box on one host. No
  * standalone animation owns a scheduler or subscription.
  *
- * Settings resolve SYNCHRONOUSLY at wire time, before any event fires. Precedence: an
- * injected `settings` record (the host's or a test's resolved plugin settings) > the
- * stored plugin settings (`readPluginSettingsSync`, a synchronous mirror of the runtime
- * store) > the manifest `env` fallbacks > defaults (tier `full`). Two axes remain: the
- * shared `animations` motion tier (`off` · `subtle` · `full`), the Audit Box
- * settings, and the independently optional signal extras.
+ * Settings resolve synchronously before an event occurs. The precedence is:
+ * injected settings, stored plugin settings, manifest environment fallbacks,
+ * and defaults. The settings have three groups: the shared motion tier, the
+ * Animations Box settings, and the optional signal settings.
  *
  * The removed `display` setting (`rows` · `box` · `both`) is still read, for one purpose:
  * a stale `rows`/`both` logs a migration warning and gets the box anyway
@@ -22,15 +20,13 @@
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import type {
-	ExtensionCommandContext,
-	ExtensionContext,
-	ExtensionFactory,
-	WidgetPlacement,
-} from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
-import type { SymbolPreset } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import { CONFIG_DIR_NAME, getPluginsLockfile } from "@oh-my-pi/pi-utils";
-import { type ActivityProbe, type ActivityTelemetryBus, globalActivityTelemetryBus } from "./activity-roster/bus";
+import {
+	type ActivityProbe,
+	type ActivitySessionResources,
+	type ActivityTelemetryBus,
+	globalActivityTelemetryBus,
+} from "./activity-roster/bus";
 import { type ActivityRosterSettings, resolveActivityRosterSettings } from "./activity-roster/settings";
 import { AgentBonsaiController } from "./agent-bonsai";
 import { type AnimationsBoxContext, AnimationsBoxController } from "./animations-box/controller";
@@ -42,6 +38,14 @@ import {
 import { type AccentColor, type AnimationAppearance, resolveAnimationAppearance } from "./appearance";
 import { AuditLedgerState, createAuditTrailBoxExtension } from "./audit-trail-box";
 import { cacheMeterColors, renderCacheMeterPanel } from "./cache-meter";
+import type {
+	ExtensionCommandContext,
+	ExtensionContext,
+	ExtensionFactory,
+	SessionEntry,
+	SymbolPreset,
+	WidgetPlacement,
+} from "./host/types";
 import type { MotionSetting } from "./kit";
 import {
 	estimateContentTokens,
@@ -50,6 +54,12 @@ import {
 	type SignalExtrasConfig,
 } from "./signal-extras";
 
+declare module "@oh-my-pi/pi-coding-agent/extensibility/extensions" {
+	interface ExtensionContext {
+		readonly sessionResources: ActivitySessionResources;
+	}
+}
+
 /** npm package name — the key the runtime plugin settings store files settings under. */
 export const PLUGIN_NAME = "@oh-my-pi/animations";
 
@@ -57,6 +67,10 @@ export const PLUGIN_NAME = "@oh-my-pi/animations";
 export const CACHE_METER_COMMAND = "cache";
 
 const MOTION_VALUES: readonly MotionSetting[] = ["off", "subtle", "full"];
+const EMPTY_SESSION_RESOURCES: ActivitySessionResources = Object.freeze({
+	skills: Object.freeze([]),
+	contextFiles: Object.freeze([]),
+});
 // The manifest (package.json#omp.settings.animations.default) ships "subtle" as the
 // curated native default; this code fallback stays "full" deliberately — it is the
 // value used only when a key is entirely absent from both stored settings and env
@@ -74,20 +88,18 @@ export interface AnimationEntry {
 }
 
 /**
- * The appearance table for the curated Audit Box animations. Agent Bonsai
- * and Live Files have their own visibility settings. Tool Activity and the
- * signal sidecar do not expose legacy placement or accent settings.
+ * The appearance table for the curated Animations Box animations. Agent Bonsai
+ * and Live Files have separate visibility settings. Tool Activity and the
+ * signal extras do not expose legacy placement or accent settings.
  *
- * Each entry resolves an `<id>Placement`/`<id>AccentColor` pair. None mounts
- * a widget. The shared box controller owns both widget registrations.
+ * Each entry resolves an `<id>Placement` and `<id>AccentColor` pair. No entry
+ * mounts a widget. The shared box controller owns one widget registration.
  */
 export const ANIMATIONS: readonly AnimationEntry[] = [
 	{ id: "auditTrailBox", title: "Audit Trail Box", defaultPlacement: "belowEditor" },
 	{ id: "breathingBorder", title: "Breathing Border", defaultPlacement: "aboveEditor" },
 	{ id: "cacheMeter", title: "Cache Meter", defaultPlacement: "aboveEditor" },
-	{ id: "cadenceEqualizer", title: "Cadence Equalizer", defaultPlacement: "belowEditor" },
 	{ id: "rateLimitTidepool", title: "Rate-Limit Tidepool", defaultPlacement: "belowEditor" },
-	{ id: "reflectionRipple", title: "Reflection Ripple", defaultPlacement: "aboveEditor" },
 ];
 
 /** Fully-resolved registrar configuration. */
@@ -204,6 +216,8 @@ export interface AnimationsPluginOptions {
 	glyphPreset?: SymbolPreset;
 	/** Shared plugin-local telemetry bus. Injectable for integration tests; production uses the process-global bus. */
 	activityBus?: ActivityTelemetryBus;
+	/** Clock shared with an injected activity bus scheduler. Defaults to Date.now. */
+	now?: () => number;
 }
 
 /**
@@ -226,9 +240,6 @@ export function createAnimationsPlugin(options: AnimationsPluginOptions = {}): E
 		const auditTrailState = new AuditLedgerState();
 		let boxController: AnimationsBoxController | undefined;
 		const requestBoxRender = (): void => boxController?.requestRender();
-		const agentBonsai = boxConfig.optional.agentBonsai
-			? new AgentBonsaiController({ onChange: requestBoxRender, cwd: options.cwd })
-			: undefined;
 		createAuditTrailBoxExtension({
 			accentColor: config.appearance.auditTrailBox.accentColor,
 			state: auditTrailState,
@@ -240,9 +251,10 @@ export function createAnimationsPlugin(options: AnimationsPluginOptions = {}): E
 			extrasConfig,
 			config,
 			auditTrailState,
-			agentBonsai,
+			options.cwd,
 			activityBus,
 			activitySettings,
+			options.now,
 		);
 		registerCacheCommand(api, boxController, config.appearance.cacheMeter.accentColor);
 		api.setLabel("oh-my-pi animations");
@@ -274,19 +286,37 @@ function registerCacheCommand(
 	});
 }
 
+/**
+ * Plugin-side mirror of the host's `entryUsage` (session-manager.ts): the two
+ * entry classes whose cost `getUsageStatistics()` sums. Both sides of the
+ * off-path subtraction must move together if the host adds a third class.
+ */
+function entryCostUsd(entry: SessionEntry): number {
+	if (entry.type !== "message") return 0;
+	const message = entry.message;
+	let cost: unknown;
+	if (message.role === "assistant") cost = message.usage?.cost.total;
+	else if (message.role === "toolResult" && message.toolName === "task") {
+		const details: unknown = message.details;
+		const usage: unknown =
+			details !== null && typeof details === "object" ? Reflect.get(details, "usage") : undefined;
+		const costs: unknown = usage !== null && typeof usage === "object" ? Reflect.get(usage, "cost") : undefined;
+		cost = costs !== null && typeof costs === "object" ? Reflect.get(costs, "total") : undefined;
+	}
+	return typeof cost === "number" && Number.isFinite(cost) ? cost : 0;
+}
+
 function readSessionTopology(ctx: ExtensionContext): PhylogenySignal {
 	const roots = ctx.sessionManager.getTree();
 	const leafId = ctx.sessionManager.getLeafId();
 	const branch = ctx.sessionManager.getBranch();
 	let siblings = 0;
-	let node = leafId?.slice(0, 8) ?? "root";
 	if (leafId !== undefined) {
 		type TreeNode = (typeof roots)[number];
 		const findLeaf = (nodes: readonly TreeNode[]): boolean => {
 			for (const candidate of nodes) {
 				if (candidate.entry.id === leafId) {
 					siblings = Math.max(0, nodes.length - 1);
-					node = candidate.label ?? node;
 					return true;
 				}
 				if (findLeaf(candidate.children)) return true;
@@ -295,7 +325,17 @@ function readSessionTopology(ctx: ExtensionContext): PhylogenySignal {
 		};
 		findLeaf(roots);
 	}
-	return { depth: branch.length, siblings, node };
+
+	let offPathCostUsd: number | undefined;
+	try {
+		const treeCost = ctx.sessionManager.getUsageStatistics().cost;
+		let branchCost = 0;
+		for (const entry of branch) branchCost += entryCostUsd(entry);
+		if (Number.isFinite(treeCost)) offPathCostUsd = Math.max(0, treeCost - branchCost);
+	} catch {
+		// The host may throw before the session index exists; the span simply stays absent.
+	}
+	return { depth: branch.length, siblings, ...(offPathCostUsd !== undefined ? { offPathCostUsd } : {}) };
 }
 
 /** Adapt the host's `ExtensionContext` to the box controller's own narrower context. */
@@ -325,19 +365,13 @@ function toAnimationsBoxContext(ctx: ExtensionContext): AnimationsBoxContext {
 			return tokens;
 		},
 		getSessionTopology: () => readSessionTopology(ctx),
-		hasPendingMessages: () => ctx.hasPendingMessages(),
-		getMemoryStatus: async () => {
-			const memory = ctx.memory;
-			if (memory === undefined) return undefined;
-			const status = await memory.status();
-			const backend = "connected" in status ? "mnemopi" : "indexed" in status ? "hindsight" : "memory";
-			const active = status.active;
-			return {
-				backend,
-				active,
-				workingCount: "workingCount" in status ? status.workingCount : undefined,
-				lastRecall: status.lastRecall !== undefined,
-			};
+		getMemoryStatus: async () => ctx.memory?.status(),
+		getAsyncJobSnapshot: () => {
+			try {
+				return ctx.getAsyncJobSnapshot();
+			} catch {
+				return null;
+			}
 		},
 		setWidget,
 		...(ctx.hasUI && typeof ctx.ui.setTitle === "function"
@@ -353,6 +387,72 @@ function toAnimationsBoxContext(ctx: ExtensionContext): AnimationsBoxContext {
  * `ExtensionContext` structurally to whichever `Pick<AnimationsBoxContext, ...>` that
  * controller method needs, with no per-event adapter (the two share field names).
  */
+/** The order inside each handler is load-bearing: probe before bonsai before controller — the roster/bonsai state a frame reads must be written before the controller schedules that frame. Asserted by the fan-out characterization test. */
+export interface FanoutSinks {
+	ensureActivity(ctx: ExtensionContext): void;
+	completeActivity(): void;
+	probe(): ActivityProbe | undefined;
+	bonsai(): AgentBonsaiController | undefined;
+	controller: Pick<
+		AnimationsBoxController,
+		| "onToolExecutionStart"
+		| "onToolExecutionUpdate"
+		| "onToolExecutionEnd"
+		| "onTurnStart"
+		| "onTurnEnd"
+		| "onAgentStart"
+		| "onAgentEnd"
+	>;
+}
+
+export function wireEventFanout(api: ExtensionAPI, sinks: FanoutSinks): void {
+	api.on("tool_execution_start", (event, ctx) => {
+		sinks.ensureActivity(ctx);
+		sinks.probe()?.startTool({
+			toolCallId: event.toolCallId,
+			toolName: event.toolName,
+			args: event.args,
+		});
+		sinks.controller.onToolExecutionStart(event, ctx);
+	});
+	api.on("tool_execution_update", (event, ctx) => {
+		sinks.ensureActivity(ctx);
+		sinks.probe()?.updateTool({
+			toolCallId: event.toolCallId,
+			toolName: event.toolName,
+			args: event.args,
+		});
+		sinks.bonsai()?.onToolExecutionUpdate(event);
+		sinks.controller.onToolExecutionUpdate(event, ctx);
+	});
+	api.on("tool_execution_end", (event, ctx) => {
+		sinks.ensureActivity(ctx);
+		sinks.probe()?.endTool({
+			toolCallId: event.toolCallId,
+			toolName: event.toolName,
+			isError: event.isError,
+		});
+		sinks.bonsai()?.onToolExecutionEnd(event);
+		sinks.controller.onToolExecutionEnd(event, ctx);
+	});
+	api.on("turn_start", (event, ctx) => {
+		sinks.bonsai()?.noteMainModel(ctx.model?.id);
+		sinks.controller.onTurnStart(event, ctx);
+	});
+	api.on("turn_end", (event, ctx) => sinks.controller.onTurnEnd(event, ctx));
+	api.on("agent_start", (event, ctx) => {
+		sinks.ensureActivity(ctx);
+		sinks.bonsai()?.onAgentStart();
+		if (ctx.hasUI) sinks.probe()?.beginRequest();
+		sinks.controller.onAgentStart(event, ctx);
+	});
+	api.on("agent_end", (event, ctx) => {
+		if (!ctx.hasUI && event.willContinue !== true) sinks.completeActivity();
+		sinks.bonsai()?.onAgentEnd(event.willContinue === true);
+		sinks.controller.onAgentEnd(event, ctx);
+	});
+}
+
 interface ActivitySessionManager {
 	getSessionId?(): string;
 	getArtifactsDir?(): string | null;
@@ -365,10 +465,21 @@ function mountAnimationsBox(
 	extrasConfig: SignalExtrasConfig,
 	config: AnimationsConfig,
 	auditTrailState: AuditLedgerState,
-	agentBonsai: AgentBonsaiController | undefined,
+	cwd: string | undefined,
 	activityBus: ActivityTelemetryBus,
 	activitySettings: ActivityRosterSettings,
+	now: (() => number) | undefined,
 ): AnimationsBoxController {
+	let activityProbe: ActivityProbe | undefined;
+	const agentBonsai = boxConfig.optional.agentBonsai
+		? new AgentBonsaiController({
+				cwd,
+				now,
+				settleSeconds: activitySettings.retentionMs / 1_000,
+				onChange: () => controller.requestRender(),
+				onAgentOutcome: (id, outcome, completedAt) => activityProbe?.noteAgentOutcome(id, outcome, completedAt),
+			})
+		: undefined;
 	const controller = new AnimationsBoxController({
 		placement: boxConfig.placement,
 		motionSetting: config.tier,
@@ -382,7 +493,6 @@ function mountAnimationsBox(
 		// `toAnimationsBoxContext` reads the live `ctx.ui.theme.getSymbolPreset()` fresh on
 		// `session_start`, and `AnimationsBoxController.mount` captures it once from there.
 	});
-	let activityProbe: ActivityProbe | undefined;
 	let activityCompleted = false;
 	const bindActivity = (ctx: ExtensionContext): void => {
 		if (activityProbe !== undefined) {
@@ -399,6 +509,7 @@ function mountAnimationsBox(
 			sessionId,
 			hasUI: ctx.hasUI,
 			cwd: ctx.cwd,
+			sessionResources: ctx.sessionResources ?? EMPTY_SESSION_RESOURCES,
 			artifactsDir: sessionManager.getArtifactsDir?.() ?? undefined,
 			sessionFile: sessionManager.getSessionFile?.() ?? undefined,
 			model: ctx.model?.id,
@@ -407,6 +518,9 @@ function mountAnimationsBox(
 		});
 		activityCompleted = false;
 		controller.attachActivityProbe(ctx.hasUI ? activityProbe : undefined);
+	};
+	const ensureActivity = (ctx: ExtensionContext): void => {
+		if (activityProbe === undefined) bindActivity(ctx);
 	};
 	const completeActivity = (): void => {
 		if (activityCompleted) return;
@@ -421,50 +535,17 @@ function mountAnimationsBox(
 		controller.mount(toAnimationsBoxContext(ctx));
 	});
 	api.on("message_start", (event, ctx) => controller.onMessageStart(event, ctx));
-	api.on("message_update", (event, ctx) => controller.onMessageUpdate(event, ctx));
 	api.on("message_end", (event, ctx) => controller.onMessageEnd(event, ctx));
 	api.on("after_provider_response", (event, ctx) => controller.onAfterProviderResponse(event, ctx));
 	api.on("context", (event, ctx) => controller.onContext(event, toAnimationsBoxContext(ctx)));
 	api.on("tool_call", (event, ctx) => controller.onToolCall(event, ctx));
 	api.on("tool_result", (event, ctx) => controller.onToolResult(event, ctx));
-	api.on("tool_execution_start", (event, _ctx) => {
-		activityProbe?.startTool({
-			toolCallId: event.toolCallId,
-			toolName: event.toolName,
-			args: event.args,
-		});
-	});
-	api.on("tool_execution_update", (event, ctx) => {
-		activityProbe?.updateTool({
-			toolCallId: event.toolCallId,
-			toolName: event.toolName,
-			args: event.args,
-		});
-		agentBonsai?.onToolExecutionUpdate(event);
-		controller.onToolExecutionUpdate(event, ctx);
-	});
-	api.on("tool_execution_end", (event, ctx) => {
-		activityProbe?.endTool({
-			toolCallId: event.toolCallId,
-			toolName: event.toolName,
-			isError: event.isError,
-		});
-		agentBonsai?.onToolExecutionEnd(event);
-		controller.onToolExecutionEnd(event, ctx);
-	});
-	api.on("turn_start", (event, ctx) => {
-		agentBonsai?.noteMainModel(ctx.model?.id);
-		controller.onTurnStart(event, ctx);
-	});
-	api.on("turn_end", (event, ctx) => controller.onTurnEnd(event, ctx));
-	api.on("agent_start", (event, ctx) => {
-		agentBonsai?.onAgentStart();
-		controller.onAgentStart(event, ctx);
-	});
-	api.on("agent_end", (event, ctx) => {
-		if (!ctx.hasUI && event.willContinue !== true) completeActivity();
-		agentBonsai?.onAgentEnd(event.willContinue === true);
-		controller.onAgentEnd(event, ctx);
+	wireEventFanout(api, {
+		ensureActivity,
+		completeActivity,
+		probe: () => activityProbe,
+		bonsai: () => agentBonsai,
+		controller,
 	});
 	api.on("session_before_compact", (event, ctx) =>
 		controller.onSessionBeforeCompact(event, toAnimationsBoxContext(ctx)),
@@ -478,10 +559,10 @@ function mountAnimationsBox(
 	api.on("session_tree", (event, ctx) => controller.onSessionTopology(event, toAnimationsBoxContext(ctx)));
 	api.on("auto_retry_start", (event, ctx) => controller.onAutoRetryStart(event, ctx));
 	api.on("auto_retry_end", (event, ctx) => controller.onAutoRetryEnd(event, ctx));
-	api.on("retry_fallback_applied", (event, ctx) => controller.onRetryFallback(event, ctx));
-	api.on("retry_fallback_succeeded", (event, ctx) => controller.onRetryFallback(event, ctx));
+	api.on("retry_fallback_applied", (event, ctx) => controller.onRetryFallbackApplied(event, ctx));
+	api.on("retry_fallback_succeeded", (event, ctx) => controller.onRetryFallbackSucceeded(event, ctx));
+	api.on("credential_disabled", (event, ctx) => controller.onCredentialDisabled(event, ctx));
 	api.on("goal_updated", (event, ctx) => controller.onGoalUpdated(event, ctx));
-	api.on("ttsr_triggered", (event, ctx) => controller.onTtsrTriggered(event, ctx));
 	api.on("session_switch", (event, ctx) => {
 		bindActivity(ctx);
 		agentBonsai?.mount();

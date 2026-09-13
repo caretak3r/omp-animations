@@ -34,7 +34,7 @@
  * `getContextUsageLevel`, so the row escalates on exactly the bands the
  * status line does (see `segments.ts`).
  */
-import type { ContextUsage } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
+import type { ContextUsage } from "../host/types";
 
 /** Default quota ceiling as a percentage of the model's context window — roughly where compaction lands. */
 export const CONTEXT_QUOTA_DEFAULT_PERCENT = 80;

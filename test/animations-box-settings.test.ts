@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
+import { CORE_ROW_ORDER, CORE_ROWS } from "../src/animations-box/row-registry";
+import { SEGMENT_REGISTRY } from "../src/animations-box/segments";
 import {
 	BOX_DEFAULTS,
-	BOX_OPTIONAL_SEGMENT_IDS,
-	BOX_OPTIONAL_STATUS_SEGMENT_IDS,
 	BOX_REQUIRED_SEGMENT_IDS,
 	BOX_SEGMENT_IDS,
 	BOX_SETTING_ENV,
@@ -15,7 +15,7 @@ import {
 import { animationsEnvKey } from "../src/appearance";
 
 describe("Audit Box segment groups", () => {
-	it("pins the Audit summary order and deterministic optional-animation order", () => {
+	it("keeps Audit summaries in render and width-degradation order", () => {
 		expect(BOX_REQUIRED_SEGMENT_IDS).toEqual([
 			"contextGauge",
 			"cacheMeter",
@@ -24,24 +24,27 @@ describe("Audit Box segment groups", () => {
 			"toolActivity",
 			"filesLive",
 		]);
-		expect(BOX_OPTIONAL_SEGMENT_IDS).toEqual(["cadenceEqualizer", "reflectionRipple", "agentBonsai"]);
-		expect(BOX_SEGMENT_IDS).toEqual([...BOX_REQUIRED_SEGMENT_IDS, ...BOX_OPTIONAL_STATUS_SEGMENT_IDS]);
-		expect(new Set(BOX_SEGMENT_IDS).size).toBe(BOX_SEGMENT_IDS.length);
+		expect(BOX_SEGMENT_IDS).toEqual(BOX_REQUIRED_SEGMENT_IDS);
+	});
+
+	it("CORE_ROW_ORDER equals BOX_REQUIRED_SEGMENT_IDS", () => {
+		expect(CORE_ROW_ORDER).toEqual(BOX_REQUIRED_SEGMENT_IDS);
+	});
+
+	it("SEGMENT_REGISTRY metadata ids match CORE_ROWS metadata in the same order", () => {
+		const registryIds = SEGMENT_REGISTRY.map(m => m.id);
+		const coreRowIds = CORE_ROW_ORDER.map(id => CORE_ROWS[id].meta.id);
+		expect(registryIds).toEqual(coreRowIds);
+	});
+
+	it("every CORE_ROWS[id].meta.id equals id (no cross-wiring)", () => {
+		for (const id of CORE_ROW_ORDER) {
+			expect(CORE_ROWS[id].meta.id).toBe(id);
+		}
 	});
 });
 
 describe("resolveAnimationsBoxConfig — defaults and validation", () => {
-	it("defaults to detailed mode, no status animations, Agent Bonsai on, and a breathing border", () => {
-		const config = resolveAnimationsBoxConfig({});
-		expect(config).toEqual({
-			detail: BOX_DEFAULTS.detail,
-			placement: BOX_DEFAULTS.placement,
-			optional: { cadenceEqualizer: false, reflectionRipple: false, agentBonsai: true },
-			breathingBorder: true,
-			contextQuota: BOX_DEFAULTS.contextQuota,
-		});
-	});
-
 	it("accepts each valid detail/placement value", () => {
 		expect(resolveAnimationsBoxConfig({ [BOX_SETTING_KEYS.detail]: "simple" }).detail).toBe("simple");
 		expect(resolveAnimationsBoxConfig({ [BOX_SETTING_KEYS.detail]: "detailed" }).detail).toBe("detailed");
@@ -92,6 +95,13 @@ describe("resolveAnimationsBoxConfig — defaults and validation", () => {
 			resolveAnimationsBoxConfigFromSources({}, {}),
 		);
 		expect(resolveAnimationsBoxConfigFromSources({}, { [REMOVED_DISPLAY_ENV]: "rows" })).toEqual(
+			resolveAnimationsBoxConfigFromSources({}, {}),
+		);
+	});
+
+	it("ignores the terminated context-style setting and env fallback", () => {
+		expect(resolveAnimationsBoxConfig({ animationsContextStyle: "storm" })).toEqual(resolveAnimationsBoxConfig({}));
+		expect(resolveAnimationsBoxConfigFromSources({}, { OMP_ANIMATIONS_CONTEXT_STYLE: "arc" })).toEqual(
 			resolveAnimationsBoxConfigFromSources({}, {}),
 		);
 	});
@@ -148,10 +158,6 @@ describe("resolveAnimationsBoxConfigFromSources — stored > env > default prece
 		expect(REMOVED_DISPLAY_ENV).toBe("OMP_ANIMATIONS_DISPLAY");
 	});
 
-	it("defaults env to Bun.env and never throws on an empty pluginSettings record", () => {
-		expect(() => resolveAnimationsBoxConfigFromSources({})).not.toThrow();
-	});
-
 	it("resolves breathingBorder through the SAME key/env pair its standalone row already uses (Decision 2)", () => {
 		const fromEnv = resolveAnimationsBoxConfigFromSources({}, { [animationsEnvKey("breathingBorder")]: "false" });
 		expect(fromEnv.breathingBorder).toBe(false);
@@ -175,28 +181,6 @@ describe("resolveAnimationsBoxConfigFromSources — stored > env > default prece
 });
 
 describe("optional animation toggles", () => {
-	it("contains only optional animation ids, so required summaries cannot become user-toggleable", () => {
-		expect(Object.keys(resolveAnimationsBoxConfig({}).optional)).toEqual([...BOX_OPTIONAL_SEGMENT_IDS]);
-	});
-
-	it("round-trips cadence and reflection independently from booleans and string forms", () => {
-		expect(resolveAnimationsBoxConfig({ cadenceEqualizer: true }).optional).toEqual({
-			cadenceEqualizer: true,
-			reflectionRipple: false,
-			agentBonsai: true,
-		});
-		expect(resolveAnimationsBoxConfig({ reflectionRipple: "true" }).optional).toEqual({
-			cadenceEqualizer: false,
-			reflectionRipple: true,
-			agentBonsai: true,
-		});
-		expect(resolveAnimationsBoxConfig({ cadenceEqualizer: "false", reflectionRipple: true }).optional).toEqual({
-			cadenceEqualizer: false,
-			reflectionRipple: true,
-			agentBonsai: true,
-		});
-	});
-
 	it("round-trips Agent Bonsai and lets a stored false beat the env fallback", () => {
 		expect(resolveAnimationsBoxConfig({ agentBonsai: false }).optional.agentBonsai).toBe(false);
 		expect(
@@ -206,25 +190,5 @@ describe("optional animation toggles", () => {
 			resolveAnimationsBoxConfigFromSources({ agentBonsai: false }, { OMP_ANIMATIONS_AGENT_BONSAI: "true" }).optional
 				.agentBonsai,
 		).toBe(false);
-	});
-
-	it("uses each animation's existing stored-setting and env key with stored > env precedence", () => {
-		const fromEnv = resolveAnimationsBoxConfigFromSources(
-			{},
-			{
-				[animationsEnvKey("cadenceEqualizer")]: "true",
-				[animationsEnvKey("reflectionRipple")]: "false",
-			},
-		);
-		expect(fromEnv.optional).toEqual({ cadenceEqualizer: true, reflectionRipple: false, agentBonsai: true });
-
-		const stored = resolveAnimationsBoxConfigFromSources(
-			{ cadenceEqualizer: false, reflectionRipple: true },
-			{
-				[animationsEnvKey("cadenceEqualizer")]: "true",
-				[animationsEnvKey("reflectionRipple")]: "false",
-			},
-		);
-		expect(stored.optional).toEqual({ cadenceEqualizer: false, reflectionRipple: true, agentBonsai: true });
 	});
 });

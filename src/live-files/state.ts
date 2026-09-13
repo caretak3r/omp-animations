@@ -10,6 +10,7 @@ export interface LiveFileEntry {
 
 export interface LiveFileSnapshot {
 	readonly entries: readonly LiveFileEntry[];
+	readonly collidingPaths?: readonly string[];
 }
 
 export interface LiveFileToolCall {

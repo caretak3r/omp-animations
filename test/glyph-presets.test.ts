@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { type GlyphKey, resolveGlyph, resolveGlyphRamp, resolveRingGlyphRamp } from "../src/glyph-presets";
+import { type GlyphKey, resolveGlyph, resolveGlyphRamp } from "../src/glyph-presets";
 
 const ALL_KEYS: readonly GlyphKey[] = [
 	"border.ramp.0",
@@ -8,7 +8,6 @@ const ALL_KEYS: readonly GlyphKey[] = [
 	"border.ramp.3",
 	"box.limits",
 	"box.files",
-	"box.reflect",
 	"box.dot.idle",
 	"box.dot.live",
 	"box.dot.notable",
@@ -36,11 +35,6 @@ const ALL_KEYS: readonly GlyphKey[] = [
 	"rateLimitTidepool.waterShimmer",
 	"rateLimitTidepool.pebble",
 	"rateLimitTidepool.sand",
-	"reflectionRipple.ring.0",
-	"reflectionRipple.ring.1",
-	"reflectionRipple.ring.2",
-	"reflectionRipple.ring.3",
-	"reflectionRipple.ring.4",
 ];
 
 describe("resolveGlyph — unicode preset (default, byte-identical to today's hardcoded literals)", () => {
@@ -51,7 +45,6 @@ describe("resolveGlyph — unicode preset (default, byte-identical to today's ha
 		expect(resolveGlyph("border.ramp.3", "unicode")).toBe("█");
 		expect(resolveGlyph("box.limits", "unicode")).toBe("◗");
 		expect(resolveGlyph("box.files", "unicode")).toBe("▓");
-		expect(resolveGlyph("box.reflect", "unicode")).toBe("○");
 		expect(resolveGlyph("box.bar.filled", "unicode")).toBe("█");
 		expect(resolveGlyph("box.bar.empty", "unicode")).toBe("░");
 		expect(resolveGlyph("cacheMeter.badge", "unicode")).toBe("▤");
@@ -68,11 +61,6 @@ describe("resolveGlyph — unicode preset (default, byte-identical to today's ha
 		expect(resolveGlyph("rateLimitTidepool.waterShimmer", "unicode")).toBe("~");
 		expect(resolveGlyph("rateLimitTidepool.pebble", "unicode")).toBe("∘");
 		expect(resolveGlyph("rateLimitTidepool.sand", "unicode")).toBe("·");
-		expect(resolveGlyph("reflectionRipple.ring.0", "unicode")).toBe(" ");
-		expect(resolveGlyph("reflectionRipple.ring.1", "unicode")).toBe("·");
-		expect(resolveGlyph("reflectionRipple.ring.2", "unicode")).toBe("∘");
-		expect(resolveGlyph("reflectionRipple.ring.3", "unicode")).toBe("○");
-		expect(resolveGlyph("reflectionRipple.ring.4", "unicode")).toBe("◉");
 	});
 });
 
@@ -84,7 +72,6 @@ describe("resolveGlyph — ascii preset (exact 1-column substitutes, non-negotia
 		expect(resolveGlyph("border.ramp.3", "ascii")).toBe("#");
 		expect(resolveGlyph("box.limits", "ascii")).toBe(")");
 		expect(resolveGlyph("box.files", "ascii")).toBe("%");
-		expect(resolveGlyph("box.reflect", "ascii")).toBe("o");
 		expect(resolveGlyph("box.bar.filled", "ascii")).toBe("#");
 		expect(resolveGlyph("box.bar.empty", "ascii")).toBe("-");
 		expect(resolveGlyph("cacheMeter.badge", "ascii")).toBe("#");
@@ -101,11 +88,6 @@ describe("resolveGlyph — ascii preset (exact 1-column substitutes, non-negotia
 		expect(resolveGlyph("rateLimitTidepool.waterShimmer", "ascii")).toBe("-");
 		expect(resolveGlyph("rateLimitTidepool.pebble", "ascii")).toBe(".");
 		expect(resolveGlyph("rateLimitTidepool.sand", "ascii")).toBe(",");
-		expect(resolveGlyph("reflectionRipple.ring.0", "ascii")).toBe(" ");
-		expect(resolveGlyph("reflectionRipple.ring.1", "ascii")).toBe(".");
-		expect(resolveGlyph("reflectionRipple.ring.2", "ascii")).toBe(",");
-		expect(resolveGlyph("reflectionRipple.ring.3", "ascii")).toBe("o");
-		expect(resolveGlyph("reflectionRipple.ring.4", "ascii")).toBe("@");
 	});
 
 	it("every ascii substitute is exactly one 7-bit-clean column", () => {
@@ -153,15 +135,6 @@ describe("resolveGlyph — ascii preset (exact 1-column substitutes, non-negotia
 			"rateLimitTidepool.sand",
 		];
 		expect(distinctAsciiCount(tidepoolKeys)).toBe(tidepoolKeys.length);
-
-		const ringRampKeys: readonly GlyphKey[] = [
-			"reflectionRipple.ring.0",
-			"reflectionRipple.ring.1",
-			"reflectionRipple.ring.2",
-			"reflectionRipple.ring.3",
-			"reflectionRipple.ring.4",
-		];
-		expect(distinctAsciiCount(ringRampKeys)).toBe(ringRampKeys.length);
 	});
 });
 
@@ -184,25 +157,6 @@ describe("resolveGlyphRamp", () => {
 
 	it("nerd's ramp is identical to unicode's", () => {
 		expect(resolveGlyphRamp("nerd")).toEqual(resolveGlyphRamp("unicode"));
-	});
-});
-
-describe("resolveRingGlyphRamp", () => {
-	it("returns the unicode ring ramp, faintest to brightest", () => {
-		expect(resolveRingGlyphRamp("unicode")).toEqual([" ", "·", "∘", "○", "◉"]);
-	});
-
-	it("returns the ascii ring ramp in the same order, every entry one 7-bit column", () => {
-		const ramp = resolveRingGlyphRamp("ascii");
-		expect(ramp).toEqual([" ", ".", ",", "o", "@"]);
-		for (const glyph of ramp) {
-			expect(glyph).toHaveLength(1);
-			expect(glyph.charCodeAt(0)).toBeLessThan(128);
-		}
-	});
-
-	it("nerd's ramp is identical to unicode's", () => {
-		expect(resolveRingGlyphRamp("nerd")).toEqual(resolveRingGlyphRamp("unicode"));
 	});
 });
 

@@ -85,7 +85,7 @@
 			},
 			"animationsContextQuota": {
 				"type": "number",
-				"description": "Context-window budget the Audit Box's top row fills against, as a percentage of the model's window — roughly where compaction lands. The bar and its turn forecast count down to this ceiling, not to 100%.",
+				"description": "Context-window budget the Audit Box's top row fills against, as a percentage of the model's window — roughly where compaction lands. The fill visual and its turn forecast count down to this ceiling, not to 100%.",
 				"default": 80,
 				"min": 5,
 				"max": 100,
@@ -107,13 +107,13 @@
 				],
 				"env": "OMP_ANIMATIONS_AGENT_ROSTER_DETAIL"
 			},
-			"agentRosterRetentionSeconds": {
+			"animationsBonsaiSettleSeconds": {
 				"type": "number",
-				"description": "Keep completed agents in the roster for this many seconds.",
+				"description": "Keep completed agents for this many seconds, with an 800ms announcement minimum in every motion tier.",
 				"default": 300,
 				"min": 0,
 				"max": 86400,
-				"env": "OMP_ANIMATIONS_AGENT_ROSTER_RETENTION_SECONDS"
+				"env": "OMP_ANIMATIONS_BONSAI_SETTLE_SECONDS"
 			},
 			"liveFiles": {
 				"type": "boolean",
@@ -129,7 +129,7 @@
 			},
 			"contextRewriteShadow": {
 				"type": "boolean",
-				"description": "Show the estimated transcript, provider-context, and stripped token counts.",
+				"description": "Show context rewrite metrics when the host stripped ≥512 tokens. `sent` is provider-reported usage; `shown` is measured or estimated.",
 				"default": true,
 				"env": "OMP_ANIMATIONS_CONTEXT_REWRITE_SHADOW"
 			},
@@ -154,7 +154,7 @@
 			"thinkActLissajous": {
 				"type": "boolean",
 				"description": "Show the latest assistant response's thinking-to-action balance.",
-				"default": true,
+				"default": false,
 				"env": "OMP_ANIMATIONS_THINK_ACT_LISSAJOUS"
 			},
 			"errorIsotope": {
@@ -162,12 +162,6 @@
 				"description": "Show a normalized tool error only when the same signature repeats.",
 				"default": true,
 				"env": "OMP_ANIMATIONS_ERROR_ISOTOPE"
-			},
-			"queueFog": {
-				"type": "boolean",
-				"description": "Show when a queued follow-up will continue after the current turn.",
-				"default": true,
-				"env": "OMP_ANIMATIONS_QUEUE_FOG"
 			},
 			"skillChromatograph": {
 				"type": "boolean",
@@ -181,10 +175,28 @@
 				"default": true,
 				"env": "OMP_ANIMATIONS_RETRY_RADAR"
 			},
+			"verify": {
+				"type": "boolean",
+				"description": "Show how many writes have landed since the last successful bash.",
+				"default": true,
+				"env": "OMP_ANIMATIONS_VERIFY"
+			},
+			"authBeacon": {
+				"type": "boolean",
+				"description": "Show a persistent alert when a provider credential is auto-disabled.",
+				"default": true,
+				"env": "OMP_ANIMATIONS_AUTH_BEACON"
+			},
+			"asyncJobHarbor": {
+				"type": "boolean",
+				"description": "Show running, ready, failed, and cancelled async job (background bash/task) counts.",
+				"default": true,
+				"env": "OMP_ANIMATIONS_ASYNC_JOB_HARBOR"
+			},
 			"goalHeading": {
 				"type": "boolean",
 				"description": "Show the active goal objective, status, and token-budget heading.",
-				"default": true,
+				"default": false,
 				"env": "OMP_ANIMATIONS_GOAL_HEADING"
 			},
 			"ttftSplit": {
@@ -195,14 +207,14 @@
 			},
 			"memoryBackendTide": {
 				"type": "boolean",
-				"description": "Show active memory backend state, writes, and recall activity.",
+				"description": "Show memory backend state, observed count deltas, and reported recall activity.",
 				"default": true,
 				"env": "OMP_ANIMATIONS_MEMORY_BACKEND_TIDE"
 			},
 			"darkroomTitle": {
 				"type": "boolean",
 				"description": "Project critical animation state into the terminal title.",
-				"default": true,
+				"default": false,
 				"env": "OMP_ANIMATIONS_DARKROOM_TITLE"
 			},
 			"auditTrailBoxPlacement": {
@@ -322,49 +334,6 @@
 				"default": "default",
 				"env": "OMP_ANIMATIONS_CACHE_METER_ACCENT_COLOR"
 			},
-			"cadenceEqualizer": {
-				"type": "boolean",
-				"description": "Show the Cadence Equalizer group inside the Audit Box.",
-				"default": false,
-				"env": "OMP_ANIMATIONS_CADENCE_EQUALIZER"
-			},
-			"cadenceEqualizerPlacement": {
-				"type": "enum",
-				"description": "Which side of the editor Cadence Equalizer mounts on. Applied at wire time (restart to change).",
-				"values": [
-					"aboveEditor",
-					"belowEditor"
-				],
-				"default": "belowEditor",
-				"env": "OMP_ANIMATIONS_CADENCE_EQUALIZER_PLACEMENT"
-			},
-			"cadenceEqualizerAccentColor": {
-				"type": "enum",
-				"description": "Cadence Equalizer's primary accent — the burst bucket and the peak-hold cap (the cooler buckets stay fixed). 'default' keeps the built-in palette. Applied at wire time (restart to change).",
-				"values": [
-					"default",
-					"accent",
-					"success",
-					"warning",
-					"error",
-					"muted",
-					"syntaxKeyword",
-					"syntaxFunction",
-					"syntaxVariable",
-					"syntaxType",
-					"syntaxString",
-					"syntaxNumber",
-					"okabeOrange",
-					"okabeSkyBlue",
-					"okabeGreen",
-					"okabeYellow",
-					"okabeBlue",
-					"okabeVermillion",
-					"okabePurple"
-				],
-				"default": "default",
-				"env": "OMP_ANIMATIONS_CADENCE_EQUALIZER_ACCENT_COLOR"
-			},
 			"rateLimitTidepoolPlacement": {
 				"type": "enum",
 				"description": "Which side of the editor Rate-Limit Tidepool mounts on. Applied at wire time (restart to change).",
@@ -401,49 +370,6 @@
 				],
 				"default": "default",
 				"env": "OMP_ANIMATIONS_RATE_LIMIT_TIDEPOOL_ACCENT_COLOR"
-			},
-			"reflectionRipple": {
-				"type": "boolean",
-				"description": "Show the Reflection Ripple group inside the Audit Box.",
-				"default": false,
-				"env": "OMP_ANIMATIONS_REFLECTION_RIPPLE"
-			},
-			"reflectionRipplePlacement": {
-				"type": "enum",
-				"description": "Which side of the editor Reflection Ripple mounts on. Applied at wire time (restart to change).",
-				"values": [
-					"aboveEditor",
-					"belowEditor"
-				],
-				"default": "aboveEditor",
-				"env": "OMP_ANIMATIONS_REFLECTION_RIPPLE_PLACEMENT"
-			},
-			"reflectionRippleAccentColor": {
-				"type": "enum",
-				"description": "Reflection Ripple's primary accent — the ring (the calm-water background stays fixed dim). 'default' keeps the built-in palette. Applied at wire time (restart to change).",
-				"values": [
-					"default",
-					"accent",
-					"success",
-					"warning",
-					"error",
-					"muted",
-					"syntaxKeyword",
-					"syntaxFunction",
-					"syntaxVariable",
-					"syntaxType",
-					"syntaxString",
-					"syntaxNumber",
-					"okabeOrange",
-					"okabeSkyBlue",
-					"okabeGreen",
-					"okabeYellow",
-					"okabeBlue",
-					"okabeVermillion",
-					"okabePurple"
-				],
-				"default": "default",
-				"env": "OMP_ANIMATIONS_REFLECTION_RIPPLE_ACCENT_COLOR"
 			}
 		}
 	}

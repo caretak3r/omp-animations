@@ -1,17 +1,26 @@
-import { extractTaskProgress, skillNamesFromProgress } from "../agent-bonsai/progress";
+import { normalizeToolName } from "../host/runtime";
+import { type RetryFuseState, reduceRetryFuse } from "./lifecycle-effects";
+import {
+	createMemoryTideState,
+	type MemoryErrorIdentifier,
+	type MemoryTideState,
+	reduceMemoryTide,
+} from "./memory-tide";
+import { appendDurationSample, type DurationSample } from "./metric-effects";
 
-const RECURRENCE_CELLS = 20;
 const SCAR_TURNS = 4;
 
 export interface RecurrenceSignal {
-	readonly cells: readonly boolean[];
-	readonly orbit: boolean;
+	readonly turns: number;
+	readonly observedAt: number;
 }
 
 export interface RewriteSignal {
 	readonly shown: number;
 	readonly sent: number;
 	readonly stripped: number;
+	/** True when `sent` came from provider-reported usage; false when estimated from chars÷4. */
+	readonly sentIsActual: boolean;
 }
 
 export interface CompactionScarSignal {
@@ -21,13 +30,12 @@ export interface CompactionScarSignal {
 
 export interface ConsentSignal {
 	readonly tool: string;
-	readonly reason?: string;
 }
 
 export interface PhylogenySignal {
 	readonly depth: number;
 	readonly siblings: number;
-	readonly node: string;
+	readonly offPathCostUsd?: number;
 }
 
 export interface ThinkActSignal {
@@ -37,31 +45,29 @@ export interface ThinkActSignal {
 }
 
 export interface ErrorSignal {
-	readonly signature: string;
 	readonly count: number;
+	readonly truncated?: number;
+	readonly droppedFeatures?: readonly string[];
+	readonly reroutedTo?: string;
 }
 
-export interface RetrySignal {
-	readonly attempt: number;
-	readonly maxAttempts: number;
-	readonly delayMs: number;
-	readonly error: string;
-	readonly startedAt: number;
-	readonly fallback?: string;
-}
+export type GoalStatus = "active" | "paused" | "budget-limited" | "complete" | "dropped";
 
 export interface GoalSignal {
-	readonly objective: string;
-	readonly status: string;
+	readonly status: GoalStatus;
 	readonly tokensUsed: number;
 	readonly tokenBudget?: number;
 }
 
-export interface MemorySignal {
-	readonly backend: string;
-	readonly workingCount?: number;
-	readonly writes: number;
-	readonly recalled: boolean;
+export interface AssistantTimingSignal {
+	readonly ttftMs?: number;
+	readonly durationMs?: number;
+}
+
+export interface RetryFallbackSignal {
+	readonly from: string;
+	readonly to: string;
+	readonly succeeded: boolean;
 }
 
 export interface SignalExtrasSnapshot {
@@ -72,26 +78,21 @@ export interface SignalExtrasSnapshot {
 	readonly phylogeny?: PhylogenySignal;
 	readonly thinkAct?: ThinkActSignal;
 	readonly error?: ErrorSignal;
-	readonly queuePending: boolean;
-	readonly skills: readonly string[];
-	readonly retry?: RetrySignal;
+	readonly retry?: RetryFuseState;
+	readonly retryFallback?: RetryFallbackSignal;
 	readonly goal?: GoalSignal;
-	readonly ttftMs?: number;
-	readonly memory?: MemorySignal;
+	readonly assistantTiming?: AssistantTimingSignal;
+	readonly ttftHistory: readonly DurationSample[];
+	readonly durationHistory: readonly DurationSample[];
+	readonly unverifiedWrites: number;
+	readonly memoryTide: MemoryTideState;
+	readonly credentialAlerts: readonly string[];
 }
 
 export interface GoalObservation {
-	readonly objective: string;
-	readonly status: string;
+	readonly status: GoalStatus;
 	readonly tokensUsed: number;
 	readonly tokenBudget?: number;
-}
-
-export interface MemoryObservation {
-	readonly backend: string;
-	readonly active: boolean;
-	readonly workingCount?: number;
-	readonly lastRecall?: boolean;
 }
 
 function contentCharacters(value: unknown): number {
@@ -106,83 +107,140 @@ export function estimateContentTokens(value: unknown): number {
 	return Math.ceil(contentCharacters(value) / 4);
 }
 
-function compactError(message: string): { display: string; key: string } | undefined {
-	const display = message.replace(/\s+/g, " ").trim().slice(0, 48);
-	if (display.length === 0) return undefined;
-	const key = display
-		.toLowerCase()
-		.replace(/[a-f0-9]{8,}/g, "#")
-		.replace(/\b\d+(?:\.\d+)?\b/g, "#");
-	return { display, key };
+/**
+ * Activation threshold for the `rewrite` row: render only when the transcript
+ * was stripped by ≥ 512 tokens. Reason: `shown` is a chars÷4 estimate, so
+ * sub-1% deltas are estimator noise; corpus no-ops were 0–8 tokens, while real
+ * host rewrites (compaction, pruning) strip thousands.
+ */
+export const REWRITE_MIN_STRIPPED_TOKENS = 512;
+
+function safeDuration(value: number | undefined): number | undefined {
+	return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+const GOAL_STATUSES: readonly GoalStatus[] = ["active", "paused", "budget-limited", "complete", "dropped"];
+
+function safeCount(value: number): number | undefined {
+	return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+function freezeMemoryTide(state: MemoryTideState): MemoryTideState {
+	const lastGood =
+		state.lastGood === undefined
+			? undefined
+			: Object.freeze({
+					...state.lastGood,
+					status: Object.freeze({ ...state.lastGood.status }),
+					working: Object.freeze({
+						...state.lastGood.working,
+						change: Object.freeze({ ...state.lastGood.working.change }),
+					}),
+					episodic: Object.freeze({
+						...state.lastGood.episodic,
+						change: Object.freeze({ ...state.lastGood.episodic.change }),
+					}),
+					triples: Object.freeze({
+						...state.lastGood.triples,
+						change: Object.freeze({ ...state.lastGood.triples.change }),
+					}),
+				});
+	return Object.freeze({
+		sequence: state.sequence,
+		lastGood,
+		pollFailure: state.pollFailure === undefined ? undefined : Object.freeze({ ...state.pollFailure }),
+	});
 }
 
 /** Pure event-derived state for the zero-height-when-idle signal sidecar. */
 export class SignalExtrasState {
 	#turnTools: string[] = [];
 	#previousToolSignature: string | undefined;
-	#recurrence: boolean[] = [];
+	#recurrenceStreak = 0;
+	#recurrenceObservedAt: number | undefined;
 	#rewrite: RewriteSignal | undefined;
+	#sentTokensActual: number | undefined;
 	#preCompactTokens: number | undefined;
-	#scar: { cutTokens: number; rereadPaths: Set<string>; turnsLeft: number } | undefined;
+	#scar: { cutTokens: number; rereadCount: number; turnsLeft: number } | undefined;
 	#approvals = new Map<string, ConsentSignal>();
 	#phylogeny: PhylogenySignal | undefined;
 	#thinkAct: ThinkActSignal | undefined;
-	#errorCounts = new Map<string, { display: string; count: number }>();
-	#latestErrorKey: string | undefined;
-	#queuePending = false;
-	#skills = new Set<string>();
-	#retry: RetrySignal | undefined;
+	#errorCount = 0;
+	#truncatedCount = 0;
+	#droppedFeatures = new Set<string>();
+	#route: { upstream: string | undefined; changed: boolean } = { upstream: undefined, changed: false };
+	#retry: RetryFuseState | undefined;
+	#fallback: { from: string; to: string; succeeded: boolean } | undefined;
 	#goal: GoalSignal | undefined;
-	#turnStartedAt: number | undefined;
-	#ttftMs: number | undefined;
-	#memory: MemorySignal | undefined;
-	#previousWorkingCount: number | undefined;
+	#assistantTiming: AssistantTimingSignal | undefined;
+	#ttftHistory: readonly DurationSample[] = [];
+	#durationHistory: readonly DurationSample[] = [];
+	#memoryTide: MemoryTideState = createMemoryTideState();
+	#credentialAlerts = new Set<string>();
+	#sealMutationGen = 0;
+	#sealVerifiedGen = -1;
 
-	onTurnStart(now: number): void {
+	onTurnStart(): void {
 		this.#turnTools = [];
-		this.#skills.clear();
-		this.#queuePending = false;
-		this.#turnStartedAt = now;
-		this.#ttftMs = undefined;
+		this.#recurrenceObservedAt = undefined;
+		this.#assistantTiming = undefined;
 	}
 
-	onTurnEnd(pendingMessages: boolean): void {
+	onTurnEnd(now: number): void {
 		const signature = this.#turnTools.join("→");
 		if (signature.length > 0) {
-			const orbit = signature === this.#previousToolSignature;
-			this.#recurrence.push(orbit);
-			if (this.#recurrence.length > RECURRENCE_CELLS) this.#recurrence.shift();
+			const repeated = signature === this.#previousToolSignature;
+			this.#recurrenceStreak = repeated ? this.#recurrenceStreak + 1 : 0;
+			this.#recurrenceObservedAt = repeated ? now : undefined;
 			this.#previousToolSignature = signature;
+		} else {
+			this.#previousToolSignature = undefined;
+			this.#recurrenceStreak = 0;
+			this.#recurrenceObservedAt = undefined;
 		}
-		this.#queuePending = pendingMessages;
 		if (this.#scar !== undefined) {
 			this.#scar.turnsLeft--;
 			if (this.#scar.turnsLeft <= 0) this.#scar = undefined;
 		}
 	}
 
-	onToolCall(toolName: string, input: object): void {
+	onToolCall(toolName: string): void {
 		this.#turnTools.push(toolName);
-		const record = input as Record<string, unknown>;
-		if (toolName === "read" && typeof record.path === "string") {
-			this.noteRead(record.path);
-			const match = /^skill:\/\/([^/\s]+)/.exec(record.path);
-			if (match?.[1]) this.#skills.add(match[1]);
-		}
+		if (toolName === "read") this.noteRead();
 	}
 
-	onTaskProgress(payload: unknown): void {
-		const progress = extractTaskProgress(payload);
-		if (progress === undefined) return;
-		for (const row of progress) {
-			for (const skill of skillNamesFromProgress(row)) this.#skills.add(skill);
-		}
+	#sealKind(toolName: string): "write" | "bash" | "other" {
+		const normalized = normalizeToolName(toolName);
+		if (normalized === "edit" || normalized === "write") return "write";
+		if (normalized === "bash") return "bash";
+		return "other";
 	}
 
-	noteContext(shownTokens: number, sentTokens: number): void {
+	noteToolSettled(toolName: string, isError: boolean): void {
+		const kind = this.#sealKind(toolName);
+		if (kind === "bash" && isError) this.#sealVerifiedGen = -1;
+		if (isError) return;
+		if (kind === "write") this.#sealMutationGen++;
+		if (kind === "bash") this.#sealVerifiedGen = this.#sealMutationGen;
+	}
+
+	noteUsageSent(promptTokens: number): void {
+		this.#sentTokensActual = Math.max(0, Math.round(promptTokens));
+	}
+
+	noteContext(shownTokens: number | undefined, estimatedSent: number): void {
+		if (shownTokens === undefined || shownTokens === 0) {
+			this.#rewrite = undefined;
+			return;
+		}
 		const shown = Math.max(0, Math.round(shownTokens));
-		const sent = Math.max(0, Math.round(sentTokens));
-		this.#rewrite = { shown, sent, stripped: Math.max(0, shown - sent) };
+		const actualSent = this.#sentTokensActual;
+		const sent = actualSent !== undefined ? actualSent : Math.max(0, Math.round(estimatedSent));
+		const stripped = Math.max(0, shown - sent);
+		this.#rewrite =
+			stripped >= REWRITE_MIN_STRIPPED_TOKENS
+				? { shown, sent, stripped, sentIsActual: actualSent !== undefined }
+				: undefined;
 	}
 
 	noteCompactionStart(tokens: number | undefined): void {
@@ -193,15 +251,15 @@ export class SignalExtrasState {
 		const before = this.#preCompactTokens;
 		this.#preCompactTokens = undefined;
 		if (before === undefined || tokens === undefined) return;
-		this.#scar = { cutTokens: Math.max(0, before - tokens), rereadPaths: new Set(), turnsLeft: SCAR_TURNS };
+		this.#scar = { cutTokens: Math.max(0, before - tokens), rereadCount: 0, turnsLeft: SCAR_TURNS };
 	}
 
-	noteRead(filePath: string): void {
-		this.#scar?.rereadPaths.add(filePath);
+	noteRead(): void {
+		if (this.#scar !== undefined) this.#scar.rereadCount++;
 	}
 
-	noteApprovalRequested(id: string, tool: string, reason?: string): void {
-		this.#approvals.set(id, { tool, reason });
+	noteApprovalRequested(id: string, tool: string): void {
+		this.#approvals.set(id, { tool });
 	}
 
 	noteApprovalResolved(id: string): void {
@@ -209,7 +267,13 @@ export class SignalExtrasState {
 	}
 
 	notePhylogeny(signal: PhylogenySignal): void {
-		this.#phylogeny = signal;
+		this.#phylogeny = {
+			depth: Math.min(999, safeCount(signal.depth) ?? 0),
+			siblings: Math.min(999, safeCount(signal.siblings) ?? 0),
+			...(Number.isFinite(signal.offPathCostUsd) && (signal.offPathCostUsd ?? 0) > 0
+				? { offPathCostUsd: signal.offPathCostUsd }
+				: {}),
+		};
 	}
 
 	noteAssistant(thinkingChars: number, actingChars: number): void {
@@ -224,113 +288,198 @@ export class SignalExtrasState {
 		};
 	}
 
-	noteAssistantStart(now: number): void {
-		if (this.#turnStartedAt !== undefined && this.#ttftMs === undefined) {
-			this.#ttftMs = Math.max(0, now - this.#turnStartedAt);
+	noteAssistantTiming(ttftMs: number | undefined, durationMs: number | undefined): void {
+		const ttft = safeDuration(ttftMs);
+		const duration = safeDuration(durationMs);
+		if (ttft === undefined && duration === undefined) return;
+		this.#assistantTiming = {
+			...(ttft === undefined ? {} : { ttftMs: ttft }),
+			...(duration === undefined ? {} : { durationMs: duration }),
+		};
+		if (ttft !== undefined) {
+			this.#ttftHistory = appendDurationSample(this.#ttftHistory, {
+				operationClass: "ttft",
+				durationMs: ttft,
+			});
+		}
+		if (duration !== undefined) {
+			this.#durationHistory = appendDurationSample(this.#durationHistory, {
+				operationClass: "provider-request",
+				durationMs: duration,
+			});
 		}
 	}
 
-	noteError(message: string): void {
-		const normalized = compactError(message);
-		if (normalized === undefined) return;
-		const current = this.#errorCounts.get(normalized.key);
-		this.#errorCounts.set(normalized.key, {
-			display: normalized.display,
-			count: (current?.count ?? 0) + 1,
-		});
-		this.#latestErrorKey = normalized.key;
+	noteError(): void {
+		this.#errorCount++;
 	}
 
-	noteRetryStart(attempt: number, maxAttempts: number, delayMs: number, error: string, now: number): void {
-		this.#retry = {
-			attempt,
-			maxAttempts,
-			delayMs,
-			error: error.replace(/\s+/g, " ").trim().slice(0, 48),
-			startedAt: now,
+	noteAssistantIntegrity(input: {
+		stopReason: string;
+		provider: string;
+		upstreamProvider?: string;
+		disabledFeatures?: string[];
+	}): void {
+		if (input.stopReason === "length") this.#truncatedCount++;
+		for (const feature of input.disabledFeatures ?? []) this.#droppedFeatures.add(feature);
+		const upstream = input.upstreamProvider;
+		this.#route = {
+			upstream,
+			changed: upstream !== undefined && upstream !== this.#route.upstream && this.#route.upstream !== undefined,
 		};
 	}
 
-	noteRetryEnd(): void {
-		this.#retry = undefined;
+	noteRetrySchedule(attempt: number, maxAttempts: number, delayMs: number, now: number): void {
+		const deadline = Number.isFinite(delayMs) && delayMs >= 0 ? now + delayMs : undefined;
+		this.#retry =
+			this.#retry === undefined
+				? reduceRetryFuse(this.#retry, {
+						type: "schedule",
+						at: now,
+						attempt,
+						maxAttempts,
+						...(deadline === undefined ? {} : { deadline }),
+					})
+				: reduceRetryFuse(this.#retry, {
+						type: "reschedule",
+						at: now,
+						attempt,
+						maxAttempts,
+						...(deadline === undefined ? {} : { deadline }),
+					});
 	}
 
-	noteFallback(model: string): void {
-		if (this.#retry !== undefined) this.#retry = { ...this.#retry, fallback: model };
+	noteRetryEnd(now: number): void {
+		this.#retry = reduceRetryFuse(this.#retry, { type: "terminal", at: now });
+	}
+
+	noteRetryFallback(from: string, to: string): void {
+		this.#fallback = { from, to, succeeded: false };
+	}
+
+	noteRetryFallbackSucceeded(): void {
+		if (this.#fallback !== undefined) this.#fallback = { ...this.#fallback, succeeded: true };
 	}
 
 	noteGoal(goal: GoalObservation | undefined): void {
-		this.#goal = goal;
-	}
-
-	noteMemory(status: MemoryObservation | undefined): void {
-		if (status === undefined || !status.active || status.backend === "off") {
-			this.#memory = undefined;
-			this.#previousWorkingCount = undefined;
+		if (goal === undefined) {
+			this.#goal = undefined;
 			return;
 		}
-		const writes = Math.max(0, (status.workingCount ?? 0) - (this.#previousWorkingCount ?? status.workingCount ?? 0));
-		this.#previousWorkingCount = status.workingCount;
-		this.#memory = {
-			backend: status.backend,
-			workingCount: status.workingCount,
-			writes,
-			recalled: status.lastRecall === true,
+		if (!GOAL_STATUSES.includes(goal.status)) {
+			this.#goal = undefined;
+			return;
+		}
+		const tokensUsed = safeCount(goal.tokensUsed);
+		const tokenBudget = goal.tokenBudget === undefined ? undefined : safeCount(goal.tokenBudget);
+		if (tokensUsed === undefined || (goal.tokenBudget !== undefined && tokenBudget === undefined)) {
+			this.#goal = undefined;
+			return;
+		}
+		this.#goal = {
+			status: goal.status,
+			tokensUsed,
+			...(tokenBudget === undefined ? {} : { tokenBudget }),
 		};
 	}
 
-	setQueuePending(pending: boolean): void {
-		this.#queuePending = pending;
+	noteMemoryPollSuccess(sequence: number, status: unknown, observedAt: number): boolean {
+		const next = reduceMemoryTide(this.#memoryTide, {
+			kind: "success",
+			sequence,
+			observedAt,
+			status,
+		});
+		if (next === this.#memoryTide) return false;
+		this.#memoryTide = next;
+		return true;
+	}
+
+	noteMemoryPollFailure(sequence: number, error: MemoryErrorIdentifier | undefined, observedAt: number): boolean {
+		const next = reduceMemoryTide(this.#memoryTide, {
+			kind: "failure",
+			sequence,
+			observedAt,
+			error,
+		});
+		if (next === this.#memoryTide) return false;
+		this.#memoryTide = next;
+		return true;
+	}
+
+	noteCredentialDisabled(provider: string): void {
+		const clamped = provider.length > 24 ? provider.slice(0, 24) : provider;
+		this.#credentialAlerts.add(clamped);
 	}
 
 	resetSession(): void {
 		this.#turnTools = [];
 		this.#previousToolSignature = undefined;
-		this.#recurrence = [];
+		this.#recurrenceStreak = 0;
+		this.#recurrenceObservedAt = undefined;
 		this.#rewrite = undefined;
+		this.#sentTokensActual = undefined;
 		this.#preCompactTokens = undefined;
 		this.#scar = undefined;
 		this.#approvals.clear();
 		this.#phylogeny = undefined;
 		this.#thinkAct = undefined;
-		this.#errorCounts.clear();
-		this.#latestErrorKey = undefined;
-		this.#queuePending = false;
-		this.#skills.clear();
+		this.#errorCount = 0;
+		this.#truncatedCount = 0;
+		this.#droppedFeatures.clear();
+		this.#route = { upstream: undefined, changed: false };
 		this.#retry = undefined;
+		this.#fallback = undefined;
 		this.#goal = undefined;
-		this.#turnStartedAt = undefined;
-		this.#ttftMs = undefined;
-		this.#memory = undefined;
-		this.#previousWorkingCount = undefined;
+		this.#assistantTiming = undefined;
+		this.#ttftHistory = [];
+		this.#durationHistory = [];
+		this.#memoryTide = createMemoryTideState();
+		this.#sealMutationGen = 0;
+		this.#sealVerifiedGen = -1;
+		// credentialAlerts NOT cleared: disabled credentials do not heal on session switch
 	}
 
 	snapshot(): SignalExtrasSnapshot {
-		const latestError = this.#latestErrorKey === undefined ? undefined : this.#errorCounts.get(this.#latestErrorKey);
 		const recurrence =
-			this.#recurrence.length < 2
+			this.#recurrenceObservedAt === undefined
 				? undefined
-				: { cells: [...this.#recurrence], orbit: this.#recurrence.at(-1) === true };
-		return {
+				: Object.freeze({
+						turns: this.#recurrenceStreak + 1,
+						observedAt: this.#recurrenceObservedAt,
+					});
+		return Object.freeze({
 			recurrence,
-			rewrite: this.#rewrite,
+			rewrite: this.#rewrite === undefined ? undefined : Object.freeze({ ...this.#rewrite }),
 			scar:
 				this.#scar === undefined
 					? undefined
-					: { cutTokens: this.#scar.cutTokens, rereadCount: this.#scar.rereadPaths.size },
+					: Object.freeze({ cutTokens: this.#scar.cutTokens, rereadCount: this.#scar.rereadCount }),
 			consent: this.#approvals.values().next().value,
-			phylogeny: this.#phylogeny,
-			thinkAct: this.#thinkAct,
+			phylogeny: this.#phylogeny === undefined ? undefined : Object.freeze({ ...this.#phylogeny }),
+			thinkAct: this.#thinkAct === undefined ? undefined : Object.freeze({ ...this.#thinkAct }),
 			error:
-				latestError !== undefined && latestError.count >= 2
-					? { signature: latestError.display, count: latestError.count }
+				this.#errorCount >= 2 || this.#truncatedCount > 0 || this.#droppedFeatures.size > 0 || this.#route.changed
+					? Object.freeze({
+							count: this.#errorCount,
+							...(this.#truncatedCount > 0 ? { truncated: this.#truncatedCount } : {}),
+							...(this.#droppedFeatures.size > 0
+								? { droppedFeatures: Object.freeze(Array.from(this.#droppedFeatures).sort()) }
+								: {}),
+							...(this.#route.changed && this.#route.upstream !== undefined
+								? { reroutedTo: this.#route.upstream }
+								: {}),
+						})
 					: undefined,
-			queuePending: this.#queuePending,
-			skills: [...this.#skills],
-			retry: this.#retry,
-			goal: this.#goal,
-			ttftMs: this.#ttftMs,
-			memory: this.#memory,
-		};
+			retry: this.#retry === undefined ? undefined : Object.freeze({ ...this.#retry }),
+			retryFallback: this.#fallback === undefined ? undefined : Object.freeze({ ...this.#fallback }),
+			goal: this.#goal === undefined ? undefined : Object.freeze({ ...this.#goal }),
+			assistantTiming: this.#assistantTiming === undefined ? undefined : Object.freeze({ ...this.#assistantTiming }),
+			ttftHistory: Object.freeze(this.#ttftHistory.map(sample => Object.freeze({ ...sample }))),
+			durationHistory: Object.freeze(this.#durationHistory.map(sample => Object.freeze({ ...sample }))),
+			unverifiedWrites: Math.max(0, this.#sealMutationGen - Math.max(this.#sealVerifiedGen, 0)),
+			memoryTide: freezeMemoryTide(this.#memoryTide),
+			credentialAlerts: Object.freeze(Array.from(this.#credentialAlerts).sort()),
+		});
 	}
 }

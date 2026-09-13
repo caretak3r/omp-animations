@@ -1,3 +1,4 @@
+import { FULL_FLASH_MS } from "../animations-box/status-line";
 import {
 	extractTaskAsyncState,
 	extractTaskProgress,
@@ -12,7 +13,9 @@ import {
 	type AgentBonsaiSnapshot,
 	type AgentSkillRef,
 	buildAgentBonsai,
+	normalizeAgentDescription,
 	normalizeAgentLine,
+	summarizeAgentTask,
 } from "./state";
 
 export const MAIN_BONSAI_ID = "Main";
@@ -40,6 +43,8 @@ export interface AgentBonsaiControllerOptions {
 	readonly resolveSkillPath?: SkillPathResolver;
 	readonly cwd?: string;
 	readonly now?: () => number;
+	readonly settleSeconds?: number;
+	readonly onAgentOutcome?: (id: string, outcome: "completed" | "aborted", completedAt: number) => void;
 }
 
 interface AgentEntry {
@@ -48,6 +53,8 @@ interface AgentEntry {
 	readonly cohort: number;
 	readonly createdAt: number;
 	status: TaskAgentStatus;
+	toolCallId: string;
+	completedAt?: number;
 	model?: string;
 	task?: string;
 	activity?: string;
@@ -57,9 +64,9 @@ interface AgentEntry {
 }
 
 const STATUS_MAP: Readonly<Record<TaskAgentStatus, AgentBonsaiRef["status"]>> = {
-	pending: "idle",
+	pending: "pending",
 	running: "running",
-	completed: "idle",
+	completed: "completed",
 	failed: "aborted",
 	aborted: "aborted",
 };
@@ -73,6 +80,7 @@ function nodeKey(node: AgentBonsaiNode): string {
 		node.depth,
 		node.isLast,
 		node.status,
+		node.completedAt ?? "",
 		node.model ?? "",
 		node.activeSkill?.name ?? "",
 		skills,
@@ -83,6 +91,11 @@ function nodeKey(node: AgentBonsaiNode): string {
 
 function snapshotsEqual(a: AgentBonsaiSnapshot, b: AgentBonsaiSnapshot): boolean {
 	if (a.visible !== b.visible || a.hiddenCount !== b.hiddenCount || a.nodes.length !== b.nodes.length) return false;
+	if (
+		a.hiddenAgentIds?.length !== b.hiddenAgentIds?.length ||
+		a.hiddenAgentIds?.some((id, index) => id !== b.hiddenAgentIds?.[index])
+	)
+		return false;
 	for (const [index, node] of a.nodes.entries()) {
 		const other = b.nodes[index];
 		if (other === undefined || nodeKey(node) !== nodeKey(other)) return false;
@@ -93,17 +106,17 @@ function snapshotsEqual(a: AgentBonsaiSnapshot, b: AgentBonsaiSnapshot): boolean
 /**
  * Headless subagent observer consumed by the Audit Box widget.
  *
- * Fed by the `task` tool's streamed progress rather than the host's agent
- * registry — see `progress.ts` for why the registry is unreachable from a
- * plugin. Finished subagents stay on the tree for the rest of the agent loop and
- * are dropped when the next user request starts, so a completed run is still
- * readable after it lands — pruning per provider turn would erase a subagent the
- * moment the parent resumed reasoning about its result.
+ * Fed by the task tool's streamed progress. Terminal entries retain their first
+ * completion time until the next request, so repeated progress cannot renew an
+ * announcement or bring an expired row back.
  */
 export class AgentBonsaiController {
 	#onChange: () => void;
 	#resolveSkillPath: SkillPathResolver;
 	#now: () => number;
+	#retentionMs: number;
+	readonly #onAgentOutcome: AgentBonsaiControllerOptions["onAgentOutcome"];
+	#nextExpiryAt = Number.POSITIVE_INFINITY;
 	#snapshot: AgentBonsaiSnapshot = EMPTY_SNAPSHOT;
 	#agents = new Map<string, AgentEntry>();
 	#skillPaths = new Map<string, AgentSkillRef>();
@@ -116,9 +129,14 @@ export class AgentBonsaiController {
 		this.#onChange = options.onChange ?? (() => {});
 		this.#resolveSkillPath = options.resolveSkillPath ?? createSkillPathResolver(options.cwd ?? process.cwd());
 		this.#now = options.now ?? Date.now;
+		const seconds = options.settleSeconds ?? 300;
+		this.#retentionMs = Math.max(FULL_FLASH_MS, (Number.isFinite(seconds) ? Math.max(0, seconds) : 300) * 1_000);
+		this.#onAgentOutcome = options.onAgentOutcome;
 	}
 
-	snapshot(): AgentBonsaiSnapshot {
+	snapshot(retiredAgentIds?: readonly string[]): AgentBonsaiSnapshot {
+		if (this.#now() >= this.#nextExpiryAt) this.#rebuild(false);
+		if (this.#mounted && retiredAgentIds?.length) return this.#buildSnapshot(new Set(retiredAgentIds));
 		return this.#snapshot;
 	}
 
@@ -137,6 +155,7 @@ export class AgentBonsaiController {
 		this.#mainBusy = false;
 		this.#nextCohort = 1;
 		this.#snapshot = EMPTY_SNAPSHOT;
+		this.#nextExpiryAt = Number.POSITIVE_INFINITY;
 	}
 
 	/** Record the parent session's model so the root row is labelled like its children. */
@@ -181,41 +200,71 @@ export class AgentBonsaiController {
 		// A backgrounded job keeps reporting after its call returns, so only a
 		// synchronous task settles its agents here.
 		if (extractTaskAsyncState(event.result) !== "running") {
-			const prefix = `${event.toolCallId}:`;
 			for (const entry of this.#agents.values()) {
-				if (!entry.id.startsWith(prefix)) continue;
+				if (entry.toolCallId !== event.toolCallId) continue;
 				if (entry.status !== "running" && entry.status !== "pending") continue;
 				entry.status = event.isError === true ? "failed" : "completed";
+				entry.completedAt = this.#now();
 				entry.activity = undefined;
+				this.#reportOutcome(entry);
 			}
 		}
 		this.#rebuild();
 	}
 
 	#applyProgress(toolCallId: string, row: TaskAgentProgress): void {
-		const id = `${toolCallId}:${row.id}`;
+		const id = row.id;
 		let entry = this.#agents.get(id);
 		if (entry === undefined) {
 			entry = {
 				id,
-				name: normalizeAgentLine(row.id),
+				name: row.id,
 				cohort: this.#nextCohort++,
 				createdAt: this.#now(),
 				status: row.status,
+				toolCallId,
 				skills: new Set<string>(),
 			};
 			this.#agents.set(id, entry);
+		} else if (entry.toolCallId !== toolCallId) {
+			if (entry.completedAt !== undefined) {
+				this.#agents.delete(id);
+				entry = {
+					id,
+					name: row.id,
+					cohort: this.#nextCohort++,
+					createdAt: this.#now(),
+					status: row.status,
+					toolCallId,
+					skills: new Set<string>(),
+				};
+				this.#agents.set(id, entry);
+			} else {
+				entry.toolCallId = toolCallId;
+			}
 		}
-		entry.status = row.status;
+		if (entry.completedAt === undefined) {
+			entry.status = row.status;
+			if (row.status !== "running" && row.status !== "pending") entry.completedAt = this.#now();
+		} else if (row.status === "failed" || row.status === "aborted") {
+			entry.status = row.status;
+		}
 		if (row.resolvedModel !== undefined) entry.model = normalizeAgentLine(row.resolvedModel);
 		const activity = row.lastIntent ?? row.currentTool;
-		entry.activity = activity === undefined ? undefined : normalizeAgentLine(activity);
+		entry.activity =
+			entry.status !== "running" || activity === undefined ? undefined : normalizeAgentDescription(activity);
 		const task = row.description ?? row.task;
-		if (entry.task === undefined && task !== undefined) entry.task = normalizeAgentLine(task);
+		if (entry.task === undefined && task !== undefined) entry.task = summarizeAgentTask(task);
 		for (const skill of skillNamesFromProgress(row)) {
 			entry.skills.add(skill);
 			entry.activeSkill = skill;
 		}
+		this.#reportOutcome(entry);
+	}
+
+	#reportOutcome(entry: AgentEntry): void {
+		if (entry.completedAt === undefined) return;
+		this.#onAgentOutcome?.(entry.name, entry.status === "completed" ? "completed" : "aborted", entry.completedAt);
 	}
 
 	#skillRef(name: string): AgentSkillRef {
@@ -226,8 +275,17 @@ export class AgentBonsaiController {
 		return ref;
 	}
 
-	#rebuild(): void {
+	#rebuild(notify = true): void {
 		if (!this.#mounted) return;
+		const next = this.#buildSnapshot();
+		if (snapshotsEqual(this.#snapshot, next)) return;
+		this.#snapshot = next;
+		if (notify) this.#onChange();
+	}
+
+	#buildSnapshot(retiredAgentIds?: ReadonlySet<string>): AgentBonsaiSnapshot {
+		const now = this.#now();
+		let nextExpiryAt = Number.POSITIVE_INFINITY;
 		const refs: AgentBonsaiRef[] = [
 			{
 				id: MAIN_BONSAI_ID,
@@ -245,6 +303,12 @@ export class AgentBonsaiController {
 		const seen = new Set<string>();
 		if (this.#mainModel !== undefined) model.set(MAIN_BONSAI_ID, this.#mainModel);
 		for (const entry of [...this.#agents.values()].sort((a, b) => a.cohort - b.cohort)) {
+			if (retiredAgentIds?.has(entry.id)) continue;
+			if (entry.completedAt !== undefined) {
+				const expiresAt = entry.completedAt + this.#retentionMs;
+				if (now >= expiresAt) continue;
+				nextExpiryAt = Math.min(nextExpiryAt, expiresAt);
+			}
 			refs.push({
 				id: entry.id,
 				displayName: entry.name,
@@ -252,6 +316,7 @@ export class AgentBonsaiController {
 				parentId: MAIN_BONSAI_ID,
 				status: STATUS_MAP[entry.status],
 				createdAt: entry.createdAt,
+				completedAt: entry.completedAt,
 				activity: entry.activity,
 			});
 			seen.add(entry.id);
@@ -266,9 +331,7 @@ export class AgentBonsaiController {
 			}
 			if (entry.activeSkill !== undefined) activeSkill.set(entry.id, this.#skillRef(entry.activeSkill));
 		}
-		const next = buildAgentBonsai(refs, { model, task, seen, cohort, activeSkill, loadedSkills });
-		if (snapshotsEqual(this.#snapshot, next)) return;
-		this.#snapshot = next;
-		this.#onChange();
+		if (retiredAgentIds === undefined) this.#nextExpiryAt = nextExpiryAt;
+		return buildAgentBonsai(refs, { model, task, seen, cohort, activeSkill, loadedSkills });
 	}
 }

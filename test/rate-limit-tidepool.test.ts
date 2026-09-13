@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { ProviderHealthState } from "../src/rate-limit-tidepool/health";
 import {
 	pebbleGlyph,
 	renderTidepoolRow,
@@ -396,5 +397,80 @@ describe("RateLimitTidepoolState", () => {
 			resetAtMs: 5_000,
 			observedAtMs: 1_000,
 		});
+	});
+});
+
+describe("ProviderHealthState", () => {
+	it("starts idle before the first status", () => {
+		const state = new ProviderHealthState();
+		expect(state.snapshot()).toBeUndefined();
+	});
+
+	it("counts ok responses (2xx/3xx)", () => {
+		const state = new ProviderHealthState();
+		state.noteStatus(200, 1000);
+		state.noteStatus(201, 2000);
+		state.noteStatus(304, 3000);
+		const snapshot = state.snapshot();
+		expect(snapshot?.okCount).toBe(3);
+		expect(snapshot?.lastStatus).toBe(304);
+		expect(snapshot?.troubleCounts).toEqual({});
+		expect(snapshot?.lastTrouble).toBeUndefined();
+	});
+
+	it("classifies auth errors (401/403)", () => {
+		const state = new ProviderHealthState();
+		state.noteStatus(200, 1000);
+		state.noteStatus(401, 2000);
+		state.noteStatus(403, 3000);
+		const snapshot = state.snapshot();
+		expect(snapshot?.okCount).toBe(1);
+		expect(snapshot?.troubleCounts.auth).toBe(2);
+		expect(snapshot?.lastTrouble?.status).toBe(403);
+		expect(snapshot?.lastTrouble?.observedAtMs).toBe(3000);
+	});
+
+	it("classifies throttle errors (408/429)", () => {
+		const state = new ProviderHealthState();
+		state.noteStatus(408, 1000);
+		state.noteStatus(429, 2000);
+		state.noteStatus(429, 3000);
+		const snapshot = state.snapshot();
+		expect(snapshot?.troubleCounts.throttle).toBe(3);
+		expect(snapshot?.lastTrouble?.status).toBe(429);
+	});
+
+	it("classifies server errors (5xx)", () => {
+		const state = new ProviderHealthState();
+		state.noteStatus(500, 1000);
+		state.noteStatus(503, 2000);
+		const snapshot = state.snapshot();
+		expect(snapshot?.troubleCounts.server).toBe(2);
+		expect(snapshot?.lastTrouble?.status).toBe(503);
+	});
+
+	it("classifies other errors (outside known ranges)", () => {
+		const state = new ProviderHealthState();
+		state.noteStatus(418, 1000);
+		const snapshot = state.snapshot();
+		expect(snapshot?.troubleCounts.other).toBe(1);
+	});
+
+	it("tracks the newest non-2xx with its timestamp", () => {
+		const state = new ProviderHealthState();
+		state.noteStatus(429, 1000);
+		state.noteStatus(200, 2000);
+		state.noteStatus(500, 3000);
+		const snapshot = state.snapshot();
+		expect(snapshot?.lastTrouble?.status).toBe(500);
+		expect(snapshot?.lastTrouble?.observedAtMs).toBe(3000);
+	});
+
+	it("reset clears all state", () => {
+		const state = new ProviderHealthState();
+		state.noteStatus(200, 1000);
+		state.noteStatus(429, 2000);
+		state.reset();
+		expect(state.snapshot()).toBeUndefined();
 	});
 });

@@ -16,7 +16,7 @@
  * Record<GlyphKey, string>>` table. Extend by adding more union members and table
  * rows — never restructure the shape.
  */
-import type { SymbolPreset } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { SymbolPreset } from "./host/types";
 
 /** Every glyph this table currently resolves, namespaced by owning surface. */
 export type GlyphKey =
@@ -26,7 +26,6 @@ export type GlyphKey =
 	| "border.ramp.3"
 	| "box.limits"
 	| "box.files"
-	| "box.reflect"
 	| "box.dot.idle"
 	| "box.dot.live"
 	| "box.dot.notable"
@@ -53,12 +52,7 @@ export type GlyphKey =
 	| "rateLimitTidepool.water"
 	| "rateLimitTidepool.waterShimmer"
 	| "rateLimitTidepool.pebble"
-	| "rateLimitTidepool.sand"
-	| "reflectionRipple.ring.0"
-	| "reflectionRipple.ring.1"
-	| "reflectionRipple.ring.2"
-	| "reflectionRipple.ring.3"
-	| "reflectionRipple.ring.4";
+	| "rateLimitTidepool.sand";
 
 /** The border ramp, the Animations Box's badge literals, and every row's own badge/status/ramp glyphs — the original hardcoded values, unchanged. */
 const UNICODE_GLYPHS: Record<GlyphKey, string> = {
@@ -68,7 +62,6 @@ const UNICODE_GLYPHS: Record<GlyphKey, string> = {
 	"border.ramp.3": "█",
 	"box.limits": "◗",
 	"box.files": "▓",
-	"box.reflect": "○",
 	"box.dot.idle": "○",
 	"box.dot.live": "●",
 	"box.dot.notable": "◐",
@@ -96,11 +89,6 @@ const UNICODE_GLYPHS: Record<GlyphKey, string> = {
 	"rateLimitTidepool.waterShimmer": "~",
 	"rateLimitTidepool.pebble": "∘",
 	"rateLimitTidepool.sand": "·",
-	"reflectionRipple.ring.0": " ",
-	"reflectionRipple.ring.1": "·",
-	"reflectionRipple.ring.2": "∘",
-	"reflectionRipple.ring.3": "○",
-	"reflectionRipple.ring.4": "◉",
 };
 
 /**
@@ -127,7 +115,6 @@ const ASCII_GLYPHS: Record<GlyphKey, string> = {
 	"border.ramp.3": "#",
 	"box.limits": ")",
 	"box.files": "%",
-	"box.reflect": "o",
 	"box.dot.idle": ".",
 	"box.dot.live": "*",
 	"box.dot.notable": "!",
@@ -155,11 +142,6 @@ const ASCII_GLYPHS: Record<GlyphKey, string> = {
 	"rateLimitTidepool.waterShimmer": "-",
 	"rateLimitTidepool.pebble": ".",
 	"rateLimitTidepool.sand": ",",
-	"reflectionRipple.ring.0": " ",
-	"reflectionRipple.ring.1": ".",
-	"reflectionRipple.ring.2": ",",
-	"reflectionRipple.ring.3": "o",
-	"reflectionRipple.ring.4": "@",
 };
 
 /** `nerd` is the SAME object as `unicode` (v1 alias, not a duplicated literal set — see module doc). */
@@ -184,17 +166,4 @@ const BORDER_RAMP_KEYS = [
 /** The breathing border's dimmest-to-heaviest ramp, resolved for one preset — the `border.ramp.*` rows of the table above, in bucket order. */
 export function resolveGlyphRamp(preset: SymbolPreset): readonly string[] {
 	return BORDER_RAMP_KEYS.map(key => resolveGlyph(key, preset));
-}
-
-const RING_RAMP_KEYS = [
-	"reflectionRipple.ring.0",
-	"reflectionRipple.ring.1",
-	"reflectionRipple.ring.2",
-	"reflectionRipple.ring.3",
-	"reflectionRipple.ring.4",
-] as const satisfies readonly GlyphKey[];
-
-/** Reflection Ripple's faintest-to-brightest ring ramp, resolved for one preset — feeds `reflection-ripple/ripple.ts`'s `ringGlyph` bucket lookup. */
-export function resolveRingGlyphRamp(preset: SymbolPreset): readonly string[] {
-	return RING_RAMP_KEYS.map(key => resolveGlyph(key, preset));
 }

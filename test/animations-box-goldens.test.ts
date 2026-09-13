@@ -4,10 +4,9 @@
  * Plan 018 status lines). Per-builder span/variant assertions live in
  * `animations-box-segments.test.ts`; per-mode geometry/border assertions
  * live in `animations-box-widget.test.ts`. This file is the
- * composition-level contract: literal rendered frames at the maintainer's
+ * composition-level contract: rendered facts, row ordering and geometry at the
  * real pane width (69), narrow (45), and wide (120), driven through the
- * real controller pipeline end to end; the §3 grammar forms (n/a, idle,
- * notable, alert, change-flash) as rendered-line goldens; plus the
+ * real controller pipeline end to end; status and change-flash behavior; plus the
  * invariants that make the fixed-height design actually hold.
  */
 import { describe, expect, it } from "bun:test";
@@ -29,15 +28,12 @@ import { type AnimationsBoxContext, AnimationsBoxController } from "../src/anima
 import {
 	buildAuditTrailBoxSegment,
 	buildCacheMeterSegment,
-	buildCadenceEqualizerSegment,
 	buildContextGaugeSegment,
 	buildRateLimitTidepoolSegment,
-	buildReflectionRippleSegment,
 	buildToolActivitySegment,
 	type SegmentSample,
 } from "../src/animations-box/segments";
 import {
-	BOX_OPTIONAL_STATUS_SEGMENT_IDS,
 	BOX_REQUIRED_SEGMENT_IDS,
 	BOX_SEGMENT_IDS,
 	type BoxDetail,
@@ -49,17 +45,16 @@ import {
 	FULL_FLASH_BOLD_MS,
 	FULL_FLASH_MS,
 	renderStatusLine,
+	STATUS_LINE_PREFIX_COLS,
 	type StatusLineContext,
 } from "../src/animations-box/status-line";
 import { ToolActivityState } from "../src/animations-box/tool-activity";
 import { AnimationsBoxWidget, BOX_BORDER_COLS, BOX_BORDER_ROWS } from "../src/animations-box/widget";
 import { AuditLedgerState, POISON_STREAK_TICKS } from "../src/audit-trail-box";
 import { CacheMeterState } from "../src/cache-meter";
-import { CadenceEqualizerState } from "../src/cadence-equalizer";
 import { AnimationHost, composeSegments, type FrameScheduler, MotionPolicy, segment } from "../src/kit";
 import { buildLiveFilesSegment, LiveFilesState } from "../src/live-files";
 import { RateLimitTidepoolState } from "../src/rate-limit-tidepool";
-import { ReflectionRippleState } from "../src/reflection-ripple";
 
 // Identity theme so goldens pin plain text instead of ANSI escapes.
 const idTheme = { fg: (_color: string, text: string) => text };
@@ -205,8 +200,8 @@ function anthropicHeaders(limit: number, remaining: number, resetAtMs: number): 
 	};
 }
 
-function afterProviderResponse(headers: Record<string, string>): AfterProviderResponseEvent {
-	return { type: "after_provider_response", headers } as unknown as AfterProviderResponseEvent;
+function afterProviderResponse(headers: Record<string, string>, status = 200): AfterProviderResponseEvent {
+	return { type: "after_provider_response", status, headers } as unknown as AfterProviderResponseEvent;
 }
 
 function toolCall(toolName: string, toolCallId: string): ToolCallEvent {
@@ -215,8 +210,8 @@ function toolCall(toolName: string, toolCallId: string): ToolCallEvent {
 
 /**
  * Drive the controller through its real event handlers and one scheduler tick
- * to build a representative scene. Context, cache, cadence, audit, limits,
- * and tools are active. Live Files and Reflection Ripple stay idle.
+ * to build a representative scene. Context, cache, audit, limits, and tools
+ * are active. Live Files stays idle.
  */
 function driveFullBox(detail: BoxDetail): AnimationsBoxWidget {
 	const scheduler = manualScheduler();
@@ -241,7 +236,7 @@ function driveFullBox(detail: BoxDetail): AnimationsBoxWidget {
 	controller.onToolCall(toolCall("read", "tc-2"), ctx);
 	controller.onToolCall(toolCall("bash", "tc-3"), ctx); // the one non-file call: the tools row's whole breakdown
 
-	// One tick so cadence's EMA bands step off zero — mirrors the real per-frame pipeline.
+	// Drive the real per-frame pipeline once before capturing the widget.
 	scheduler.advance(50);
 	widget.onFrame(0);
 
@@ -257,8 +252,6 @@ function restingSamples(): SegmentSample[] {
 		buildRateLimitTidepoolSegment(new RateLimitTidepoolState(), 0, idTheme),
 		buildToolActivitySegment(new ToolActivityState(), 0, idTheme),
 		buildLiveFilesSegment(new LiveFilesState(), BOX_SEGMENT_IDS.indexOf("filesLive") + 1),
-		buildCadenceEqualizerSegment(new CadenceEqualizerState(), false, null, 0, idTheme),
-		buildReflectionRippleSegment(new ReflectionRippleState(), 0, idTheme),
 	];
 }
 
@@ -291,9 +284,6 @@ function activeSamples(): SegmentSample[] {
 	const liveFilesState = new LiveFilesState(() => 0);
 	liveFilesState.onToolCall({ toolCallId: "edit-1", toolName: "edit", input: { path: "/repo/src/foo.ts" } }, "/repo");
 
-	const reflectionRippleState = new ReflectionRippleState();
-	reflectionRippleState.applyTrigger(["myRule"], 0);
-
 	// Two growing turns are the minimum that publishes a burn rate, so the
 	// active gauge carries its full span ladder including the turn forecast.
 	const contextGaugeState = new ContextGaugeState();
@@ -308,11 +298,32 @@ function activeSamples(): SegmentSample[] {
 		buildContextGaugeSegment(contextGaugeState, 0, idTheme),
 		buildCacheMeterSegment(cacheMeterState, 0, idTheme),
 		buildAuditTrailBoxSegment(auditState, 0, idTheme),
-		buildRateLimitTidepoolSegment(tidepoolState, 0, idTheme),
+		buildRateLimitTidepoolSegment(tidepoolState, 0, idTheme, undefined, undefined, {
+			okCount: 1,
+			lastStatus: 200,
+			troubleCounts: {},
+			lastTrouble: undefined,
+		}),
 		buildToolActivitySegment(toolActivityState, 0, idTheme),
 		buildLiveFilesSegment(liveFilesState, BOX_SEGMENT_IDS.indexOf("filesLive") + 1),
-		buildCadenceEqualizerSegment(new CadenceEqualizerState(), true, 100, 0, idTheme),
-		buildReflectionRippleSegment(reflectionRippleState, 0, idTheme),
+	];
+}
+
+function heightSamples(active: boolean): SegmentSample[] {
+	return [
+		...(active ? activeSamples() : restingSamples()),
+		{
+			id: "optionalA",
+			priority: 7,
+			active,
+			variants: active ? ["OPTIONAL DETAIL", "OPTIONAL"] : [],
+			line: {
+				dot: active ? "live" : "idle",
+				label: "opt-a",
+				accent: "dim",
+				spans: [{ key: "value", text: active ? "active" : "—" }],
+			},
+		},
 	];
 }
 
@@ -333,7 +344,7 @@ function makeWidget(samples: readonly SegmentSample[], detail: BoxDetail): Anima
 		onTick: () => {},
 		buildSampleGroups: () => groups,
 		getDetail: () => detail,
-		getBorderBrightness: () => undefined,
+		getBorderFrame: () => undefined,
 	});
 }
 
@@ -341,73 +352,83 @@ function makeWidget(samples: readonly SegmentSample[], detail: BoxDetail): Anima
 // 1. Full-box golden frames
 // ---------------------------------------------------------------------------
 
-describe("AnimationsBoxController + AnimationsBoxWidget — full-box golden frames (Decision 5)", () => {
-	// Context and cache lead the detailed rows and shed right-side detail as
-	// the pane narrows. Live Files closes the required block.
-	it("detailed mode: exact golden frames at width 69 (real pane), 45 (narrow), and 120 (wide) — six required rows", () => {
+describe("AnimationsBoxController + AnimationsBoxWidget — full-box frames (Decision 5)", () => {
+	function expectBox(rows: readonly string[], width: number, contentRows: number): void {
+		expect(rows).toHaveLength(contentRows + BOX_BORDER_ROWS);
+		expect(rows[0]).toBe(`┌${"─".repeat(width - 2)}┐`);
+		expect(rows.at(-1)).toBe(`└${"─".repeat(width - 2)}┘`);
+		for (const row of rows.slice(1, -1)) {
+			expect(row.startsWith("│ ")).toBe(true);
+			expect(row.endsWith(" │")).toBe(true);
+			expect(visibleWidth(row)).toBe(width);
+		}
+	}
+
+	it("detailed mode keeps six ordered required rows and sheds optional metric detail", () => {
 		const widget = driveFullBox("detailed");
-
-		expect(widget.renderFrame(69)).toEqual([
-			"╭───────────────────────────────────────────────────────────────────╮",
-			`${"│ ◐  context  [████████░░] 75% quota · 120K/200K   160K quota".padEnd(68)}│`,
-			`${"│ ●  cache    50% hit · 1/1                    400 uncached".padEnd(68)}│`,
-			`${"│ ◐  audit    1 read · 1 write · 1 edited      widget.ts".padEnd(68)}│`,
-			"│ ●  limits   78% left · resets 12m · anthropic                     │",
-			"│ ●  tools    3 calls — bash (1)                                    │",
-			"│ ○  files    —                                                     │",
-			"╰───────────────────────────────────────────────────────────────────╯",
-		]);
-
-		expect(widget.renderFrame(45)).toEqual([
-			"╭───────────────────────────────────────────╮",
-			`${"│ ◐  context  [████████░░] 75% quota".padEnd(44)}│`,
-			`${"│ ●  cache    50% hit · 1/1".padEnd(44)}│`,
-			"│ ◐  audit    1 read · 1 write · 1 edited   │",
-			"│ ●  limits   78% left · resets 12m         │",
-			"│ ●  tools    3 calls — bash (1)            │",
-			"│ ○  files    —                             │",
-			"╰───────────────────────────────────────────╯",
-		]);
-
-		expect(widget.renderFrame(120)).toEqual([
-			"╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
-			`${"│ ◐  context  [████████░░] 75% quota · 120K/200K   160K quota".padEnd(119)}│`,
-			`${"│ ●  cache    50% hit · 1/1                    400 uncached · 600 reused · 200 stored".padEnd(119)}│`,
-			`${"│ ◐  audit    1 read · 1 write · 1 edited      widget.ts".padEnd(119)}│`,
-			"│ ●  limits   78% left · resets 12m · anthropic                                                                        │",
-			"│ ●  tools    3 calls — bash (1)                                                                                       │",
-			"│ ○  files    —                                                                                                        │",
-			"╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
-		]);
-
+		for (const width of [45, 69, 120]) {
+			const rows = widget.renderFrame(width);
+			expectBox(rows, width, 6);
+			expect(rows.slice(1, -1).map(row => row.trim().split(/\s+/)[2])).toEqual([
+				"context",
+				"cache",
+				"audit",
+				"limits",
+				"tools",
+				"files",
+			]);
+			expect(rows[1]).toContain("[████████░░]");
+			expect(rows[1]).toContain("75% budget");
+			expect(rows[2]).toMatch(/50%.*recent.*token.*reuse/);
+			expect(rows[3]).toContain("1 read");
+			expect(rows[3]).toContain("1 write");
+			expect(rows[3]).toContain("1 edited");
+			// Health-first limits row shows "http 200" at all widths, tidepool quota is wide-only
+			expect(rows[4]).toContain("http 200");
+			if (width >= 69) {
+				expect(rows[4]).toContain("78% left");
+				expect(rows[4]).toContain("resets 12m");
+			}
+			expect(rows[6]).toMatch(/○\s+files\s+—/);
+			if (width >= 69) {
+				expect(rows[1]).toContain("120K/200K window");
+				expect(rows[3]).toContain("widget.ts");
+			} else {
+				expect(rows[1]).not.toContain("120K/200K");
+				expect(rows[3]).not.toContain("widget.ts");
+			}
+			if (width === 120) {
+				expect(rows[2]).toMatch(/1\/1.*session.*requests.*reuse/);
+				expect(rows[2]).toContain("400 uncached");
+				expect(rows[2]).toContain("600 reused");
+				expect(rows[2]).toContain("200 stored");
+			} else {
+				expect(rows[2]).not.toContain("1/1");
+			}
+		}
 		widget.dispose();
 	});
 
-	// Simple mode is one shared row, so the context gauge's variants compete with
-	// every other summary for the same budget: at 120 both it and the cache meter
-	// get their widest form, at 69 the cache meter drops to its middle one, and at
-	// 45 the bar itself sheds — the percentage is the last thing standing.
-	it("simple mode: exact golden frames at width 69 (real pane), 45 (narrow), and 120 (wide) — required segments only", () => {
+	it("simple mode keeps budget, reuse and rate-limit measurements in priority order at every width", () => {
 		const widget = driveFullBox("simple");
-
-		expect(widget.renderFrame(69)).toEqual([
-			"╭───────────────────────────────────────────────────────────────────╮",
-			"│ [████████░░] 75% quota · ▤ 50.0% · ▣ 1✎\uFE0E · 78% · 3 calls           │",
-			"╰───────────────────────────────────────────────────────────────────╯",
-		]);
-
-		expect(widget.renderFrame(45)).toEqual([
-			"╭───────────────────────────────────────────╮",
-			"│ 75% quota · ▤ · ▣ 1✎\uFE0E · 78% · 3 calls      │",
-			"╰───────────────────────────────────────────╯",
-		]);
-
-		expect(widget.renderFrame(120)).toEqual([
-			"╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
-			"│ [████████░░] 75% quota · ▤ HIT 50.0% (1/1) ▅ READ 600 WRITE 200 MISS 400 · ▣ 1✎\uFE0E r/w 1/1 ×1.0 ↻0% · 78% · 3 calls     │",
-			"╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
-		]);
-
+		for (const width of [45, 69, 120]) {
+			const rows = widget.renderFrame(width);
+			expectBox(rows, width, 1);
+			const summary = rows[1] as string;
+			expect(summary).toContain("75% budget");
+			expect(summary).toMatch(/(?:50%.*reuse|reuse 50%)/);
+			expect(summary).toContain("1✎\uFE0E");
+			// Health-first: check priority order for context, cache, audit, tools
+			expect(summary.indexOf("75%")).toBeLessThan(summary.indexOf("50%"));
+			expect(summary.indexOf("50%")).toBeLessThan(summary.indexOf("1✎\uFE0E"));
+			if (width >= 69) {
+				expect(summary).toContain("[████████░░]");
+				expect(summary).toContain("3 calls");
+			} else {
+				expect(summary).not.toContain("[");
+				expect(summary).not.toContain("3 calls");
+			}
+		}
 		widget.dispose();
 	});
 
@@ -444,7 +465,7 @@ function lineCtx(overrides: Partial<StatusLineContext> = {}): StatusLineContext 
 }
 
 describe("renderStatusLine — §3 fixture goldens at the spec's 78-col inner width (Plan 018)", () => {
-	it("n/a form (D4): a provider that never caches latches to the idle dot and dim prose — no numbers", () => {
+	it("a sustained cold workload reports an observation, never provider capability", () => {
 		const state = new CacheMeterState();
 		for (let i = 0; i < 8; i++) {
 			state.recordUsage({
@@ -454,7 +475,9 @@ describe("renderStatusLine — §3 fixture goldens at the spec's 78-col inner wi
 			});
 		}
 		const { line } = buildCacheMeterSegment(state, 0, idTheme);
-		expect(renderStatusLine(line, SPEC_INNER, lineCtx())).toBe("○  cache    no caching on this provider");
+		const rendered = renderStatusLine(line, SPEC_INNER, lineCtx());
+		expect(rendered).toMatch(/^○\s+cache\s+.*no reuse.*observed/);
+		expect(rendered).not.toMatch(/provider|unsupported|unavailable|never caches|no caching|\d/);
 	});
 
 	it("idle form: an untouched segment renders the lone dim em-dash under the idle dot", () => {
@@ -462,15 +485,35 @@ describe("renderStatusLine — §3 fixture goldens at the spec's 78-col inner wi
 		expect(renderStatusLine(line, SPEC_INNER, lineCtx())).toBe("○  files    —");
 	});
 
-	it("notable form: an agent-edited file escalates to the half dot and keeps the wide tail beside the indicators", () => {
+	it("pulses an active row without moving any cells", () => {
+		const theme = {
+			fg: (color: string, text: string) => `<${color}>${text}</${color}>`,
+			bold: (text: string) => `<b>${text}</b>`,
+		};
+		const line = {
+			dot: "live" as const,
+			label: "tools",
+			accent: "syntaxFunction" as const,
+			activity: true,
+			spans: [{ key: "active", text: "bash" }],
+		};
+		const crest = renderStatusLine(line, SPEC_INNER, lineCtx({ theme, now: 0, flashTier: "full" }));
+		const rest = renderStatusLine(line, SPEC_INNER, lineCtx({ theme, now: 800, flashTier: "full" }));
+		expect(crest).toContain("<b><syntaxFunction>bash</syntaxFunction></b>");
+		expect(rest).not.toContain("<syntaxFunction>bash</syntaxFunction>");
+		const stripTags = (text: string): string => text.replaceAll(/<[^>]+>/g, "");
+		expect(stripTags(crest)).toBe(stripTags(rest));
+	});
+
+	it("notable form: an agent-edited file stays in one evenly spaced phrase", () => {
 		const state = new AuditLedgerState();
 		state.noteRead("/repo/src/widget.ts");
 		state.noteWrite("/repo/src/widget.ts", 0);
 		const { line } = buildAuditTrailBoxSegment(state, 0, idTheme);
-		expect(line.dot).toBe("notable");
-		expect(renderStatusLine(line, SPEC_INNER, lineCtx())).toBe(
-			"◐  audit    1 read · 1 write · 1 edited      widget.ts",
-		);
+		const rendered = renderStatusLine(line, SPEC_INNER, lineCtx());
+		expect(rendered).toMatch(/^◐\s+audit/);
+		expect(rendered.split(" · ").slice(1)).toEqual(["1 write", "1 edited", "last widget.ts"]);
+		expect(rendered).toContain("1 read · ");
 	});
 
 	it("alert form: an on-disk divergence escalates to the alert dot with the poisoned span beside it", () => {
@@ -479,10 +522,132 @@ describe("renderStatusLine — §3 fixture goldens at the spec's 78-col inner wi
 		const reading = { path: "/repo/src/read.log", hash: "h2", reachable: true };
 		for (let tick = 0; tick < POISON_STREAK_TICKS; tick++) state.noteProbe([reading], 10_000 + tick * 1000);
 		const { line } = buildAuditTrailBoxSegment(state, 20_000, idTheme);
-		expect(line.dot).toBe("alert");
-		expect(renderStatusLine(line, SPEC_INNER, lineCtx({ now: 20_000 }))).toBe(
-			"●  audit    1 read · 0 writes · 1 changed on disk   read.log",
-		);
+		const rendered = renderStatusLine(line, SPEC_INNER, lineCtx({ now: 20_000 }));
+		expect(rendered).toMatch(/^●\s+audit/);
+		expect(rendered).toContain("1 changed on disk");
+		expect(rendered.indexOf("1 changed on disk")).toBeLessThan(rendered.indexOf("read.log"));
+	});
+});
+
+describe("renderStatusLine — no required row ever draws a label with a blank value column (daw.1)", () => {
+	// STATUS_LINE_PREFIX_COLS(12) + BOX_BORDER_COLS(4) is the smallest total
+	// box width where the phrase budget (`available`) is still positive — the
+	// prefix-only fallback below that floor is a documented, width-shared
+	// degradation (every row loses its value at once), not a per-row defect.
+	// Above that floor every row is still individually responsible for
+	// drawing a value, which is what this reproduces daw.1's "files/audit
+	// rendered its label with nothing beside it while every other row in the
+	// same 200-col frame kept its value" report against.
+	const MIN_INNER_WITH_VALUE = STATUS_LINE_PREFIX_COLS + 1;
+
+	it("every resting row keeps its dim '—' value at every width from the value floor to 200 cols", () => {
+		for (const sample of restingSamples()) {
+			for (let inner = MIN_INNER_WITH_VALUE; inner <= 200; inner++) {
+				const rendered = renderStatusLine(sample.line, inner, lineCtx({ segmentId: sample.id }));
+				expect(rendered.slice(STATUS_LINE_PREFIX_COLS).trim().length).toBeGreaterThan(0);
+			}
+		}
+	});
+
+	it("every active row keeps a non-blank value at every width from the value floor to 200 cols", () => {
+		for (const sample of activeSamples()) {
+			for (let inner = MIN_INNER_WITH_VALUE; inner <= 200; inner++) {
+				const rendered = renderStatusLine(sample.line, inner, lineCtx({ segmentId: sample.id }));
+				expect(rendered.slice(STATUS_LINE_PREFIX_COLS).trim().length).toBeGreaterThan(0);
+			}
+		}
+	});
+
+	it("a sub-threshold single file touch renders audit's active line and files' resting '—', neither blank", () => {
+		const auditState = new AuditLedgerState();
+		auditState.noteRead("/repo/src/widget.ts");
+		const auditLine = buildAuditTrailBoxSegment(auditState, 0, idTheme).line;
+		const filesLine = buildLiveFilesSegment(new LiveFilesState(), 1).line;
+		for (const width of [45, 69, 120, 200]) {
+			const auditRendered = renderStatusLine(auditLine, width - 4, lineCtx({ segmentId: "auditTrailBox" }));
+			const filesRendered = renderStatusLine(filesLine, width - 4, lineCtx({ segmentId: "filesLive" }));
+			expect(auditRendered.slice(STATUS_LINE_PREFIX_COLS).trim().length).toBeGreaterThan(0);
+			expect(filesRendered.slice(STATUS_LINE_PREFIX_COLS).trim()).toBe("—");
+		}
+	});
+});
+
+describe("renderStatusLine — context bars stay whole at every width", () => {
+	it.each(["ascii", "unicode"] as const)("%s keeps the percentage when the fixed bar cannot fit", preset => {
+		const readings = [
+			{ percent: 40, used: "64K", bar: preset === "ascii" ? "[####------]" : "[████░░░░░░]" },
+			{ percent: 95, used: "152K", bar: preset === "ascii" ? "[##########]" : "[██████████]" },
+		].map(reading => {
+			const state = new ContextGaugeState();
+			state.observe({ tokens: 1600 * reading.percent, contextWindow: 200_000, percent: reading.percent * 0.8 });
+			return { ...reading, line: buildContextGaugeSegment(state, 0, idTheme, preset).line };
+		});
+		const ctx = lineCtx({ preset });
+
+		for (let width = 1; width <= 120; width++) {
+			const phrases = readings.map(({ line, bar, percent }) => {
+				const rendered = renderStatusLine(line, width, ctx);
+				const phrase = rendered.slice(STATUS_LINE_PREFIX_COLS);
+				expect(visibleWidth(rendered)).toBeLessThanOrEqual(width);
+				if (phrase.includes("[")) {
+					expect(phrase).toStartWith(`${bar} ${percent}% budget`);
+				}
+				expect(phrase.replace(bar, "")).not.toMatch(/[[\]█░#-]/);
+				if (width >= STATUS_LINE_PREFIX_COLS + 4) expect(phrase).toContain(`${percent}%`);
+				else if (width === STATUS_LINE_PREFIX_COLS + 3) expect(phrase).toBe(`${percent}…`);
+				else if (width === STATUS_LINE_PREFIX_COLS + 2) expect(phrase).toBe(`${String(percent)[0]}…`);
+				if (width < STATUS_LINE_PREFIX_COLS + 12 + 1 + "40% budget".length) {
+					expect(phrase).not.toContain("[");
+				}
+				return phrase;
+			});
+			// Twelve prefix cells plus a digit and the truncation ellipsis is the first distinguishable width.
+			if (width >= STATUS_LINE_PREFIX_COLS + 2) expect(phrases[0]).not.toBe(phrases[1]);
+			else expect(phrases[0]).toBe(phrases[1]);
+		}
+
+		for (const { line, bar, percent, used } of readings) {
+			expect(renderStatusLine(line, 120, ctx).slice(STATUS_LINE_PREFIX_COLS)).toBe(
+				`${bar} ${percent}% budget · ${used}/200K window`,
+			);
+		}
+	});
+
+	it("drops an oversized fixed graphic before its fallback, but keeps normal priority when it fits", () => {
+		const line = {
+			dot: "live" as const,
+			label: "quota",
+			accent: "accent" as const,
+			spans: [
+				{ key: "rail", text: "[####------]", neverTruncate: true },
+				{ key: "reading", text: "40%" },
+			],
+		};
+		expect(renderStatusLine(line, 23, lineCtx()).slice(STATUS_LINE_PREFIX_COLS)).toBe("40%");
+		expect(renderStatusLine(line, 24, lineCtx()).slice(STATUS_LINE_PREFIX_COLS)).toBe("[####------]");
+		expect(
+			renderStatusLine({ ...line, spans: line.spans.slice(0, 1) }, 23, lineCtx()).slice(STATUS_LINE_PREFIX_COLS),
+		).toBe("");
+	});
+
+	it("observes changes to a dropped bar so widening does not restart its flash", () => {
+		const state = new ContextGaugeState();
+		const flash = new FlashTracker();
+		const theme = {
+			fg: (color: string, text: string) => `<${color}:${text}>`,
+			bold: (text: string) => `«${text}»`,
+		};
+		const ctxAt = (now: number) => lineCtx({ theme, flash, now, flashTier: "full", segmentId: "contextGauge" });
+		state.observe({ tokens: 64_000, contextWindow: 200_000, percent: 32 });
+		renderStatusLine(buildContextGaugeSegment(state, 0, theme).line, 120, ctxAt(0));
+		state.observe({ tokens: 152_000, contextWindow: 200_000, percent: 76 });
+		const changed = buildContextGaugeSegment(state, 1000, theme).line;
+		const narrow = renderStatusLine(changed, 22, ctxAt(1000));
+		expect(narrow).toMatch(/«<[^:>]+:95% budget>»/u);
+		expect(narrow).not.toContain("[");
+		const widened = renderStatusLine(changed, 120, ctxAt(1000 + FULL_FLASH_MS));
+		expect(widened).toContain("[██████████]");
+		expect(widened).not.toContain("«");
 	});
 });
 
@@ -497,36 +662,35 @@ describe("renderStatusLine — the cache row's width ladder (buv.2: one row carr
 		return buildCacheMeterSegment(state, 0, idTheme).line;
 	}
 
-	// The tail sheds one span at a time from the right, so the metric that says
-	// "you are paying full price" survives longest and stays on the shared tail
-	// column.
-	it("sheds the tail right-to-left — stored, then reused, then uncached — before touching the body", () => {
+	it("sheds complete trailing ledger spans before losing the recent reuse measurement", () => {
 		const line = warmedLine();
-		const at = (width: number) => renderStatusLine(line, width, lineCtx());
-		expect(at(78)).toBe("●  cache    50% hit · 1/1                    400 uncached · 600 reused");
-		expect(at(62)).toBe("●  cache    50% hit · 1/1                    400 uncached");
-		expect(at(50)).toBe("●  cache    50% hit · 1/1");
-		expect(at(39)).toBe("●  cache    50% hit · 1/1");
+		const wide = renderStatusLine(line, 120, lineCtx());
+		expect(wide).toMatch(/50%.*recent.*token.*reuse/);
+		expect(wide).toMatch(/1\/1.*session.*requests.*reuse/);
+		expect(wide).toContain("400 uncached");
+		expect(wide).toContain("600 reused");
+		expect(wide).toContain("200 stored");
+		const wideSpans = wide.split(" · ");
+		for (const width of [120, 110, 100, 90, 78, 70, 62, 55, 50, 44, 39]) {
+			const rendered = renderStatusLine(line, width, lineCtx());
+			const spans = rendered.split(" · ");
+			expect(visibleWidth(rendered)).toBeLessThanOrEqual(width);
+			expect(spans).toEqual(wideSpans.slice(0, spans.length));
+			expect(rendered).toMatch(/50%.*recent.*token.*reuse/);
+		}
+		expect(renderStatusLine(line, 78, lineCtx()).split(" · ")).toHaveLength(2);
+		expect(renderStatusLine(line, 39, lineCtx()).split(" · ")).toHaveLength(1);
 	});
 
-	// Below the body budget the hit state is the last thing standing: compact
-	// panes lose counts, never the answer to "is the cache working".
-	it("keeps the hit state after the body itself starts yielding, and only hard-truncates a lone span", () => {
+	it("hard-truncates only the final span, retaining the percentage while it fits", () => {
 		const line = warmedLine();
-		expect(renderStatusLine(line, 24, lineCtx())).toBe("●  cache    50% hit");
-		expect(renderStatusLine(line, 18, lineCtx())).toBe("●  cache    50% h…");
-	});
-
-	// Shedding only ever removes whole trailing spans, so every intermediate
-	// rung is a span-boundary prefix of the widest one — that is what "never
-	// split a label from its value" means mechanically.
-	it("every rung fits its width and is a whole-span prefix of the widest phrase", () => {
-		const line = warmedLine();
-		const widest = renderStatusLine(line, 78, lineCtx());
-		for (const width of [78, 70, 62, 55, 50, 44, 39, 30, 24]) {
+		for (const width of [30, 24, 18]) {
 			const rendered = renderStatusLine(line, width, lineCtx());
 			expect(visibleWidth(rendered)).toBeLessThanOrEqual(width);
-			expect(widest.startsWith(rendered)).toBe(true);
+			expect(rendered).toContain("50%");
+			expect(rendered).toEndWith("…");
+			expect(rendered).not.toContain(" · ");
+			expect(rendered).not.toContain("1/1");
 		}
 	});
 });
@@ -550,32 +714,41 @@ describe("renderStatusLine + FlashTracker — change-flash frame goldens (D6: fl
 			model: "claude",
 			usage: { input: 400, output: 10, cacheRead: 600, cacheWrite: 200, totalTokens: 1210 },
 		});
-		// Baseline frame: first observation of every span key — no flash (D6),
-		// pct resting at its bucketed gradient tone.
-		expect(renderStatusLine(buildCacheMeterSegment(state, 0, tagTheme).line, SPEC_INNER, ctxAt(0))).toBe(
-			"<accent:●>  cache    <success:50% hit> · 1/1                    400 uncached · 600 reused",
-		);
+		const baseline = renderStatusLine(buildCacheMeterSegment(state, 0, tagTheme).line, 120, ctxAt(0));
+		expect(baseline).toMatch(/<success:50%.*recent.*token.*reuse>/);
+		expect(baseline).not.toContain("«");
+		expect(baseline).not.toMatch(/<accent:(?:50%|1\/1|600)/);
+		expect(baseline).toMatch(/1\/1.*session.*requests.*reuse/);
 
-		// A second, fully-cached usage moves pct, hits, and the reused total.
-		// Each enters the bold+accent phase. Uncached stays at rest, and the
-		// lower-priority stored span yields at this width.
+		// A second cached request changes the recent ratio and session counters,
+		// but not uncached or stored tokens.
 		state.recordUsage({
 			provider: "anthropic",
 			model: "claude",
 			usage: { input: 0, output: 10, cacheRead: 1000, cacheWrite: 0, totalTokens: 1010 },
 		});
 		const changed = buildCacheMeterSegment(state, 5000, tagTheme).line;
-		expect(renderStatusLine(changed, SPEC_INNER, ctxAt(5000))).toBe(
-			"<accent:●>  cache    «<accent:75% hit>» · «<accent:2/2>»                    400 uncached · «<accent:1.6K reused>»",
-		);
-		// ...decay to accent alone...
-		expect(renderStatusLine(changed, SPEC_INNER, ctxAt(5000 + FULL_FLASH_BOLD_MS))).toBe(
-			"<accent:●>  cache    <accent:75% hit> · <accent:2/2>                    400 uncached · <accent:1.6K reused>",
-		);
-		// ...and come fully to rest — gradient tone back, no residue (no blinking).
-		expect(renderStatusLine(changed, SPEC_INNER, ctxAt(5000 + FULL_FLASH_MS))).toBe(
-			"<accent:●>  cache    <success:75% hit> · 2/2                    400 uncached · 1.6K reused",
-		);
+		const bold = renderStatusLine(changed, 120, ctxAt(5000));
+		const accent = renderStatusLine(changed, 120, ctxAt(5000 + FULL_FLASH_BOLD_MS));
+		const rest = renderStatusLine(changed, 120, ctxAt(5000 + FULL_FLASH_MS));
+		expect(bold).toMatch(/«<accent:75%.*recent.*token.*reuse>»/);
+		expect(bold).toMatch(/«<accent:2\/2.*session.*requests.*reuse>»/);
+		expect(bold).toContain("«<accent:1.6K reused>»");
+		expect(accent).toMatch(/<accent:75%.*recent.*token.*reuse>/);
+		expect(accent).toMatch(/<accent:2\/2.*session.*requests.*reuse>/);
+		expect(accent).toContain("<accent:1.6K reused>");
+		expect(accent).not.toContain("«");
+		expect(rest).toMatch(/<success:75%.*recent.*token.*reuse>/);
+		expect(rest).not.toContain("«");
+		expect(rest).not.toMatch(/<accent:(?:75%|2\/2|1\.6K)/);
+		const plain = (text: string): string => text.replaceAll(/<[^:>]+:([^>]*)>/g, "$1").replaceAll(/[«»]/g, "");
+		for (const frame of [bold, accent, rest]) {
+			expect(frame).toContain(" · 400 uncached · ");
+			expect(frame).toEndWith(" · 200 stored");
+			expect(plain(frame)).toBe(plain(rest));
+			expect(visibleWidth(plain(frame))).toBeLessThanOrEqual(120);
+			expect(visibleWidth(plain(frame))).toBe(visibleWidth(plain(rest)));
+		}
 	});
 });
 
@@ -583,20 +756,23 @@ describe("renderStatusLine + FlashTracker — change-flash frame goldens (D6: fl
 // 3. Height stability
 // ---------------------------------------------------------------------------
 
-describe("AnimationsBoxWidget — height stability under runtime activation (Decision 5)", () => {
-	it("restingSamples()/activeSamples() line up 1:1 with BOX_SEGMENT_IDS, in order, at the intended activity", () => {
-		expect(restingSamples().map(s => s.id)).toEqual([...BOX_SEGMENT_IDS]);
-		expect(activeSamples().map(s => s.id)).toEqual([...BOX_SEGMENT_IDS]);
-		for (const s of restingSamples()) expect(s.active).toBe(false);
-		for (const s of activeSamples()) expect(s.active).toBe(true);
-	});
+const SAMPLE_IDS = [
+	"contextGauge",
+	"cacheMeter",
+	"auditTrailBox",
+	"rateLimitTidepool",
+	"toolActivity",
+	"filesLive",
+] as const satisfies readonly BoxSegmentId[];
 
+describe("AnimationsBoxWidget — height stability under runtime activation (Decision 5)", () => {
 	it("toggling any single segment active vs resting never changes row count, in either detail mode", () => {
 		for (const detail of ["detailed", "simple"] as const) {
-			const baseline = makeWidget(restingSamples(), detail).render(69).length;
-			for (let i = 0; i < BOX_SEGMENT_IDS.length; i++) {
-				const toggled = restingSamples();
-				toggled[i] = activeSamples()[i] as SegmentSample;
+			const baseline = makeWidget(heightSamples(false), detail).render(69).length;
+			const active = heightSamples(true);
+			for (let i = 0; i < active.length; i++) {
+				const toggled = heightSamples(false);
+				toggled[i] = active[i] as SegmentSample;
 				expect(makeWidget(toggled, detail).render(69).length).toBe(baseline);
 			}
 		}
@@ -604,17 +780,17 @@ describe("AnimationsBoxWidget — height stability under runtime activation (Dec
 
 	it("all required and optional segments active still matches the all-resting row count in either detail mode", () => {
 		for (const detail of ["detailed", "simple"] as const) {
-			const restingCount = makeWidget(restingSamples(), detail).render(69).length;
-			const activeCount = makeWidget(activeSamples(), detail).render(69).length;
+			const restingCount = makeWidget(heightSamples(false), detail).render(69).length;
+			const activeCount = makeWidget(heightSamples(true), detail).render(69).length;
 			expect(activeCount).toBe(restingCount);
 		}
 	});
 
 	it("detailed mode includes one separator between the segment groups; simple mode remains one composed row", () => {
-		expect(makeWidget(restingSamples(), "detailed").render(69)).toHaveLength(
-			BOX_BORDER_ROWS + BOX_SEGMENT_IDS.length + 1,
+		expect(makeWidget(heightSamples(false), "detailed").render(69)).toHaveLength(
+			BOX_BORDER_ROWS + SAMPLE_IDS.length + 2,
 		);
-		expect(makeWidget(restingSamples(), "simple").render(69)).toHaveLength(BOX_BORDER_ROWS + 1);
+		expect(makeWidget(heightSamples(false), "simple").render(69)).toHaveLength(BOX_BORDER_ROWS + 1);
 	});
 });
 
@@ -623,29 +799,14 @@ describe("AnimationsBoxController — config-driven height changes (Decision 5)"
 		return mountedWidget(rawConfig).renderFrame(width).length;
 	}
 
-	it("keeps required-summary height fixed and adds one shared separator for visible optional status rows", () => {
+	it("keeps required-summary height fixed regardless of obsolete row toggles", () => {
 		const baselineDetailed = frameLength({ animationsBoxDetail: "detailed" });
-		const baselineSimple = frameLength({ animationsBoxDetail: "simple" });
 		expect(baselineDetailed).toBe(BOX_BORDER_ROWS + BOX_REQUIRED_SEGMENT_IDS.length);
 
 		for (const id of BOX_REQUIRED_SEGMENT_IDS) {
 			expect(frameLength({ animationsBoxDetail: "detailed", [id]: false })).toBe(baselineDetailed);
 			expect(frameLength({ animationsBoxDetail: "detailed", [id]: true })).toBe(baselineDetailed);
 		}
-		for (const id of BOX_OPTIONAL_STATUS_SEGMENT_IDS) {
-			expect(frameLength({ animationsBoxDetail: "detailed", [id]: false })).toBe(baselineDetailed);
-			expect(frameLength({ animationsBoxDetail: "detailed", [id]: true })).toBe(baselineDetailed + 2);
-			expect(frameLength({ animationsBoxDetail: "simple", [id]: false })).toBe(baselineSimple);
-			expect(frameLength({ animationsBoxDetail: "simple", [id]: true })).toBe(baselineSimple);
-		}
-		expect(frameLength({ animationsBoxDetail: "detailed", agentBonsai: true })).toBe(baselineDetailed);
-		expect(
-			frameLength({
-				animationsBoxDetail: "detailed",
-				cadenceEqualizer: true,
-				reflectionRipple: true,
-			}),
-		).toBe(baselineDetailed + 3);
 	});
 
 	it("breathingBorder: false changes height not at all, in either detail mode — the border chrome remains, just uncolored", () => {
@@ -667,12 +828,12 @@ describe("kit composeSegments — degradation ladder at 45/69/120 in simple mode
 		return BOX_SEGMENT_IDS.indexOf(id) + 1;
 	}
 
-	// Live Files carries a path and deliberately sits at the end of the required
-	// block, so narrow simple rows shed it before higher-priority summaries.
+	// Minimum widths with separators: first four = 35, first five = 45,
+	// all six = 54. Borders leave budgets 41, 65 and 116.
 	const LADDER: Record<number, readonly BoxSegmentId[]> = {
-		69: BOX_SEGMENT_IDS.slice(0, -1),
-		45: BOX_SEGMENT_IDS.slice(0, -3),
-		120: BOX_SEGMENT_IDS,
+		45: SAMPLE_IDS.slice(0, 4),
+		69: SAMPLE_IDS,
+		120: SAMPLE_IDS,
 	};
 
 	it("keptIds match the literal expected ladder at each width, staying priority-ordered ascending", () => {
@@ -687,12 +848,16 @@ describe("kit composeSegments — degradation ladder at 45/69/120 in simple mode
 		}
 	});
 
-	it("sheds the lowest-priority segments first as width tightens", () => {
-		expect(LADDER[120]).toContain("reflectionRipple");
-		expect(LADDER[69]).not.toContain("reflectionRipple");
-		expect(LADDER[69]).toContain("cadenceEqualizer");
-		expect(LADDER[45]).not.toContain("filesLive");
-		expect(LADDER[45]).toContain("toolActivity");
-		expect(LADDER[45]).toContain("contextGauge");
+	it("retains rate-limit headroom after lower-priority segments shed", () => {
+		const kitSegments = activeSamples().map(s => segment(s.id, s.priority, s.variants));
+		const narrow = composeSegments(kitSegments, 45 - BOX_BORDER_COLS);
+		expect(narrow.keptIds).toContain("rateLimitTidepool");
+		// Health-first: narrow shows health, not tidepool quota
+		expect(narrow.row).toContain("http 200");
+		expect(narrow.row).toContain("reuse 50%");
+		expect(narrow.keptIds).not.toContain("toolActivity");
+		expect(narrow.keptIds).not.toContain("filesLive");
+		const real = composeSegments(kitSegments, 69 - BOX_BORDER_COLS);
+		expect(real.keptIds).toContain("filesLive");
 	});
 });

@@ -29,17 +29,32 @@ export function buildLiveFilesSnapshotSegment(snapshot: LiveFileSnapshot, priori
 		};
 	}
 
-	const spans: PhraseSpan[] = paths.map((filePath, index) => ({
-		key: `path-${index}`,
-		text: filePath,
-		priority: index,
-	}));
+	const colliding = new Set(snapshot.collidingPaths);
+	const spans: PhraseSpan[] = paths.map((filePath, index) => {
+		const span: PhraseSpan = { key: `path-${index}`, text: filePath, priority: index };
+		return colliding.has(filePath) ? { ...span, tone: "alert" } : span;
+	});
+	if (colliding.size > 0) {
+		// Distinct writers on the worst colliding path; the producer derives
+		// `collidingPaths` from these same entries, so this is never below 2.
+		const ownersByPath = new Map<string, Set<string>>();
+		for (const entry of snapshot.entries) {
+			if (!colliding.has(entry.path)) continue;
+			const owners = ownersByPath.get(entry.path);
+			if (owners === undefined) ownersByPath.set(entry.path, new Set([entry.owner]));
+			else owners.add(entry.owner);
+		}
+		let writers = 0;
+		for (const owners of ownersByPath.values()) writers = Math.max(writers, owners.size);
+		spans.push({ key: "clash", text: `${writers} writers` });
+	}
+
 	return {
 		id: "filesLive",
 		priority,
 		active: true,
 		variants: variants(paths),
-		line: { dot: "live", label: "files", accent: ACCENT, spans },
+		line: { dot: colliding.size > 0 ? "alert" : "live", label: "files", accent: ACCENT, spans },
 	};
 }
 

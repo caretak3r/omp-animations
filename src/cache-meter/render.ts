@@ -36,10 +36,11 @@
  *   ledger event that isn't just "the numbers went up," and so the one thing
  *   worth a distinct visual cue.
  */
-import type { SymbolPreset, Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+
 import { formatAge, formatNumber } from "@oh-my-pi/pi-utils";
 import { type AccentColor, accentToThemeColor } from "../appearance";
 import { resolveGlyph } from "../glyph-presets";
+import type { SymbolPreset, Theme, ThemeColor } from "../host/types";
 import type { CacheEventCause, CacheInvalidationRecord, CacheMeterSnapshot } from "./state";
 
 /** The slice of {@link Theme} the renderers need — just foreground coloring. */

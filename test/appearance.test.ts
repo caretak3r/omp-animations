@@ -15,10 +15,7 @@ import { AUDIT_TRAIL_BOX_COLORS, renderAuditMeterRow } from "../src/audit-trail-
 import { AuditLedgerState } from "../src/audit-trail-box/state";
 import { CACHE_METER_COLORS, renderCacheMeterRow } from "../src/cache-meter/render";
 import { CacheMeterState } from "../src/cache-meter/state";
-import { renderEqualizerRow } from "../src/cadence-equalizer/render";
-import { BUCKET_THEME_COLOR } from "../src/cadence-equalizer/scale";
 import { renderTidepoolRow, TIDEPOOL_COLORS } from "../src/rate-limit-tidepool/render";
-import { REFLECTION_RIPPLE_COLORS, renderReflectionRippleRow } from "../src/reflection-ripple/render";
 import { ANIMATIONS, resolveAnimationsConfig } from "../src/registrar";
 
 const taggedTheme: Pick<Theme, "fg" | "underline" | "bold"> = {
@@ -145,8 +142,8 @@ describe("resolveAnimationAppearance", () => {
 	it("derives manifest and env keys from camel-case ids", () => {
 		expect(animationsEnvKey("rateLimitTidepool")).toBe("OMP_ANIMATIONS_RATE_LIMIT_TIDEPOOL");
 		expect(animationsEnvKey("rateLimitTidepool", "PLACEMENT")).toBe("OMP_ANIMATIONS_RATE_LIMIT_TIDEPOOL_PLACEMENT");
-		expect(placementKey("cadenceEqualizer")).toBe("cadenceEqualizerPlacement");
-		expect(accentColorKey("cadenceEqualizer")).toBe("cadenceEqualizerAccentColor");
+		expect(placementKey("rateLimitTidepool")).toBe("rateLimitTidepoolPlacement");
+		expect(accentColorKey("rateLimitTidepool")).toBe("rateLimitTidepoolAccentColor");
 	});
 
 	it("defaults glyphPreset to 'unicode' and passes an explicit value straight through, outside the settings/env precedence chain", () => {
@@ -157,27 +154,6 @@ describe("resolveAnimationAppearance", () => {
 });
 
 describe("resolveAnimationsConfig appearance", () => {
-	it("resolves the documented 3-below/3-above placement split", () => {
-		const config = resolveAnimationsConfig({}, {});
-		for (const entry of ANIMATIONS) {
-			expect(config.appearance[entry.id]).toEqual({
-				placement: entry.defaultPlacement,
-				accentColor: undefined,
-				glyphPreset: "unicode",
-			});
-		}
-		expect(ANIMATIONS.filter(entry => entry.defaultPlacement === "belowEditor").map(entry => entry.id)).toEqual([
-			"auditTrailBox",
-			"cadenceEqualizer",
-			"rateLimitTidepool",
-		]);
-		expect(ANIMATIONS.filter(entry => entry.defaultPlacement === "aboveEditor").map(entry => entry.id)).toEqual([
-			"breathingBorder",
-			"cacheMeter",
-			"reflectionRipple",
-		]);
-	});
-
 	it("keeps stored overrides isolated to their animation", () => {
 		const config = resolveAnimationsConfig(
 			{ auditTrailBoxPlacement: "aboveEditor", cacheMeterAccentColor: "warning" },
@@ -278,25 +254,6 @@ describe("renderer accent override", () => {
 		expect(sand).toContain("warning:");
 		expect(sand).not.toContain("syntaxString:");
 	});
-
-	it("recolors only Cadence Equalizer's burst bucket, leaving the cooler buckets fixed", () => {
-		const defaultRow = renderEqualizerRow([1], [1], taggedTheme);
-		expect(defaultRow).toContain("warning:");
-		const overriddenRow = renderEqualizerRow([1], [1], taggedTheme, { ...BUCKET_THEME_COLOR, burst: "success" });
-		expect(overriddenRow).toContain("success:");
-		expect(overriddenRow).not.toContain("warning:");
-	});
-
-	it("recolors only Reflection Ripple's ring, leaving the calm water on its fixed dim token", () => {
-		const defaultRow = renderReflectionRippleRow(0, 11, taggedTheme, "full");
-		expect(defaultRow).toContain("accent:");
-		const overriddenRow = renderReflectionRippleRow(0, 11, taggedTheme, "full", {
-			...REFLECTION_RIPPLE_COLORS,
-			ring: "success",
-		});
-		expect(overriddenRow).toContain("success:");
-		expect(overriddenRow).not.toContain("accent:");
-	});
 });
 
 describe("default byte-equality", () => {
@@ -332,14 +289,6 @@ describe("default byte-equality", () => {
 
 		expect(renderTidepoolRow(0.5, "anthropic", 0, 69, taggedTheme, "full")).toBe(
 			renderTidepoolRow(0.5, "anthropic", 0, 69, taggedTheme, "full", TIDEPOOL_COLORS),
-		);
-
-		expect(renderEqualizerRow([1], [1], taggedTheme)).toBe(
-			renderEqualizerRow([1], [1], taggedTheme, BUCKET_THEME_COLOR),
-		);
-
-		expect(renderReflectionRippleRow(0, 11, taggedTheme, "full")).toBe(
-			renderReflectionRippleRow(0, 11, taggedTheme, "full", REFLECTION_RIPPLE_COLORS),
 		);
 	});
 });

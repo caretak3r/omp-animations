@@ -8,8 +8,9 @@
  * two modules import each other, and the string is a stable, already-shipped
  * plugin identity, not something that drifts.
  */
-import type { WidgetPlacement } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
+
 import { animationsEnvKey } from "../appearance";
+import type { WidgetPlacement } from "../host/types";
 import { CONTEXT_QUOTA_DEFAULT_PERCENT, clampContextQuotaPercent } from "./context-gauge";
 
 const PLUGIN_NAME = "@oh-my-pi/animations";
@@ -27,16 +28,12 @@ export const BOX_REQUIRED_SEGMENT_IDS = [
 export type BoxRequiredSegmentId = (typeof BOX_REQUIRED_SEGMENT_IDS)[number];
 
 /** Optional Audit Box groups, in deterministic order. */
-export const BOX_OPTIONAL_SEGMENT_IDS = ["cadenceEqualizer", "reflectionRipple", "agentBonsai"] as const;
-
-/** Optional status-line animations consumed by simple-mode composition. */
-export const BOX_OPTIONAL_STATUS_SEGMENT_IDS = ["cadenceEqualizer", "reflectionRipple"] as const;
+export const BOX_OPTIONAL_SEGMENT_IDS = ["agentBonsai"] as const;
 
 export type BoxOptionalSegmentId = (typeof BOX_OPTIONAL_SEGMENT_IDS)[number];
-export type BoxOptionalStatusSegmentId = (typeof BOX_OPTIONAL_STATUS_SEGMENT_IDS)[number];
 
 /** Complete status-line segment priority order, shared with simple-mode width degradation. */
-export const BOX_SEGMENT_IDS = [...BOX_REQUIRED_SEGMENT_IDS, ...BOX_OPTIONAL_STATUS_SEGMENT_IDS] as const;
+export const BOX_SEGMENT_IDS = BOX_REQUIRED_SEGMENT_IDS;
 export type BoxSegmentId = (typeof BOX_SEGMENT_IDS)[number];
 
 /** Breathing Border's own animation id. Not a {@link BoxSegmentId} — its row is replaced by the box's own border chrome (Decision 2), not a composed segment — but its existing per-animation enable boolean still gates whether that chrome breathes. */
@@ -60,11 +57,7 @@ const BOX_PLACEMENT_VALUES: readonly WidgetPlacement[] = ["aboveEditor", "belowE
 export interface AnimationsBoxConfig {
 	detail: BoxDetail;
 	placement: WidgetPlacement;
-	/**
-	 * Box participation for optional animations only. Cadence and Reflection
-	 * default to false; Agent Bonsai defaults to true. Explicit settings use
-	 * each optional group's existing flat key.
-	 */
+	/** Optional Agent Bonsai group, enabled unless its flat setting is false. */
 	optional: Readonly<Record<BoxOptionalSegmentId, boolean>>;
 	/**
 	 * Whether the box's border chrome breathes, resolved from the existing
@@ -125,20 +118,14 @@ function resolveNumber(raw: unknown, fallback: number): number {
 /**
  * Resolve the box config from a flat raw settings record (already merged
  * stored-settings-over-env, matching every other resolver in this package).
- * Missing/malformed values fall back to defaults rather than throwing. Only the
- * optional groups and the border chrome are user-toggleable: the required
- * summaries are structural, so no enable map reaches this config at all.
+ * Missing or malformed values fall back instead of throwing. Required rows
+ * remain structural; settings may change their presentation, not remove them.
  */
 export function resolveAnimationsBoxConfig(raw: Record<string, unknown>): AnimationsBoxConfig {
-	const optional = {} as Record<BoxOptionalSegmentId, boolean>;
-	for (const id of BOX_OPTIONAL_SEGMENT_IDS) {
-		const defaultEnabled = id === "agentBonsai";
-		optional[id] = resolveBoolean(raw[id], defaultEnabled);
-	}
 	return {
 		detail: resolveEnum(raw[BOX_SETTING_KEYS.detail], BOX_DETAIL_VALUES, BOX_DEFAULTS.detail),
 		placement: resolveEnum(raw[BOX_SETTING_KEYS.placement], BOX_PLACEMENT_VALUES, BOX_DEFAULTS.placement),
-		optional,
+		optional: { agentBonsai: resolveBoolean(raw.agentBonsai, true) },
 		breathingBorder: resolveBoolean(raw[BREATHING_BORDER_ID], true),
 		contextQuota: clampContextQuotaPercent(
 			resolveNumber(raw[BOX_SETTING_KEYS.contextQuota], BOX_DEFAULTS.contextQuota),

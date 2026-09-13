@@ -9,9 +9,11 @@ export const SIGNAL_EXTRA_IDS = [
 	"sessionPhylogeny",
 	"thinkActLissajous",
 	"errorIsotope",
-	"queueFog",
 	"skillChromatograph",
 	"retryRadar",
+	"verify",
+	"authBeacon",
+	"asyncJobHarbor",
 	"goalHeading",
 	"ttftSplit",
 	"memoryBackendTide",
@@ -27,15 +29,17 @@ export const DEFAULT_SIGNAL_EXTRAS_CONFIG = {
 	compactionScar: true,
 	consentLock: true,
 	sessionPhylogeny: true,
-	thinkActLissajous: true,
+	thinkActLissajous: false,
 	errorIsotope: true,
-	queueFog: true,
 	skillChromatograph: true,
 	retryRadar: true,
-	goalHeading: true,
+	verify: true,
+	authBeacon: true,
+	asyncJobHarbor: true,
+	goalHeading: false,
 	ttftSplit: true,
 	memoryBackendTide: true,
-	darkroomTitle: true,
+	darkroomTitle: false,
 } satisfies SignalExtrasConfig;
 
 function resolveBoolean(raw: unknown, fallback: boolean): boolean {
@@ -45,14 +49,14 @@ function resolveBoolean(raw: unknown, fallback: boolean): boolean {
 	return fallback;
 }
 
-/** Every extra is opt-out: absent and malformed values preserve the curated enabled default. */
+/** Absent and malformed values preserve each extra's curated default. */
 export function resolveSignalExtrasConfig(
 	pluginSettings: Record<string, unknown>,
 	env: Record<string, string | undefined> = Bun.env,
 ): SignalExtrasConfig {
 	const resolved = {} as Record<SignalExtraId, boolean>;
 	for (const id of SIGNAL_EXTRA_IDS) {
-		resolved[id] = resolveBoolean(pluginSettings[id] ?? env[animationsEnvKey(id)], true);
+		resolved[id] = resolveBoolean(pluginSettings[id] ?? env[animationsEnvKey(id)], DEFAULT_SIGNAL_EXTRAS_CONFIG[id]);
 	}
 	return resolved;
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { buildLiveFilesSegment, LiveFilesState } from "../src/live-files";
+import { buildLiveFilesSnapshotSegment } from "../src/live-files/render";
 
 function taskProgress(
 	id: string,
@@ -59,5 +60,62 @@ describe("LiveFilesState", () => {
 		expect(active.variants).toEqual(["src/a.ts", "a.ts"]);
 		state.onToolResult("edit");
 		expect(buildLiveFilesSegment(state, 1).active).toBeFalse();
+	});
+
+	it("renders collision-free snapshots byte-identically regardless of collidingPaths presence", () => {
+		const withoutField = buildLiveFilesSnapshotSegment(
+			{ entries: [{ owner: "main", path: "a.ts", tool: "edit", startedAt: 10 }] },
+			1,
+		);
+		const withEmptyField = buildLiveFilesSnapshotSegment(
+			{ entries: [{ owner: "main", path: "a.ts", tool: "edit", startedAt: 10 }], collidingPaths: [] },
+			1,
+		);
+		expect(withoutField).toEqual(withEmptyField);
+		expect(withoutField.line.dot).toBe("live");
+		expect(withoutField.line.spans.some(span => span.tone === "alert")).toBeFalse();
+	});
+
+	it("escalates dot to alert and marks colliding path spans when distinct agents write to one path", () => {
+		const snapshot = buildLiveFilesSnapshotSegment(
+			{
+				entries: [
+					{ owner: "agentA", path: "shared.ts", tool: "edit", startedAt: 10 },
+					{ owner: "agentB", path: "shared.ts", tool: "write", startedAt: 11 },
+					{ owner: "agentA", path: "solo.ts", tool: "edit", startedAt: 12 },
+				],
+				collidingPaths: ["shared.ts"],
+			},
+			1,
+		);
+		expect(snapshot.line.dot).toBe("alert");
+		const sharedSpan = snapshot.line.spans.find(span => span.text === "shared.ts");
+		expect(sharedSpan?.tone).toBe("alert");
+		const soloSpan = snapshot.line.spans.find(span => span.text === "solo.ts");
+		expect(soloSpan?.tone).toBeUndefined();
+		const clashSpan = snapshot.line.spans.find(span => span.key === "clash");
+		expect(clashSpan?.text).toBe("2 writers");
+	});
+
+	it("clears alert when collision resolves without oscillation", () => {
+		const colliding = buildLiveFilesSnapshotSegment(
+			{
+				entries: [
+					{ owner: "agentA", path: "file.ts", tool: "edit", startedAt: 10 },
+					{ owner: "agentB", path: "file.ts", tool: "edit", startedAt: 11 },
+				],
+				collidingPaths: ["file.ts"],
+			},
+			1,
+		);
+		expect(colliding.line.dot).toBe("alert");
+
+		const resolved = buildLiveFilesSnapshotSegment(
+			{ entries: [{ owner: "agentA", path: "file.ts", tool: "edit", startedAt: 10 }], collidingPaths: [] },
+			1,
+		);
+		expect(resolved.line.dot).toBe("live");
+		expect(resolved.line.spans.some(span => span.tone === "alert")).toBeFalse();
+		expect(resolved.line.spans.some(span => span.key === "clash")).toBeFalse();
 	});
 });

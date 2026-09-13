@@ -1,5 +1,5 @@
 import { type BackpressureSignal, NO_BACKPRESSURE } from "./backpressure";
-import type { MotionPolicy } from "./motion-policy";
+import type { MotionPolicy, MotionTier } from "./motion-policy";
 
 /**
  * Clock/scheduler seam so tests drive frames deterministically without real
@@ -39,6 +39,16 @@ export interface AnimationHostOptions {
 	scheduler?: FrameScheduler;
 }
 
+// Budget all synchronous listeners, including widget rendering/diffing, together:
+// 2ms at 30fps leaves most of each 33ms frame for the host TUI and agent work.
+// Date.now has millisecond resolution, so recovery needs <=1ms, not borderline
+// 2ms samples. These are admission thresholds, not a CPU benchmark.
+const FRAME_WORK_BUDGET_MS = 2;
+const HEALTHY_FRAME_MS = 1;
+const PRESSURE_SAMPLES = 4;
+const RECOVERY_SAMPLES = 30;
+const STATIC_SAMPLE_MS = 250;
+
 /**
  * One shared frame clock per instance. Each registrar-mounted controller
  * constructs its own `AnimationHost`, but within a given instance N
@@ -70,12 +80,20 @@ export class AnimationHost {
 	#startedAt: number | undefined;
 	#unsubscribePolicy: (() => void) | undefined;
 	#disposed = false;
+	#pressureLevel = 0;
+	#slowFrames = 0;
+	#healthyFrames = 0;
+	#motionNow: number | undefined;
 
 	constructor(options: AnimationHostOptions) {
 		this.#policy = options.policy;
 		this.#backpressure = options.backpressure ?? NO_BACKPRESSURE;
 		this.#scheduler = options.scheduler ?? DEFAULT_FRAME_SCHEDULER;
-		this.#unsubscribePolicy = this.#policy.subscribe(() => this.#sync());
+		this.#unsubscribePolicy = this.#policy.subscribe(() => {
+			this.#slowFrames = 0;
+			this.#healthyFrames = 0;
+			this.#sync();
+		});
 	}
 
 	/** Number of live subscribers. */
@@ -86,6 +104,25 @@ export class AnimationHost {
 	/** Whether the underlying timer is currently running. */
 	get running(): boolean {
 		return this.#stopTimerFn !== undefined;
+	}
+
+	/** Optional motion only. Configured policy still owns subscription/off semantics. */
+	get effectiveTier(): MotionTier {
+		if (this.#policy.tier === "off" || this.#pressureLevel === 3) return "off";
+		return this.#pressureLevel > 0 ? "subtle" : this.#policy.tier;
+	}
+
+	/** The same timer coarsens twice before static motion; static still samples work. */
+	get cadenceMs(): number {
+		const configured = this.#policy.cadenceMs;
+		if (configured === 0) return 0;
+		const coarse = configured * 2 ** Math.min(this.#pressureLevel, 2);
+		return this.#pressureLevel === 3 ? Math.max(coarse, STATIC_SAMPLE_MS) : coarse;
+	}
+
+	/** Decorative phase only. Never use this for deadlines, evidence age or lifecycle. */
+	motionTime(now: number): number {
+		return this.#pressureLevel === 0 ? now : (this.#motionNow ?? now);
 	}
 
 	/**
@@ -116,7 +153,7 @@ export class AnimationHost {
 	/** Reconcile the timer with the current subscriber count and policy tier. */
 	#sync(): void {
 		if (this.#disposed) return;
-		const cadence = this.#policy.cadenceMs;
+		const cadence = this.cadenceMs;
 		const wantTimer = this.#listeners.size > 0 && cadence > 0;
 		if (!wantTimer) {
 			this.#stopTimer();
@@ -142,15 +179,49 @@ export class AnimationHost {
 	}
 
 	#tick(): void {
-		// Time-based frame-skip: drop this frame's emission under backpressure, but
-		// keep the clock running so the next emitted frame lands at real elapsed
-		// time and visuals stay smooth after the skip.
-		if (this.#backpressure.underPressure) return;
-		this.#frame++;
-		const elapsedMs = this.#scheduler.now() - (this.#startedAt ?? this.#scheduler.now());
-		// Snapshot so a listener unsubscribing mid-emit cannot skip a sibling.
-		for (const listener of [...this.#listeners]) {
-			listener(this.#frame, elapsedMs);
+		// External pressure still skips the entire frame. Skips are not healthy
+		// samples; the existing timer resumes measurement when pressure clears.
+		if (this.#backpressure.underPressure) {
+			this.#slowFrames = 0;
+			this.#healthyFrames = 0;
+			return;
 		}
+		const started = this.#scheduler.now();
+		this.#frame++;
+		if (this.#pressureLevel < 3) this.#motionNow = started;
+		const elapsedMs = started - (this.#startedAt ?? started);
+		try {
+			// Snapshot so a listener unsubscribing mid-emit cannot skip a sibling.
+			for (const listener of [...this.#listeners]) {
+				listener(this.#frame, elapsedMs);
+			}
+		} catch (error) {
+			this.#slowFrames = 0;
+			this.#healthyFrames = 0;
+			throw error;
+		}
+		this.#observeFrameCost(this.#scheduler.now() - started);
+	}
+
+	#observeFrameCost(costMs: number): void {
+		if (costMs > FRAME_WORK_BUDGET_MS && Number.isFinite(costMs)) {
+			this.#healthyFrames = 0;
+			this.#slowFrames = Math.min(this.#slowFrames + 1, PRESSURE_SAMPLES);
+			if (this.#slowFrames < PRESSURE_SAMPLES || this.#pressureLevel === 3) return;
+			this.#pressureLevel++;
+		} else if (costMs >= 0 && costMs <= HEALTHY_FRAME_MS) {
+			this.#slowFrames = 0;
+			this.#healthyFrames = Math.min(this.#healthyFrames + 1, RECOVERY_SAMPLES);
+			if (this.#healthyFrames < RECOVERY_SAMPLES || this.#pressureLevel === 0) return;
+			this.#pressureLevel--;
+		} else {
+			// Borderline work or a backwards clock cannot establish a healthy run.
+			this.#slowFrames = 0;
+			this.#healthyFrames = 0;
+			return;
+		}
+		this.#slowFrames = 0;
+		this.#healthyFrames = 0;
+		this.#sync();
 	}
 }

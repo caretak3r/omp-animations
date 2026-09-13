@@ -22,15 +22,21 @@ class FakeScheduler implements FrameScheduler {
 	#nextId = 0;
 	#timers = new Map<number, { intervalMs: number; tick: () => void; nextAt: number }>();
 	startCount = 0;
+	maxActiveTimers = 0;
 
 	now(): number {
 		return this.#now;
+	}
+
+	spend(ms: number): void {
+		this.#now += ms;
 	}
 
 	start(intervalMs: number, tick: () => void): () => void {
 		const id = this.#nextId++;
 		this.startCount++;
 		this.#timers.set(id, { intervalMs, tick, nextAt: this.#now + intervalMs });
+		this.maxActiveTimers = Math.max(this.maxActiveTimers, this.#timers.size);
 		return () => {
 			this.#timers.delete(id);
 		};
@@ -56,12 +62,12 @@ class FakeScheduler implements FrameScheduler {
 				if (t.nextAt <= target && (due === undefined || t.nextAt < due.nextAt)) due = t;
 			}
 			if (due === undefined) break;
-			this.#now = due.nextAt;
+			this.#now = Math.max(this.#now, due.nextAt);
 			due.nextAt += due.intervalMs;
 			due.tick();
 			if (++guard > 1_000_000) throw new Error("runaway scheduler advance");
 		}
-		this.#now = target;
+		this.#now = Math.max(this.#now, target);
 	}
 }
 
@@ -312,6 +318,137 @@ describe("AnimationHost backpressure frame-skip", () => {
 		scheduler.advance(window);
 		expect(pressuredFrames).toBe(0);
 		expect(pressuredFrames).toBeLessThan(calmFrames);
+	});
+});
+
+describe("AnimationHost motion governor", () => {
+	it("budgets aggregate work, coarsens twice, then keeps one static sampling timer", () => {
+		const scheduler = new FakeScheduler();
+		const policy = fullPolicy();
+		const host = new AnimationHost({ policy, scheduler });
+		let elapsed = 0;
+		host.subscribe((_frame, now) => {
+			elapsed = now;
+			scheduler.spend(1.5);
+		});
+		host.subscribe(() => scheduler.spend(1.5));
+		const initialCadence = policy.cadenceMs;
+		for (let frame = 0; frame < 3; frame++) scheduler.advance(host.cadenceMs);
+		expect(host.effectiveTier).toBe("full");
+		expect(host.cadenceMs).toBe(initialCadence);
+		scheduler.advance(host.cadenceMs);
+		expect(host.effectiveTier).toBe("subtle");
+		expect(host.cadenceMs).toBe(initialCadence * 2);
+		for (let frame = 0; frame < 4; frame++) scheduler.advance(host.cadenceMs);
+		expect(host.effectiveTier).toBe("subtle");
+		expect(host.cadenceMs).toBe(initialCadence * 4);
+		for (let frame = 0; frame < 4; frame++) scheduler.advance(host.cadenceMs);
+		expect(host.effectiveTier).toBe("off");
+		expect(host.cadenceMs).toBe(250);
+		expect(policy.tier).toBe("full");
+		expect(policy.cadenceMs).toBe(initialCadence);
+		const motionAt = host.motionTime(scheduler.now());
+		const elapsedAtFreeze = elapsed;
+		scheduler.advance(250);
+		expect(host.motionTime(scheduler.now())).toBe(motionAt);
+		expect(elapsed).toBeGreaterThan(elapsedAtFreeze);
+		expect(host.running).toBe(true);
+		expect(scheduler.activeTimers).toBe(1);
+		expect(scheduler.maxActiveTimers).toBe(1);
+		host.dispose();
+		expect(scheduler.activeTimers).toBe(0);
+	});
+
+	it("requires sustained healthy work at each recovery step and resets streaks across pressure skips", () => {
+		const scheduler = new FakeScheduler();
+		const policy = fullPolicy();
+		const backpressure = new ToggleBackpressure();
+		const host = new AnimationHost({ policy, scheduler, backpressure });
+		let workMs = 3;
+		let frames = 0;
+		host.subscribe(() => {
+			frames++;
+			scheduler.spend(workMs);
+		});
+		for (let frame = 0; frame < 12; frame++) scheduler.advance(host.cadenceMs);
+		expect(host.effectiveTier).toBe("off");
+		workMs = 0;
+		for (let frame = 0; frame < 29; frame++) scheduler.advance(host.cadenceMs);
+		expect(host.effectiveTier).toBe("off");
+		workMs = 2;
+		scheduler.advance(host.cadenceMs);
+		workMs = 0;
+		for (let frame = 0; frame < 29; frame++) scheduler.advance(host.cadenceMs);
+		expect(host.effectiveTier).toBe("off");
+		backpressure.underPressure = true;
+		const beforeSkip = frames;
+		scheduler.advance(10_000);
+		expect(frames).toBe(beforeSkip);
+		expect(host.effectiveTier).toBe("off");
+		expect(scheduler.activeTimers).toBe(1);
+		backpressure.underPressure = false;
+		for (let frame = 0; frame < 29; frame++) scheduler.advance(host.cadenceMs);
+		expect(host.effectiveTier).toBe("off");
+		scheduler.advance(host.cadenceMs);
+		expect(host.effectiveTier).toBe("subtle");
+		expect(host.cadenceMs).toBe(policy.cadenceMs * 4);
+		for (let frame = 0; frame < 30; frame++) scheduler.advance(host.cadenceMs);
+		expect(host.cadenceMs).toBe(policy.cadenceMs * 2);
+		for (let frame = 0; frame < 29; frame++) scheduler.advance(host.cadenceMs);
+		expect(host.effectiveTier).toBe("subtle");
+		scheduler.advance(host.cadenceMs);
+		expect(host.effectiveTier).toBe("full");
+		expect(host.cadenceMs).toBe(policy.cadenceMs);
+		expect(scheduler.maxActiveTimers).toBe(1);
+		host.dispose();
+	});
+
+	it("does not count failed listener batches toward motion recovery", () => {
+		const scheduler = new FakeScheduler();
+		const policy = fullPolicy();
+		const host = new AnimationHost({ policy, scheduler });
+		let workMs = 3;
+		let fail = false;
+		const failure = new Error("render failed");
+		host.subscribe(() => {
+			if (fail) throw failure;
+			scheduler.spend(workMs);
+		});
+		for (let frame = 0; frame < 12; frame++) scheduler.advance(host.cadenceMs);
+		workMs = 0;
+		for (let frame = 0; frame < 29; frame++) scheduler.advance(host.cadenceMs);
+		fail = true;
+		expect(() => scheduler.advance(host.cadenceMs)).toThrow(failure);
+		expect(host.effectiveTier).toBe("off");
+		fail = false;
+		for (let frame = 0; frame < 29; frame++) scheduler.advance(host.cadenceMs);
+		expect(host.effectiveTier).toBe("off");
+		scheduler.advance(host.cadenceMs);
+		expect(host.effectiveTier).toBe("subtle");
+		host.dispose();
+	});
+
+	it("honors live off and reduced-motion policy while recovering to the configured tier", () => {
+		const scheduler = new FakeScheduler();
+		const policy = fullPolicy({ env: { OMP_ANIMATIONS_REDUCED_MOTION: "1" } });
+		const host = new AnimationHost({ policy, scheduler });
+		let workMs = 3;
+		host.subscribe(() => scheduler.spend(workMs));
+		for (let frame = 0; frame < 12; frame++) scheduler.advance(host.cadenceMs);
+		expect(host.effectiveTier).toBe("off");
+		expect(host.cadenceMs).toBe(policy.cadenceMs * 4);
+		policy.setSetting("off");
+		expect(host.cadenceMs).toBe(0);
+		expect(scheduler.activeTimers).toBe(0);
+		policy.setSetting("subtle");
+		expect(scheduler.activeTimers).toBe(1);
+		workMs = 0;
+		for (let frame = 0; frame < 90; frame++) scheduler.advance(host.cadenceMs);
+		expect(host.effectiveTier).toBe("subtle");
+		expect(host.cadenceMs).toBe(TIER_CADENCE_MS.subtle * REDUCED_MOTION_CADENCE_MULTIPLIER);
+		expect(policy.reducedMotion).toBe(true);
+		expect(policy.tier).toBe("subtle");
+		host.dispose();
 	});
 });
 

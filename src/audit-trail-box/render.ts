@@ -11,9 +11,10 @@
  * Everything here is a pure function of an {@link AuditSnapshot} plus a phase —
  * no wall-clock reads, no filesystem, no state of its own.
  */
-import type { SymbolPreset, Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+
 import { type AccentColor, accentToThemeColor } from "../appearance";
 import { resolveGlyph } from "../glyph-presets";
+import type { SymbolPreset, Theme, ThemeColor } from "../host/types";
 import { hyperlinkPath } from "../osc8-hyperlink";
 import type { RenderTier } from "../terminal-capabilities";
 import type { AuditSnapshot, LedgerMetrics, PathStatus } from "./state";

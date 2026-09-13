@@ -7,12 +7,12 @@ export interface ActivityRosterSettings {
 
 export const ACTIVITY_ROSTER_SETTING_KEYS = {
 	detail: "agentRosterDetail",
-	retentionSeconds: "agentRosterRetentionSeconds",
+	retentionSeconds: "animationsBonsaiSettleSeconds",
 } as const;
 
 export const ACTIVITY_ROSTER_SETTING_ENV = {
 	detail: "OMP_ANIMATIONS_AGENT_ROSTER_DETAIL",
-	retentionSeconds: "OMP_ANIMATIONS_AGENT_ROSTER_RETENTION_SECONDS",
+	retentionSeconds: "OMP_ANIMATIONS_BONSAI_SETTLE_SECONDS",
 } as const;
 
 export const ACTIVITY_ROSTER_DEFAULTS: ActivityRosterSettings = {

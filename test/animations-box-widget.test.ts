@@ -1,34 +1,60 @@
 import { describe, expect, it } from "bun:test";
 import { visibleWidth } from "@oh-my-pi/pi-tui";
 import type { AgentBonsaiSnapshot } from "../src/agent-bonsai";
+import { type AnimationsBoxContext, AnimationsBoxController } from "../src/animations-box/controller";
 import type { SegmentSample } from "../src/animations-box/segments";
-import { AnimationsBoxWidget, BOX_BORDER_COLS, BOX_BORDER_ROWS } from "../src/animations-box/widget";
+import { resolveAnimationsBoxConfig } from "../src/animations-box/settings";
+import {
+	type AnimationsBoxBorderFrame,
+	AnimationsBoxWidget,
+	BOX_BORDER_COLS,
+	BOX_BORDER_ROWS,
+} from "../src/animations-box/widget";
 import type { AccentColor } from "../src/appearance";
-import { BREATHING_BORDER_COLORS } from "../src/breathing-border";
+import { BREATHING_BORDER_COLORS, EXHALE_DURATION_MS } from "../src/breathing-border";
 import { AnimationHost, type FrameScheduler, MotionPolicy } from "../src/kit";
 
 // Identity theme so most assertions see plain text instead of ANSI escapes.
 const idTheme = { fg: (_color: string, text: string) => text };
 // Color-tagging theme for tests that need to assert which token the border chose.
 const taggedTheme = { fg: (color: string, text: string) => `${color}:${text}` };
+const cellTaggedTheme = { fg: (color: string, text: string) => `<${color}>${text}</${color}>` };
 const noopTui = { requestComponentRender: () => {} };
 const fullEnv = { hasUI: true, isTTY: true, env: {} as Record<string, string | undefined> };
 
+function staticBorderFrame(brightness: number): AnimationsBoxBorderFrame {
+	return { phase: "active", brightness, glossProgress: 0, glossStrength: 0 };
+}
+
 /** Manual frame scheduler: drives host ticks and the shared clock deterministically. */
-function manualScheduler(): FrameScheduler & { advance(ms: number): void; readonly running: boolean } {
+function manualScheduler(): FrameScheduler & {
+	advance(ms: number): void;
+	spend(ms: number): void;
+	readonly running: boolean;
+	readonly cadenceMs: number;
+} {
 	let current = 0;
 	let ticker: (() => void) | undefined;
+	let cadenceMs = 0;
 	return {
 		now: () => current,
-		start(_intervalMs, tick) {
+		start(intervalMs, tick) {
+			cadenceMs = intervalMs;
 			ticker = tick;
 			return () => {
 				ticker = undefined;
+				cadenceMs = 0;
 			};
 		},
 		advance(ms) {
 			current += ms;
 			ticker?.();
+		},
+		spend(ms) {
+			current += ms;
+		},
+		get cadenceMs() {
+			return cadenceMs;
 		},
 		get running() {
 			return ticker !== undefined;
@@ -61,18 +87,18 @@ const ACTIVE: SegmentSample = {
 	},
 };
 
-const CADENCE: SegmentSample = {
+const OPTIONAL_A: SegmentSample = {
 	...ACTIVE,
-	id: "cadenceEqualizer",
+	id: "optionalA",
 	priority: 6,
-	line: { ...ACTIVE.line, label: "cadence" },
+	line: { ...ACTIVE.line, label: "opt-a" },
 };
 
-const REFLECT: SegmentSample = {
+const OPTIONAL_B: SegmentSample = {
 	...ACTIVE,
-	id: "reflectionRipple",
+	id: "optionalB",
 	priority: 7,
-	line: { ...ACTIVE.line, label: "reflect" },
+	line: { ...ACTIVE.line, label: "opt-b" },
 };
 
 const MAIN_ONLY_BONSAI: AgentBonsaiSnapshot = {
@@ -132,6 +158,38 @@ const SKILL_BONSAI: AgentBonsaiSnapshot = {
 	],
 };
 
+const UNIFORM_MODEL_BONSAI: AgentBonsaiSnapshot = {
+	visible: true,
+	hiddenCount: 0,
+	nodes: [
+		{ ...MAIN_ONLY_BONSAI.nodes[0], model: "openai-codex/gpt-5.6-sol:high" },
+		{
+			id: "worker",
+			cohortLabel: "A1",
+			name: "worker",
+			depth: 1,
+			isLast: false,
+			ancestorsLast: [],
+			status: "running",
+			model: "openai-codex/gpt-5.6-sol:high",
+			loadedSkills: [],
+			gist: "Verifying boundary contract",
+		},
+		{
+			id: "peer",
+			cohortLabel: "A2",
+			name: "peer",
+			depth: 1,
+			isLast: true,
+			ancestorsLast: [],
+			status: "running",
+			model: "openai-codex/gpt-5.6-sol:high",
+			loadedSkills: [],
+			gist: "Checking status",
+		},
+	],
+};
+
 function makeWidget(opts: {
 	samples: readonly SegmentSample[];
 	optionalSamples?: readonly SegmentSample[];
@@ -139,14 +197,23 @@ function makeWidget(opts: {
 	onTick?: (now: number) => void;
 	scheduler?: FrameScheduler;
 	motionSetting?: "off" | "subtle" | "full";
+	reducedMotion?: boolean;
 	theme?: { fg: (color: string, text: string) => string };
-	getBorderBrightness?: (now: number) => number | undefined;
+	getBorderFrame?: (now: number) => AnimationsBoxBorderFrame | undefined;
+	getCollisionDiffraction?: (now: number, width: number) => string | undefined;
+	getBorderAlert?: () => boolean;
 	accentColor?: AccentColor;
 	agentBonsai?: AgentBonsaiSnapshot;
 	hyperlinks?: boolean;
 }): AnimationsBoxWidget {
 	const scheduler = opts.scheduler ?? manualScheduler();
-	const policy = new MotionPolicy(fullEnv, opts.motionSetting ?? "full");
+	const policy = new MotionPolicy(
+		{
+			...fullEnv,
+			env: opts.reducedMotion ? { OMP_ANIMATIONS_REDUCED_MOTION: "1" } : {},
+		},
+		opts.motionSetting ?? "full",
+	);
 	const host = new AnimationHost({ policy, scheduler });
 	return new AnimationsBoxWidget({
 		tui: noopTui,
@@ -159,7 +226,9 @@ function makeWidget(opts: {
 		getDetail: () => opts.detail ?? "detailed",
 		// `undefined` is the plain, pre-dxi.5 chrome — the sensible default for every
 		// test above that doesn't care about border coloring.
-		getBorderBrightness: opts.getBorderBrightness ?? (() => undefined),
+		getBorderFrame: opts.getBorderFrame ?? (() => undefined),
+		getCollisionDiffraction: opts.getCollisionDiffraction,
+		getBorderAlert: opts.getBorderAlert,
 		accentColor: opts.accentColor,
 		getAgentBonsai: () => opts.agentBonsai ?? MAIN_ONLY_BONSAI,
 		// Pinned off by default so golden rows never vary with the terminal running the suite.
@@ -200,7 +269,7 @@ describe("AnimationsBoxWidget — detailed grouped rows", () => {
 		const width = 40;
 		const rows = makeWidget({
 			samples: [ACTIVE, RESTING],
-			optionalSamples: [CADENCE, REFLECT],
+			optionalSamples: [OPTIONAL_A, OPTIONAL_B],
 			detail: "detailed",
 		}).render(width);
 
@@ -208,12 +277,12 @@ describe("AnimationsBoxWidget — detailed grouped rows", () => {
 		expect(rows[1]).toContain("cache");
 		expect(rows[2]).toContain("cache");
 		expect(rows[3]).toBe(`│ ${" ".repeat(width - BOX_BORDER_COLS)} │`);
-		expect(rows[4]).toContain("cadence");
-		expect(rows[5]).toContain("reflect");
+		expect(rows[4]).toContain("opt-a");
+		expect(rows[5]).toContain("opt-b");
 		for (const narrowWidth of [20, 6]) {
 			for (const row of makeWidget({
 				samples: [ACTIVE],
-				optionalSamples: [CADENCE],
+				optionalSamples: [OPTIONAL_A],
 				detail: "detailed",
 			}).render(narrowWidth)) {
 				expect(visibleWidth(row)).toBe(narrowWidth);
@@ -223,9 +292,9 @@ describe("AnimationsBoxWidget — detailed grouped rows", () => {
 
 	it("does not prepend a blank separator when an all-optional sidecar becomes visible", () => {
 		const width = 40;
-		const rows = makeWidget({ samples: [], optionalSamples: [CADENCE], detail: "detailed" }).render(width);
+		const rows = makeWidget({ samples: [], optionalSamples: [OPTIONAL_A], detail: "detailed" }).render(width);
 		expect(rows).toHaveLength(3);
-		expect(rows[1]).toContain("cadence");
+		expect(rows[1]).toContain("opt-a");
 		expect(rows[1]).not.toBe(`│ ${" ".repeat(width - BOX_BORDER_COLS)} │`);
 	});
 
@@ -264,6 +333,21 @@ describe("AnimationsBoxWidget — detailed grouped rows", () => {
 		expect(rows.join("\n")).toContain("A1 worker");
 	});
 
+	it("states a model shared by every visible node once on the group header, not once per row (daw.4)", () => {
+		const width = 90;
+		const rows = makeWidget({
+			samples: [ACTIVE],
+			detail: "detailed",
+			agentBonsai: UNIFORM_MODEL_BONSAI,
+		}).render(width);
+
+		const text = rows.join("\n");
+		expect(text).toContain("agents · openai-codex/gpt-5.6-sol:high");
+		expect(text.match(/openai-codex\/gpt-5\.6-sol:high/g)).toHaveLength(1);
+		expect(text).toContain("Verifying boundary contract");
+		expect(text).toContain("Checking status");
+	});
+
 	it("keeps every border pipe aligned when the skill chip carries an OSC 8 link", () => {
 		const width = 72;
 		const plain = makeWidget({ samples: [ACTIVE], detail: "detailed", agentBonsai: SKILL_BONSAI }).render(width);
@@ -282,7 +366,7 @@ describe("AnimationsBoxWidget — detailed grouped rows", () => {
 		expect(linked).toHaveLength(plain.length);
 		for (const row of linked) {
 			expect(visibleWidth(row)).toBe(width);
-			expect(row.endsWith(" │") || row.endsWith("╮") || row.endsWith("╯")).toBe(true);
+			expect(row.endsWith(" │") || row.endsWith("┐") || row.endsWith("┘")).toBe(true);
 		}
 	});
 
@@ -301,9 +385,9 @@ describe("AnimationsBoxWidget — detailed grouped rows", () => {
 
 		const rows = makeWidget({ samples: [RESTING], detail: "detailed" }).render(width);
 		expect(rows).toEqual([
-			`╭${"─".repeat(width - 2)}╮`,
+			`┌${"─".repeat(width - 2)}┐`,
 			`│ ${body}${" ".repeat(inner - visibleWidth(body))} │`,
-			`╰${"─".repeat(width - 2)}╯`,
+			`└${"─".repeat(width - 2)}┘`,
 		]);
 	});
 
@@ -380,7 +464,7 @@ describe("AnimationsBoxWidget — lifecycle and per-tick hook", () => {
 			onTick: () => {},
 			buildSampleGroups: () => ({ required: [ACTIVE], optional: [] }),
 			getDetail: () => "detailed",
-			getBorderBrightness: () => undefined,
+			getBorderFrame: () => undefined,
 		});
 
 		widget.render(69);
@@ -403,24 +487,272 @@ describe("AnimationsBoxWidget — lifecycle and per-tick hook", () => {
 	});
 });
 
+describe("AnimationsBoxWidget motion governor", () => {
+	it("freezes optional emphasis without pausing facts or repainting unchanged rows, then recovers", () => {
+		const scheduler = manualScheduler();
+		const policy = new MotionPolicy(fullEnv, "full");
+		const host = new AnimationHost({ policy, scheduler });
+		let costMs = 3;
+		let money = "$0.41";
+		let repaints = 0;
+		let tickNow = 0;
+		const widget = new AnimationsBoxWidget({
+			host,
+			policy,
+			clock: scheduler,
+			tui: { requestComponentRender: () => repaints++ },
+			theme: { ...idTheme, bold: text => `\x1b[1m${text}\x1b[22m` },
+			onTick: now => {
+				tickNow = now;
+			},
+			buildSampleGroups: () => {
+				scheduler.spend(costMs);
+				return {
+					required: [
+						{
+							...ACTIVE,
+							line: {
+								...ACTIVE.line,
+								spans: [{ key: "saved", text: `saved ${money}`, flash: false }],
+							},
+						},
+					],
+					optional: [
+						{
+							...OPTIONAL_A,
+							line: {
+								...OPTIONAL_A.line,
+								activity: true,
+								spans: [{ key: "state", text: "running" }],
+							},
+						},
+					],
+				};
+			},
+			getDetail: () => "detailed",
+			getBorderFrame: now => ({
+				phase: "active",
+				brightness: (now % 1_000) / 1_000,
+				glossProgress: (now % 1_000) / 1_000,
+				glossStrength: 1,
+			}),
+		});
+		widget.render(120);
+		for (let frame = 0; frame < 13; frame++) scheduler.advance(host.cadenceMs);
+		expect(host.effectiveTier).toBe("off");
+		expect(policy.tier).toBe("full");
+		expect(widget.animating).toBe(true);
+		const frozenRows = widget.render(120);
+		expect(frozenRows.find(row => row.includes("opt-a"))).toContain("running");
+		expect(frozenRows.find(row => row.includes("opt-a"))).not.toContain("\x1b[1m");
+		const frozenRepaints = repaints;
+		for (let frame = 0; frame < 3; frame++) scheduler.advance(host.cadenceMs);
+		expect(widget.render(120)).toEqual(frozenRows);
+		expect(repaints).toBe(frozenRepaints);
+		money = "$9.00";
+		const nextNow = scheduler.now() + host.cadenceMs;
+		scheduler.advance(host.cadenceMs);
+		expect(tickNow).toBe(nextNow);
+		expect(widget.render(120).find(row => row.includes("cache"))).toContain("saved $9.00");
+		expect(repaints).toBe(frozenRepaints + 1);
+		expect(widget.render(120)[0]).toBe(frozenRows[0]);
+		costMs = 0;
+		for (let frame = 0; frame < 89; frame++) scheduler.advance(host.cadenceMs);
+		expect(host.effectiveTier).toBe("subtle");
+		scheduler.advance(host.cadenceMs);
+		expect(host.effectiveTier).toBe("full");
+		expect(host.cadenceMs).toBe(policy.cadenceMs);
+		widget.dispose();
+		host.dispose();
+		expect(scheduler.running).toBe(false);
+	});
+
+	it("keeps controller retry deadlines, context risk and terminal lifecycle on real time during freeze", () => {
+		const scheduler = manualScheduler();
+		const widgets: AnimationsBoxWidget[] = [];
+		let percent = 20;
+		const ctx: AnimationsBoxContext = {
+			...fullEnv,
+			cwd: "/repo",
+			glyphPreset: "unicode",
+			getContextUsage: () => {
+				scheduler.spend(3);
+				return { tokens: percent * 2_000, contextWindow: 200_000, percent };
+			},
+			setWidget: (_key, content) => {
+				if (typeof content !== "function") return;
+				const factory = content as (tui: unknown, theme: unknown) => AnimationsBoxWidget;
+				widgets.push(factory(noopTui, taggedTheme));
+			},
+		};
+		const controller = new AnimationsBoxController({
+			scheduler,
+			initialConfig: resolveAnimationsBoxConfig({ animationsBoxDetail: "detailed" }),
+		});
+		controller.mount(ctx);
+		const widget = widgets[0]!;
+		controller.onAgentStart({ type: "agent_start" }, ctx);
+		widget.render(160);
+		for (let frame = 0; frame < 13; frame++) scheduler.advance(scheduler.cadenceMs);
+		expect(scheduler.cadenceMs).toBe(250);
+		const activeBorder = widget.render(160)[0];
+		expect(activeBorder).toStartWith(`${BREATHING_BORDER_COLORS.base}:┌`);
+		controller.onAutoRetryStart(
+			{ type: "auto_retry_start", attempt: 1, maxAttempts: 3, delayMs: 3_000 } as Parameters<
+				AnimationsBoxController["onAutoRetryStart"]
+			>[0],
+			ctx,
+		);
+		expect(widget.render(160).find(row => row.includes("retry"))).toContain("3s");
+		scheduler.advance(1_000);
+		expect(widget.render(160).find(row => row.includes("retry"))).toContain("2s");
+		percent = 90;
+		scheduler.advance(scheduler.cadenceMs);
+		expect(widget.render(160).find(row => row.includes("context"))).toContain("180K/200K");
+		expect(widget.render(160)[0]).toBe(activeBorder);
+		controller.onAgentEnd({ type: "agent_end", messages: [] }, ctx);
+		widget.render(160);
+		scheduler.advance(EXHALE_DURATION_MS + 1);
+		expect(widget.render(160)[0]).toStartWith(`${BREATHING_BORDER_COLORS.muted}:┌`);
+		expect(scheduler.cadenceMs).toBe(250);
+		widget.dispose();
+		controller.dispose(ctx);
+		expect(scheduler.running).toBe(false);
+	});
+});
+
 describe("AnimationsBoxWidget — border chrome breathing (Decision 2)", () => {
-	it("buckets the live brightness through brightnessToken, coloring every border glyph uniformly", () => {
-		const dim = makeWidget({ samples: [RESTING], theme: taggedTheme, getBorderBrightness: () => 0 }).render(20);
-		expect(dim[0]).toBe(`${BREATHING_BORDER_COLORS.muted}:╭${"─".repeat(18)}╮`);
-		expect(dim[2]).toBe(`${BREATHING_BORDER_COLORS.muted}:╰${"─".repeat(18)}╯`);
+	it("moves one gloss head clockwise through every corner and side cell of the current perimeter", () => {
+		const width = 12;
+		const perimeterLength = 28; // 12 top + 2 right + 12 bottom + 2 left
+		const renderAt = (cellIndex: number): readonly string[] =>
+			makeWidget({
+				samples: [ACTIVE, RESTING],
+				theme: cellTaggedTheme,
+				getBorderFrame: () => ({
+					phase: "active",
+					brightness: 0,
+					glossProgress: cellIndex / perimeterLength,
+					glossStrength: 1,
+				}),
+			}).render(width);
 
-		const mid = makeWidget({ samples: [RESTING], theme: taggedTheme, getBorderBrightness: () => 0.3 }).render(20);
-		expect(mid[0]).toBe(`${BREATHING_BORDER_COLORS.base}:╭${"─".repeat(18)}╮`);
+		expect(renderAt(0)[0]?.startsWith("<borderAccent>┌</borderAccent>")).toBe(true); // top-left
+		expect(renderAt(11)[0]?.endsWith("<borderAccent>┐</borderAccent>")).toBe(true); // top-right
+		expect(renderAt(12)[1]?.endsWith("<borderAccent>│</borderAccent>")).toBe(true); // right, first row
+		expect(renderAt(13)[2]?.endsWith("<borderAccent>│</borderAccent>")).toBe(true); // right, second row
+		expect(renderAt(14)[3]?.endsWith("<borderAccent>┘</borderAccent>")).toBe(true); // bottom-right
+		expect(renderAt(25)[3]?.startsWith("<borderAccent>└</borderAccent>")).toBe(true); // bottom-left
+		expect(renderAt(26)[2]?.startsWith("<borderAccent>│</borderAccent>")).toBe(true); // left, second row
+		expect(renderAt(27)[1]?.startsWith("<borderAccent>│</borderAccent>")).toBe(true); // left, first row
+	});
 
-		const peak = makeWidget({ samples: [RESTING], theme: taggedTheme, getBorderBrightness: () => 0.9 }).render(20);
-		expect(peak[0]).toBe(`${BREATHING_BORDER_COLORS.peak}:╭${"─".repeat(18)}╮`);
+	it("keeps one peak head distinct from its falling tail on a long perimeter", () => {
+		const width = 120;
+		const rows = makeWidget({
+			samples: [ACTIVE, RESTING],
+			theme: cellTaggedTheme,
+			getBorderFrame: () => ({
+				phase: "active",
+				brightness: 0,
+				glossProgress: 0.25,
+				glossStrength: 1,
+			}),
+		}).render(width);
+		const frame = rows.join("\n");
+		const peakCells = frame.match(/<borderAccent>/g) ?? [];
+
+		expect(peakCells).toHaveLength(1);
+		expect(frame).toContain(`<${BREATHING_BORDER_COLORS.base}>`);
+		expect(frame).toContain(`<${BREATHING_BORDER_COLORS.muted}>`);
+	});
+
+	it("keeps the gloss head as the only peak-colored cell at the breathing crest", () => {
+		const width = 20;
+		const rows = makeWidget({
+			samples: [ACTIVE, RESTING],
+			theme: cellTaggedTheme,
+			getBorderFrame: () => ({
+				phase: "active",
+				brightness: 0.9,
+				glossProgress: 0.25,
+				glossStrength: 1,
+			}),
+		}).render(width);
+		const peakRuns = rows.join("\n").matchAll(/<borderAccent>([^<]*)<\/borderAccent>/gu);
+		let peakWidth = 0;
+		for (const match of peakRuns) peakWidth += visibleWidth(match[1] ?? "");
+
+		expect(peakWidth).toBe(1);
+		for (const row of rows) {
+			const visible = row.replace(/<\/?(?:borderMuted|border|borderAccent)>/gu, "");
+			expect(visibleWidth(visible)).toBe(width);
+		}
+	});
+
+	it("buckets brightness and strengthens every border glyph together at the crest", () => {
+		const dim = makeWidget({
+			samples: [RESTING],
+			theme: taggedTheme,
+			getBorderFrame: () => staticBorderFrame(0),
+		}).render(20);
+		expect(dim[0]).toBe(`${BREATHING_BORDER_COLORS.muted}:┌${"─".repeat(18)}┐`);
+		expect(dim[2]).toBe(`${BREATHING_BORDER_COLORS.muted}:└${"─".repeat(18)}┘`);
+
+		const mid = makeWidget({
+			samples: [RESTING],
+			theme: taggedTheme,
+			getBorderFrame: () => staticBorderFrame(0.3),
+		}).render(20);
+		expect(mid[0]).toBe(`${BREATHING_BORDER_COLORS.base}:┌${"─".repeat(18)}┐`);
+
+		const peak = makeWidget({
+			samples: [RESTING],
+			theme: taggedTheme,
+			getBorderFrame: () => staticBorderFrame(0.9),
+		}).render(20);
+		expect(peak[0]).toBe(`${BREATHING_BORDER_COLORS.peak}:┏${"━".repeat(18)}┓`);
+	});
+
+	it("centers one fixed-width collision token in existing top-border chrome", () => {
+		const rows = makeWidget({
+			samples: [RESTING],
+			getCollisionDiffraction: () => "..<.*.>..",
+		}).render(20);
+		expect(rows[0]).toBe("┌────..<.*.>..─────┐");
+		expect(Bun.stringWidth(rows[0] ?? "")).toBe(20);
+		expect(rows[2]).toBe(`└${"─".repeat(18)}┘`);
 	});
 
 	it("colors the side pipes too, not just the top/bottom rows", () => {
-		const rows = makeWidget({ samples: [RESTING], theme: taggedTheme, getBorderBrightness: () => 0.9 }).render(20);
+		const rows = makeWidget({
+			samples: [RESTING],
+			theme: taggedTheme,
+			getBorderFrame: () => staticBorderFrame(0.9),
+		}).render(20);
 		const contentRow = rows[1] as string;
-		expect(contentRow.startsWith(`${BREATHING_BORDER_COLORS.peak}:│`)).toBe(true);
-		expect(contentRow.endsWith(`${BREATHING_BORDER_COLORS.peak}:│`)).toBe(true);
+		expect(contentRow.startsWith(`${BREATHING_BORDER_COLORS.peak}:┃`)).toBe(true);
+		expect(contentRow.endsWith(`${BREATHING_BORDER_COLORS.peak}:┃`)).toBe(true);
+	});
+
+	it("escalates peak border cells to error color when getBorderAlert returns true", () => {
+		const withoutAlert = makeWidget({
+			samples: [RESTING],
+			theme: cellTaggedTheme,
+			getBorderFrame: () => staticBorderFrame(0.9),
+			getBorderAlert: () => false,
+		}).render(20);
+		const withAlert = makeWidget({
+			samples: [RESTING],
+			theme: cellTaggedTheme,
+			getBorderFrame: () => staticBorderFrame(0.9),
+			getBorderAlert: () => true,
+		}).render(20);
+
+		expect(withoutAlert[0]).toContain(`<${BREATHING_BORDER_COLORS.peak}>`);
+		expect(withoutAlert[0]).not.toContain("<error>");
+		expect(withAlert[0]).toContain("<error>");
+		expect(withAlert[0]).not.toContain(`<${BREATHING_BORDER_COLORS.peak}>`);
 	});
 
 	it("brightness actually varies across the breath phase, driven by the same nowMs the widget always reads", () => {
@@ -429,7 +761,7 @@ describe("AnimationsBoxWidget — border chrome breathing (Decision 2)", () => {
 			samples: [RESTING],
 			theme: taggedTheme,
 			scheduler,
-			getBorderBrightness: now => (now < 50 ? 0 : 0.9),
+			getBorderFrame: now => staticBorderFrame(now < 50 ? 0 : 0.9),
 		});
 		const before = widget.render(20)[0];
 		scheduler.advance(100);
@@ -445,7 +777,7 @@ describe("AnimationsBoxWidget — border chrome breathing (Decision 2)", () => {
 		const rows = makeWidget({
 			samples: [RESTING],
 			theme: taggedTheme,
-			getBorderBrightness: () => 0.9,
+			getBorderFrame: () => staticBorderFrame(0.9),
 			accentColor: "accent",
 		}).render(20);
 		expect(rows[0]).toContain("accent:");
@@ -457,31 +789,59 @@ describe("AnimationsBoxWidget — border chrome breathing (Decision 2)", () => {
 			samples: [RESTING],
 			theme: taggedTheme,
 			motionSetting: "off",
-			getBorderBrightness: () => 0.9,
+			getBorderFrame: () => staticBorderFrame(0.9),
 		}).render(20);
-		expect(rows[0]).toBe(`╭${"─".repeat(18)}╮`);
-		expect(rows[2]).toBe(`╰${"─".repeat(18)}╯`);
+		expect(rows[0]).toBe(`┌${"─".repeat(18)}┐`);
+		expect(rows[2]).toBe(`└${"─".repeat(18)}┘`);
 	});
 
-	it("getBorderBrightness returning undefined (breathingBorder disabled) renders the same plain, uncolored chrome", () => {
+	it("reduced motion keeps active border color semantics without spatial traversal", () => {
+		const scheduler = manualScheduler();
+		const widget = makeWidget({
+			samples: [RESTING],
+			theme: cellTaggedTheme,
+			scheduler,
+			reducedMotion: true,
+			getBorderFrame: now => ({
+				phase: "active",
+				brightness: now === 0 ? 0 : 1,
+				glossProgress: now / 100,
+				glossStrength: 1,
+			}),
+		});
+
+		const atStart = widget.render(20);
+		scheduler.advance(75);
+		widget.markDirty();
+		const afterClockAdvance = widget.render(20);
+
+		expect(afterClockAdvance).toEqual(atStart);
+		expect(atStart[0]).toBe(`<${BREATHING_BORDER_COLORS.base}>┌${"─".repeat(18)}┐</${BREATHING_BORDER_COLORS.base}>`);
+		expect(atStart.join("\n")).not.toContain(`<${BREATHING_BORDER_COLORS.peak}>`);
+		widget.dispose();
+	});
+
+	it("getBorderFrame returning undefined (breathingBorder disabled) renders the same plain, uncolored chrome", () => {
 		const rows = makeWidget({
 			samples: [RESTING],
 			theme: taggedTheme,
-			getBorderBrightness: () => undefined,
+			getBorderFrame: () => undefined,
 		}).render(20);
-		expect(rows[0]).toBe(`╭${"─".repeat(18)}╮`);
-		expect(rows[2]).toBe(`╰${"─".repeat(18)}╯`);
+		expect(rows[0]).toBe(`┌${"─".repeat(18)}┐`);
+		expect(rows[2]).toBe(`└${"─".repeat(18)}┘`);
 	});
 
 	it("geometry (row count, exact row width) is identical across breathing / motion-off / breathingBorder-disabled, at 45/69/120", () => {
 		for (const width of [45, 69, 120]) {
-			const breathing = makeWidget({ samples: [RESTING], getBorderBrightness: () => 0.5 }).render(width);
+			const breathing = makeWidget({ samples: [RESTING], getBorderFrame: () => staticBorderFrame(0.5) }).render(
+				width,
+			);
 			const motionOff = makeWidget({
 				samples: [RESTING],
 				motionSetting: "off",
-				getBorderBrightness: () => 0.5,
+				getBorderFrame: () => staticBorderFrame(0.5),
 			}).render(width);
-			const disabled = makeWidget({ samples: [RESTING], getBorderBrightness: () => undefined }).render(width);
+			const disabled = makeWidget({ samples: [RESTING], getBorderFrame: () => undefined }).render(width);
 
 			for (const rows of [breathing, motionOff, disabled]) {
 				expect(rows).toHaveLength(3); // 2 border rows + 1 enabled segment (detailed mode)

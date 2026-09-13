@@ -15,15 +15,15 @@
  */
 import { isAbsolute, resolve } from "node:path";
 import type { ExtensionContext, ExtensionFactory } from "@oh-my-pi/pi-coding-agent";
-import type { ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent/extensibility/extensions";
+import type { AccentColor } from "../appearance";
 import type {
 	BashToolResultEvent,
 	EditToolResultEvent,
+	ExtensionCommandContext,
 	ReadToolResultEvent,
 	ToolResultEvent,
 	WriteToolResultEvent,
-} from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
-import type { AccentColor } from "../appearance";
+} from "../host/types";
 import { hashContent, type ProbeSource } from "./probe";
 import { formatRemedyPlan } from "./remedy";
 import { auditColors, renderAuditPanel } from "./render";

@@ -5,8 +5,9 @@
  * which buckets the live envelope through `./breath`'s `brightnessToken` and
  * resolves the resulting token against this palette.
  */
-import type { ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+
 import { type AccentColor, accentToThemeColor } from "../appearance";
+import type { ThemeColor } from "../host/types";
 
 /**
  * Named color map. `peak` — the border's brightest moment, the crest of an

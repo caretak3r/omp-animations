@@ -10,7 +10,7 @@
 // from their module path when needed.
 //
 // This package ships one consolidated Audit Box with Agent Bonsai plus the
-// audit, border, cache, cadence, file, rate-limit, reflection, and tool signals.
+// audit, border, cache, file, rate-limit, and tool signals.
 
 export * from "./agent-bonsai";
 export * from "./animations-box/doctor";
