@@ -87,19 +87,23 @@ export interface AnimationsBoxBorderFrame {
 
 interface BorderPaint {
 	readonly frame: AnimationsBoxBorderFrame;
+	readonly width: number;
 	readonly perimeterLength: number;
 	readonly baseToken: BorderBrightnessToken;
 	readonly heavy: boolean;
 	readonly colors: BreathingBorderColors;
 	readonly theme: BoxTheme;
-	/** Perimeter indices of the four corner cells, for the corner-accent exemption in {@link borderCell}. */
-	readonly cornerIndices: ReadonlySet<number>;
 }
 
-/** The four corner perimeter indices for a box this shape, matching the clockwise numbering `borderTop`/`contentLine`/`borderBottom` already use. */
-function cornerPerimeterIndices(width: number, contentRows: number): ReadonlySet<number> {
-	const sideRows = width >= BORDER_COLS ? contentRows : 0;
-	return new Set([0, width - 1, width + sideRows, 2 * width + sideRows - 1]);
+/** Clockwise numbering from `borderTop`/`contentLine`/`borderBottom`: the bottom row starts at half the perimeter and runs right to left. */
+function isCornerIndex(perimeterIndex: number, paint: BorderPaint): boolean {
+	const bottomRight = paint.perimeterLength / 2;
+	return (
+		perimeterIndex === 0 ||
+		perimeterIndex === paint.width - 1 ||
+		perimeterIndex === bottomRight ||
+		perimeterIndex === bottomRight + paint.width - 1
+	);
 }
 
 /**
@@ -140,7 +144,7 @@ function borderCell(text: string, perimeterIndex: number, paint: BorderPaint | u
 	// ambient breathing brightness, which a bright crest could satisfy from any distance):
 	// while the head has just passed close enough, the corner flashes to peak too.
 	const isCornerFlash =
-		perimeterIndex !== headIndex && paint.cornerIndices.has(perimeterIndex) && trail >= CORNER_ACCENT_MIN_TRAIL;
+		perimeterIndex !== headIndex && trail >= CORNER_ACCENT_MIN_TRAIL && isCornerIndex(perimeterIndex, paint);
 	if (isCornerFlash) {
 		token = "borderAccent";
 	} else if (perimeterIndex !== headIndex && token === "borderAccent") {
@@ -418,12 +422,12 @@ export class AnimationsBoxWidget extends AnimatedWidget {
 				? undefined
 				: {
 						frame,
+						width,
 						perimeterLength,
 						baseToken,
 						heavy: baseToken === "borderAccent",
 						colors,
 						theme: this.#theme,
-						cornerIndices: cornerPerimeterIndices(width, contentRows.length),
 					};
 		const heavy = paint?.heavy ?? false;
 		const rows = [borderTop(width, this.#getCollisionDiffraction(now, width), heavy, paint)];

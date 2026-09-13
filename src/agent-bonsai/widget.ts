@@ -18,7 +18,6 @@ import {
 	type AgentBonsaiStatus,
 	type AgentProvenanceEvent,
 	MAX_BONSAI_DETAIL_ROWS,
-	MAX_BONSAI_ROWS,
 } from "./state";
 
 export type AgentBonsaiTheme = Pick<Theme, "fg"> & Partial<Pick<Theme, "bold" | "symbol">>;
@@ -561,11 +560,7 @@ export function renderAgentBonsaiRows(
 	ctx: AgentBonsaiRenderContext,
 ): readonly string[] {
 	if (!snapshot.visible || width <= 0) return [];
-	// Defensive: a caller-built snapshot that bypasses buildAgentBonsai's own
-	// MAX_BONSAI_ROWS cap must still render bounded — the overflow folds into
-	// the same omitted line as the snapshot's own hidden agents.
-	const overflow = snapshot.nodes.length > MAX_BONSAI_ROWS ? snapshot.nodes.slice(MAX_BONSAI_ROWS) : [];
-	const nodes = overflow.length > 0 ? snapshot.nodes.slice(0, MAX_BONSAI_ROWS) : snapshot.nodes;
+	const nodes = snapshot.nodes;
 	const spansById = observeRows(snapshot, ctx);
 	const widths = nameWidths(nodes);
 	const showModel = sharedBonsaiModel(nodes) === undefined;
@@ -587,11 +582,12 @@ export function renderAgentBonsaiRows(
 		const provenance = renderProvenanceRow(node, width, ctx);
 		if (provenance !== undefined) rows.push(provenance);
 	}
-	const hiddenCount = snapshot.hiddenCount + overflow.length;
-	if (hiddenCount > 0) {
-		const hiddenNames = [...(snapshot.hiddenAgentIds ?? []), ...overflow.map(node => node.name)];
+	if (snapshot.hiddenCount > 0) {
+		const hiddenNames = snapshot.hiddenAgentIds ?? [];
 		const label =
-			hiddenNames.length > 0 ? `… +${hiddenCount} more (${hiddenNames.join(", ")})` : `… +${hiddenCount} more`;
+			hiddenNames.length > 0
+				? `… +${snapshot.hiddenCount} more (${hiddenNames.join(", ")})`
+				: `… +${snapshot.hiddenCount} more`;
 		rows.push(ctx.theme.fg("dim", truncateToWidth(label, width)));
 	}
 	return rows;
