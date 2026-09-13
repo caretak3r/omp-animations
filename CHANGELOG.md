@@ -134,6 +134,14 @@ All notable changes to `@oh-my-pi/animations` are documented here.
   exact discovered skills and context-file metadata through the public
   extension context.
 
+### Removed
+- **The `tools` row (`toolActivity`).** Deleted the row's state, builder,
+  metadata, and settings/registry wiring, along with its direct tests,
+  goldens, and screenshot fixtures. The Audit Box now holds five core rows:
+  `contextGauge`, `cacheMeter`, `auditTrailBox`, `rateLimitTidepool`,
+  `filesLive`. The `verify` signal extra already owns the "writes newer than
+  the last successful bash" fact this row used to carry.
+
 ### Added
 - **Optional operational signals.** Added Live Files, Recurrence Strip,
   Context Rewrite Shadow, Compaction Scar, Consent Lock, Session Phylogeny,

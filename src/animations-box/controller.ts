@@ -77,7 +77,6 @@ import { CORE_ROW_ORDER, CORE_ROWS, type CoreRowDeps } from "./row-registry";
 import type { BoxTheme, SegmentSample } from "./segments";
 import type { AnimationsBoxConfig } from "./settings";
 import { type TemporalEvidenceSnapshot, TemporalEvidenceStore } from "./temporal-evidence";
-import { ToolActivityState } from "./tool-activity";
 import { type AnimationsBoxBorderFrame, type AnimationsBoxSampleGroups, AnimationsBoxWidget } from "./widget";
 
 /** Namespaced per the native-vs-plugin key-collision memory — a plugin's widget key must never collide with a host-owned one. */
@@ -185,7 +184,6 @@ export class AnimationsBoxController {
 	#agentBonsai: AgentBonsaiController | undefined;
 	#activityProbe: ActivityProbe | undefined;
 	#activityUnsubscribe: (() => void) | undefined;
-	#toolActivityState: ToolActivityState = new ToolActivityState();
 	#liveFilesState: LiveFilesState = new LiveFilesState();
 	#signalState: SignalExtrasState = new SignalExtrasState();
 	#skillReads = new Map<string, string>();
@@ -381,7 +379,6 @@ export class AnimationsBoxController {
 			auditTrail: this.#auditTrailState,
 			tidepool: this.#tidepoolState,
 			providerHealth: this.#providerHealthState.snapshot(),
-			toolActivity: this.#toolActivityState,
 			roster: activityRoster,
 			liveFiles: this.#liveFilesState.snapshot(),
 			extrasConfig: this.#extrasConfig,
@@ -567,7 +564,6 @@ export class AnimationsBoxController {
 		if (!ctx.hasUI) return;
 		const cwd = ctx.cwd ?? "";
 		const now = this.#scheduler.now();
-		this.#toolActivityState.record(event.toolName);
 		this.#liveFilesState.onToolCall(event, cwd);
 		this.#signalState.onToolCall(event.toolName);
 		const path =
@@ -587,9 +583,8 @@ export class AnimationsBoxController {
 		this.#changed();
 	}
 
-	onToolExecutionStart(event: ToolExecutionStartEvent, ctx: Pick<AnimationsBoxContext, "hasUI">): void {
+	onToolExecutionStart(_event: ToolExecutionStartEvent, ctx: Pick<AnimationsBoxContext, "hasUI">): void {
 		if (!ctx.hasUI) return;
-		this.#toolActivityState.start(event.toolCallId, event.toolName, this.#scheduler.now());
 		this.#changed();
 	}
 
@@ -601,7 +596,6 @@ export class AnimationsBoxController {
 
 	onToolExecutionEnd(event: ToolExecutionEndEvent, ctx: Pick<AnimationsBoxContext, "hasUI" | "cwd">): void {
 		if (!ctx.hasUI) return;
-		this.#toolActivityState.end(event.toolCallId, event.toolName, event.isError, this.#scheduler.now());
 		this.#signalState.noteToolSettled(event.toolName, event.isError);
 		this.#liveFilesState.onTaskEnd(event.toolCallId, event.result, ctx.cwd);
 		this.#changed();
@@ -610,7 +604,6 @@ export class AnimationsBoxController {
 	onAgentStart(_event: AgentStartEvent, ctx: Pick<AnimationsBoxContext, "hasUI">): void {
 		if (!ctx.hasUI) return;
 		const now = this.#scheduler.now();
-		this.#toolActivityState.reset();
 		this.#breathingBorderState.applyAgentStart(now);
 		this.#changed();
 	}
@@ -639,7 +632,6 @@ export class AnimationsBoxController {
 		this.#observeContext();
 		this.#contextGaugeState.noteTurn();
 		this.#signalState.onTurnEnd(now);
-		this.#toolActivityState.settle();
 		this.#skillReads.clear();
 		this.#refreshMemory();
 		this.#changed();
@@ -770,7 +762,6 @@ export class AnimationsBoxController {
 		this.#tidepoolState = new RateLimitTidepoolState();
 		this.#providerHealthState.reset();
 		this.#contextGaugeState = new ContextGaugeState(this.#config.contextQuota);
-		this.#toolActivityState.reset();
 		this.#liveFilesState.reset();
 		this.#skillReads.clear();
 		this.#signalState.resetSession();

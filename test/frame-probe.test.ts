@@ -5,7 +5,7 @@ import { parseCapture } from "../scripts/frame-probe";
 const metadata = (sync: string, width = 30) => `@@omp-frame sync=${sync} x=18 y=0 width=${width} height=12`;
 const truncatedBox = [
 	`┌${"─".repeat(17)}`,
-	...["context", "cache", "audit", "limits", "tools", "files"].map(label => `│ ${`● ${label}  —`.padEnd(27)}│`),
+	...["context", "cache", "audit", "limits", "files"].map(label => `│ ${`● ${label}  —`.padEnd(27)}│`),
 	`└${"─".repeat(28)}┘`,
 ].join("\n");
 const capture = (before: string, after: string, pane = truncatedBox) => `${before}\n${pane}\n${after}\n`;

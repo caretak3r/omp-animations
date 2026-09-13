@@ -100,16 +100,10 @@ The box holds these required rows in order:
 2. `cache` — prompt-cache use and saved cost
 3. `audit` — file trust
 4. `limits` — provider rate-limit headroom
-5. `tools` — tool-call totals, the active tool and elapsed time, or the busiest settled categories
-6. `files` — active edit and write paths
+5. `files` — active edit and write paths
 
 Agent Bonsai and the signal extras are optional groups in the box.
 Breathing Border pulses the full square perimeter. At the crest, the complete border changes color and line weight.
-
-The `tools` row shows the active tool and elapsed time first. When no tool runs,
-it shows the total call count and the two busiest non-file categories. Active
-tool and skill rows pulse without changing the layout. A new agent uses a
-short spawn transition, then glows only while it runs.
 
 One `AnimationsBoxWidget` renders the required rows and active optional rows.
 If no optional signal has meaningful state, that signal uses no row.

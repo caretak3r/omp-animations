@@ -281,53 +281,6 @@ describe("widgets actually mounted, driven through a real session_start", () => 
 		fireSessionStart();
 		expect(widgetCalls.filter(call => call.mounted).map(call => call.key)).toEqual([BOX_WIDGET_KEY]);
 	});
-
-	it("routes execution-start events into the mounted tools activity row", () => {
-		const { api, fire } = makeActivityApi();
-		let widgetContent: unknown;
-		const ctx = {
-			hasUI: true,
-			cwd: "/repo",
-			model: { id: "root-model" },
-			sessionResources: EMPTY_SESSION_RESOURCES,
-			sessionManager: {
-				getSessionId: () => "registrar-tools",
-				getArtifactsDir: () => "/sessions/registrar-tools",
-				getSessionFile: () => "/sessions/registrar-tools.jsonl",
-				getBranch: () => [],
-			},
-			hasPendingMessages: () => false,
-			ui: {
-				theme: { getSymbolPreset: () => "unicode" as const },
-				setWidget: (key: string, content: unknown) => {
-					if (key === BOX_WIDGET_KEY) widgetContent = content;
-				},
-				setStatus: () => {},
-				setTitle: () => {},
-			},
-		} as unknown as ExtensionContext;
-		createAnimationsPlugin({ settings: {}, env: {} })(api);
-		fire("session_start", { type: "session_start" }, ctx);
-		expect(typeof widgetContent).toBe("function");
-		const factory = widgetContent as (
-			tui: { requestComponentRender(): void },
-			theme: { fg(color: string, text: string): string },
-		) => { renderFrame(width: number): string[]; dispose(): void };
-		const widget = factory({ requestComponentRender() {} }, { fg: (_color, text) => text });
-
-		fire("tool_call", { type: "tool_call", toolCallId: "verify", toolName: "bash", input: {} }, ctx);
-		fire(
-			"tool_execution_start",
-			{ type: "tool_execution_start", toolCallId: "verify", toolName: "bash", args: {} },
-			ctx,
-		);
-		const toolsRow = widget.renderFrame(160).find(row => row.includes("tools"));
-		expect(toolsRow).toMatch(/bash · (?:\d+ms|\d+(?:\.\d+)?s) active · 1 call/u);
-		expect(toolsRow).not.toContain("VERIFY");
-
-		widget.dispose();
-		fire("session_shutdown", { type: "session_shutdown" }, ctx);
-	});
 });
 
 describe("plugin-local activity roster integration", () => {

@@ -39,7 +39,7 @@ export const EFFECT_AUTHORITATIVE_SOURCES = [
 	"cache-meter-state",
 	"immutable-frame-snapshot",
 	"recurrence-state",
-	"tool-activity-state",
+	"verify-seal-state",
 	"omp-host",
 ] as const;
 
@@ -100,7 +100,7 @@ export type EffectSurface =
 	| "cacheMeter"
 	| "boxBorder"
 	| "recurrenceStrip"
-	| "toolActivity"
+	| "verify"
 	| "ompPrompt"
 	| "ompProgress"
 	| "ompError"
@@ -360,10 +360,10 @@ export const EFFECT_CATALOG_BY_ID = {
 	"multiscale-event-dither": {
 		...BASE_POLICY,
 		id: "multiscale-event-dither",
-		owner: "box-required",
+		owner: "box-extra",
 		allowed: true,
-		existingSurface: "toolActivity",
-		authoritativeSource: "tool-activity-state",
+		existingSurface: "verify",
+		authoritativeSource: "verify-seal-state",
 		retainedFields: ["sampleValue", "count"],
 		safeEvidenceKinds: ["numeric-history"],
 		capacity: 16,

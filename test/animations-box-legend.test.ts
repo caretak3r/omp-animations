@@ -24,7 +24,7 @@ describe("renderLegend", () => {
 			renderLegend("unicode")
 				.slice(5)
 				.map(line => line.split(" ")[0]),
-		).toEqual(["context", "cache", "audit", "limits", "tools", "files"]);
+		).toEqual(["context", "cache", "audit", "limits", "files"]);
 	});
 
 	it("segment rows are preset-independent — only the dot glyphs vary", () => {

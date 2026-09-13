@@ -30,7 +30,6 @@ import {
 	buildCacheMeterSegment,
 	buildContextGaugeSegment,
 	buildRateLimitTidepoolSegment,
-	buildToolActivitySegment,
 	type SegmentSample,
 } from "../src/animations-box/segments";
 import {
@@ -48,7 +47,6 @@ import {
 	STATUS_LINE_PREFIX_COLS,
 	type StatusLineContext,
 } from "../src/animations-box/status-line";
-import { ToolActivityState } from "../src/animations-box/tool-activity";
 import { AnimationsBoxWidget, BOX_BORDER_COLS, BOX_BORDER_ROWS } from "../src/animations-box/widget";
 import { AuditLedgerState, POISON_STREAK_TICKS } from "../src/audit-trail-box";
 import { CacheMeterState } from "../src/cache-meter";
@@ -210,7 +208,7 @@ function toolCall(toolName: string, toolCallId: string): ToolCallEvent {
 
 /**
  * Drive the controller through its real event handlers and one scheduler tick
- * to build a representative scene. Context, cache, audit, limits, and tools
+ * to build a representative scene. Context, cache, audit, and limits
  * are active. Live Files stays idle.
  */
 function driveFullBox(detail: BoxDetail): AnimationsBoxWidget {
@@ -234,7 +232,7 @@ function driveFullBox(detail: BoxDetail): AnimationsBoxWidget {
 	controller.onMessageStart(assistantMessageStart(50, 500), ctx); // reveals the provider to tidepool's pending headers
 	controller.onToolCall(toolCall("write", "tc-1"), ctx);
 	controller.onToolCall(toolCall("read", "tc-2"), ctx);
-	controller.onToolCall(toolCall("bash", "tc-3"), ctx); // the one non-file call: the tools row's whole breakdown
+	controller.onToolCall(toolCall("bash", "tc-3"), ctx); // the one non-file call
 
 	// Drive the real per-frame pipeline once before capturing the widget.
 	scheduler.advance(50);
@@ -250,7 +248,6 @@ function restingSamples(): SegmentSample[] {
 		buildCacheMeterSegment(new CacheMeterState(), 0, idTheme),
 		buildAuditTrailBoxSegment(new AuditLedgerState(), 0, idTheme),
 		buildRateLimitTidepoolSegment(new RateLimitTidepoolState(), 0, idTheme),
-		buildToolActivitySegment(new ToolActivityState(), 0, idTheme),
 		buildLiveFilesSegment(new LiveFilesState(), BOX_SEGMENT_IDS.indexOf("filesLive") + 1),
 	];
 }
@@ -277,10 +274,6 @@ function activeSamples(): SegmentSample[] {
 		observedAtMs: 0,
 	});
 
-	const toolActivityState = new ToolActivityState();
-	toolActivityState.record("write");
-	toolActivityState.record("bash");
-
 	const liveFilesState = new LiveFilesState(() => 0);
 	liveFilesState.onToolCall({ toolCallId: "edit-1", toolName: "edit", input: { path: "/repo/src/foo.ts" } }, "/repo");
 
@@ -304,7 +297,6 @@ function activeSamples(): SegmentSample[] {
 			troubleCounts: {},
 			lastTrouble: undefined,
 		}),
-		buildToolActivitySegment(toolActivityState, 0, idTheme),
 		buildLiveFilesSegment(liveFilesState, BOX_SEGMENT_IDS.indexOf("filesLive") + 1),
 	];
 }
@@ -364,17 +356,16 @@ describe("AnimationsBoxController + AnimationsBoxWidget — full-box frames (Dec
 		}
 	}
 
-	it("detailed mode keeps six ordered required rows and sheds optional metric detail", () => {
+	it("detailed mode keeps five ordered required rows and sheds optional metric detail", () => {
 		const widget = driveFullBox("detailed");
 		for (const width of [45, 69, 120]) {
 			const rows = widget.renderFrame(width);
-			expectBox(rows, width, 6);
+			expectBox(rows, width, 5);
 			expect(rows.slice(1, -1).map(row => row.trim().split(/\s+/)[2])).toEqual([
 				"context",
 				"cache",
 				"audit",
 				"limits",
-				"tools",
 				"files",
 			]);
 			expect(rows[1]).toContain("[████████░░]");
@@ -389,7 +380,7 @@ describe("AnimationsBoxController + AnimationsBoxWidget — full-box frames (Dec
 				expect(rows[4]).toContain("78% left");
 				expect(rows[4]).toContain("resets 12m");
 			}
-			expect(rows[6]).toMatch(/○\s+files\s+—/);
+			expect(rows[5]).toMatch(/○\s+files\s+—/);
 			if (width >= 69) {
 				expect(rows[1]).toContain("120K/200K window");
 				expect(rows[3]).toContain("widget.ts");
@@ -418,15 +409,13 @@ describe("AnimationsBoxController + AnimationsBoxWidget — full-box frames (Dec
 			expect(summary).toContain("75% budget");
 			expect(summary).toMatch(/(?:50%.*reuse|reuse 50%)/);
 			expect(summary).toContain("1✎\uFE0E");
-			// Health-first: check priority order for context, cache, audit, tools
+			// Health-first: check priority order for context, cache, audit, limits
 			expect(summary.indexOf("75%")).toBeLessThan(summary.indexOf("50%"));
 			expect(summary.indexOf("50%")).toBeLessThan(summary.indexOf("1✎\uFE0E"));
 			if (width >= 69) {
 				expect(summary).toContain("[████████░░]");
-				expect(summary).toContain("3 calls");
 			} else {
 				expect(summary).not.toContain("[");
-				expect(summary).not.toContain("3 calls");
 			}
 		}
 		widget.dispose();
@@ -761,7 +750,6 @@ const SAMPLE_IDS = [
 	"cacheMeter",
 	"auditTrailBox",
 	"rateLimitTidepool",
-	"toolActivity",
 	"filesLive",
 ] as const satisfies readonly BoxSegmentId[];
 
@@ -828,8 +816,8 @@ describe("kit composeSegments — degradation ladder at 45/69/120 in simple mode
 		return BOX_SEGMENT_IDS.indexOf(id) + 1;
 	}
 
-	// Minimum widths with separators: first four = 35, first five = 45,
-	// all six = 54. Borders leave budgets 41, 65 and 116.
+	// Minimum widths with separators: first four = 35, all five = 45.
+	// Borders leave budgets 41, 65 and 116.
 	const LADDER: Record<number, readonly BoxSegmentId[]> = {
 		45: SAMPLE_IDS.slice(0, 4),
 		69: SAMPLE_IDS,
@@ -855,7 +843,6 @@ describe("kit composeSegments — degradation ladder at 45/69/120 in simple mode
 		// Health-first: narrow shows health, not tidepool quota
 		expect(narrow.row).toContain("http 200");
 		expect(narrow.row).toContain("reuse 50%");
-		expect(narrow.keptIds).not.toContain("toolActivity");
 		expect(narrow.keptIds).not.toContain("filesLive");
 		const real = composeSegments(kitSegments, 69 - BOX_BORDER_COLS);
 		expect(real.keptIds).toContain("filesLive");

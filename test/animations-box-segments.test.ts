@@ -4,11 +4,9 @@ import {
 	buildAuditTrailBoxSegment,
 	buildCacheMeterSegment,
 	buildRateLimitTidepoolSegment,
-	buildToolActivitySegment,
 } from "../src/animations-box/segments";
 import { BOX_SEGMENT_IDS } from "../src/animations-box/settings";
 import type { PhraseSpan } from "../src/animations-box/status-line";
-import { ToolActivityState } from "../src/animations-box/tool-activity";
 import {
 	AUDIT_TRAIL_BOX_COLORS,
 	AuditLedgerState,
@@ -650,129 +648,5 @@ describe("buildRateLimitTidepoolSegment — provider health trouble", () => {
 			healthAfter([500]),
 		);
 		expect(troubledNotablePool.line.dot).toBe("alert");
-	});
-});
-
-describe("buildToolActivitySegment — priority", () => {
-	it("derives its priority from toolActivity's position in BOX_SEGMENT_IDS, never a hardcoded literal", () => {
-		const sample = buildToolActivitySegment(new ToolActivityState(), 0, idTheme);
-		expect(sample.priority).toBe(BOX_SEGMENT_IDS.indexOf("toolActivity") + 1);
-	});
-
-	it("id is always toolActivity", () => {
-		expect(buildToolActivitySegment(new ToolActivityState(), 0, idTheme).id).toBe("toolActivity");
-	});
-});
-
-describe("buildToolActivitySegment — resting line (Decision 5: enabled-but-idle, never absent)", () => {
-	it("is inactive with empty variants before any tool_call has fired", () => {
-		const sample = buildToolActivitySegment(new ToolActivityState(), 0, idTheme);
-		expect(sample.active).toBe(false);
-		expect(sample.variants).toEqual([]);
-	});
-
-	it("still renders a full resting line: idle dot, label 'tools', dim accent, lone dim em-dash", () => {
-		const sample = buildToolActivitySegment(new ToolActivityState(), 0, idTheme);
-		expect(sample.line).toEqual({
-			dot: "idle",
-			label: "tools",
-			accent: "dim",
-			spans: IDLE_SPANS,
-		});
-	});
-});
-
-describe("buildToolActivitySegment — active line", () => {
-	function stateWith(...toolNames: readonly string[]): ToolActivityState {
-		const state = new ToolActivityState();
-		for (const name of toolNames) state.record(name);
-		return state;
-	}
-
-	it("counts every call and keeps file tools out of the compact category breakdown", () => {
-		const sample = buildToolActivitySegment(stateWith("read", "read", "edit", "bash"), 0, idTheme);
-		expect(sample.active).toBe(true);
-		expect(sample.line.dot).toBe("live");
-		expect(sample.line.activity).toBe(false);
-		expect(sample.line.spans).toEqual([
-			{ key: "total", text: "4 calls" },
-			{ key: "cat:bash", text: "bash (1)" },
-		]);
-	});
-
-	it("singularizes a lone call without adding internal phase terminology", () => {
-		const sample = buildToolActivitySegment(stateWith("write"), 0, idTheme);
-		expect(sample.line.spans[0]?.text).toBe("1 call");
-		expect(sample.variants).toEqual(["1 call"]);
-	});
-
-	it("orders the category breakdown busiest-first and caps it at two categories", () => {
-		const sample = buildToolActivitySegment(
-			stateWith("grep", "glob", "grep", "bash", "task", "task", "task", "task"),
-			0,
-			idTheme,
-		);
-		expect(sample.line.spans).toEqual([
-			{ key: "total", text: "8 calls" },
-			{ key: "cat:agent", text: "agent (4)" },
-			{ key: "cat:search", text: "search (3)" },
-		]);
-	});
-
-	it("breaks tied categories by display order and classifies MCP plus unknown tools", () => {
-		const tie = buildToolActivitySegment(stateWith("task", "bash"), 0, idTheme);
-		expect(tie.line.spans.map(span => span.text)).toEqual(["2 calls", "bash (1)", "agent (1)"]);
-
-		const bridges = buildToolActivitySegment(stateWith("mcp__qmd_query", "some_plugin_tool"), 0, idTheme);
-		expect(bridges.line.spans.map(span => span.text)).toEqual(["2 calls", "mcp (1)", "other (1)"]);
-	});
-
-	it("leads with the active tool and elapsed time, then pulses the row", () => {
-		const state = stateWith("bash", "read");
-		state.start("bash", "bash", 100);
-		state.start("read", "read", 200);
-		const sample = buildToolActivitySegment(state, 4_900, idTheme);
-		expect(sample.line.activity).toBe(true);
-		expect(sample.line.spans.slice(0, 3)).toEqual([
-			{ key: "active", text: "bash" },
-			{ key: "elapsed", text: "4.8s active", flash: false },
-			{ key: "total", text: "2 calls" },
-		]);
-	});
-
-	it("keeps settled latency statistics out of the display row", () => {
-		const state = new ToolActivityState();
-		const samples = [
-			["read", 100],
-			["read", 200],
-			["read", 300],
-			["read", 400],
-			["bash", 4_800],
-		] as const;
-		for (const [index, [toolName, duration]] of samples.entries()) {
-			const id = String(index);
-			state.record(toolName);
-			state.start(id, toolName, index * 10_000);
-			state.end(id, toolName, false, index * 10_000 + duration);
-		}
-		state.settle();
-		const sample = buildToolActivitySegment(state, 50_000, idTheme);
-		expect(sample.line.activity).toBe(false);
-		expect(sample.line.spans).toEqual([
-			{ key: "total", text: "5 calls" },
-			{ key: "cat:bash", text: "bash (1)" },
-		]);
-	});
-
-	it("spells the simple-mode ladder from categories down to the bare total", () => {
-		const sample = buildToolActivitySegment(stateWith("bash", "bash", "grep"), 0, idTheme);
-		expect(sample.variants).toEqual(["3 calls · bash (2) · search (1)", "3 calls"]);
-	});
-
-	it("uses one accent for the whole row", () => {
-		const bash = buildToolActivitySegment(stateWith("bash"), 0, idTheme);
-		const agent = buildToolActivitySegment(stateWith("task"), 0, idTheme);
-		expect(bash.line.accent).toBe(agent.line.accent);
-		expect(bash.line.accent).not.toBe("dim");
 	});
 });

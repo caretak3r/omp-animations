@@ -124,7 +124,7 @@ export function parseFrame(file: string, text: string): Frame {
 		const labels = new Set(rows.filter(row => row.kind === "labeled").map(row => row.label));
 		const detailed =
 			rows.some(row => row.label === "context" && (row.dot !== null || /% (?:budget|quota)\b/u.test(row.value))) ||
-			["context", "cache", "audit", "limits", "tools", "files"].filter(label => labels.has(label)).length >= 3;
+			["context", "cache", "audit", "limits", "files"].filter(label => labels.has(label)).length >= 3;
 		// Text can identify surviving status rows, not an empty or wholly erased widget.
 		if (detailed || rows.some(row => row.kind === "summary")) {
 			boxes.push({

@@ -24,16 +24,13 @@ import {
 	buildCacheMeterSegment,
 	buildContextGaugeSegment,
 	buildRateLimitTidepoolSegment,
-	buildToolActivitySegment,
 	CACHE_METER_SEGMENT,
 	CONTEXT_GAUGE_SEGMENT,
 	LIVE_FILES_SEGMENT,
 	RATE_LIMIT_TIDEPOOL_SEGMENT,
 	type SegmentSample,
-	TOOL_ACTIVITY_SEGMENT,
 } from "./segments";
 import { BOX_REQUIRED_SEGMENT_IDS, type BoxSegmentId } from "./settings";
-import type { ToolActivityState } from "./tool-activity";
 
 /** Everything a core row may read, built once per frame. */
 export interface CoreRowDeps {
@@ -45,7 +42,6 @@ export interface CoreRowDeps {
 	readonly auditTrail: AuditLedgerState;
 	readonly tidepool: RateLimitTidepoolState;
 	readonly providerHealth: ProviderHealthSnapshot | undefined;
-	readonly toolActivity: ToolActivityState;
 	readonly roster: ActivityRosterSnapshot | undefined;
 	readonly liveFiles: LiveFileSnapshot;
 	readonly extrasConfig: SignalExtrasConfig;
@@ -79,10 +75,6 @@ export const CORE_ROWS: Readonly<Record<BoxSegmentId, CoreRowSpec>> = {
 	rateLimitTidepool: {
 		meta: RATE_LIMIT_TIDEPOOL_SEGMENT,
 		build: d => buildRateLimitTidepoolSegment(d.tidepool, d.now, d.theme, undefined, d.glyphPreset, d.providerHealth),
-	},
-	toolActivity: {
-		meta: TOOL_ACTIVITY_SEGMENT,
-		build: d => buildToolActivitySegment(d.toolActivity, d.now, d.theme, d.glyphPreset),
 	},
 	filesLive: {
 		meta: LIVE_FILES_SEGMENT,

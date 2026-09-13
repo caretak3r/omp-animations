@@ -21,7 +21,6 @@ export const BOX_REQUIRED_SEGMENT_IDS = [
 	"cacheMeter",
 	"auditTrailBox",
 	"rateLimitTidepool",
-	"toolActivity",
 	"filesLive",
 ] as const;
 

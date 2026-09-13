@@ -228,7 +228,7 @@ describe("screenshot regression — the duplicate-heavy launch configuration ren
 		driveScreenshotScene(session);
 		const rows = session.widget.render(69);
 
-		expect(labels(rows)).toEqual(["", "context", "cache", "audit", "limits", "tools", "files", ""]);
+		expect(labels(rows)).toEqual(["", "context", "cache", "audit", "limits", "files", ""]);
 		expect(rows.filter(row => innerText(row) === "" && row.startsWith("│"))).toHaveLength(0);
 		expect(rows.slice(1, 1 + BOX_REQUIRED_SEGMENT_IDS.length).every(row => innerText(row) !== "")).toBe(true);
 	});
@@ -318,7 +318,7 @@ describe("screenshot regression — the duplicate-heavy launch configuration ren
 		activateWorker(session);
 		const rows = session.widget.render(69);
 
-		expect(labels(rows)).toEqual(["", "context", "cache", "audit", "limits", "tools", "files", ""]);
+		expect(labels(rows)).toEqual(["", "context", "cache", "audit", "limits", "files", ""]);
 		expect(rows.filter(row => innerText(row) === "" && row.startsWith("│"))).toEqual([]);
 	});
 

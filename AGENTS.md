@@ -13,14 +13,13 @@ Do not change omp core source.
 The plugin mounts one Audit Box widget on one `AnimationHost`.
 The default placement is below the editor.
 
-The Audit Box holds six core rows in this order:
+The Audit Box holds five core rows in this order:
 
 1. `contextGauge` — context fill against the quota
 2. `cacheMeter` — prompt-cache hit rate and cost
 3. `auditTrailBox` — file trust
 4. `rateLimitTidepool` — provider response health, then rate-limit headroom
-5. `toolActivity` — tool-call totals, active category, and elapsed execution time
-6. `filesLive` — paths that an edit or write call currently owns
+5. `filesLive` — paths that an edit or write call currently owns
 
 Agent Bonsai is an optional group in the Audit Box.
 Breathing Border is not a row. It colors the Audit Box border.
@@ -56,12 +55,9 @@ Darkroom Title writes critical state to the terminal title. It does not use a wi
 It reads `ctx.getContextUsage()` on every render and uses the standard progress bar.
 `cacheMeter` waits for `message_end`.
 `rateLimitTidepool` waits for the first `after_provider_response`, then leads with the HTTP status class counts; the header-derived headroom is a wide-only tail that needs a whitelisted provider.
-`toolActivity` counts `tool_call` and measures exact `tool_execution_start`/`tool_execution_end` boundaries.
-While a tool runs the row leads with the active category and elapsed time; at rest it shows total calls and the busiest categories.
-Internal p50 latency and the work-phase rail are computed but deliberately not rendered (see CHANGELOG "Internal latency and work-phase diagnostics").
 The `verify` row shows writes newer than the last successful bash; its absence is silence, not a verification claim.
 `filesLive` starts on `tool_call` and clears on the matching result.
-An idle `○ —` on cache, limits, tools, or files before the first response is not a fault.
+An idle `○ —` on cache, limits, or files before the first response is not a fault.
 
 Do not add a second widget for the same signal.
 Do not ease a money figure or a risk figure toward a target.

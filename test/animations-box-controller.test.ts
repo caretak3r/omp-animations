@@ -54,7 +54,6 @@ const REQUIRED_SEGMENT_LABELS = {
 	cacheMeter: "cache",
 	auditTrailBox: "audit",
 	rateLimitTidepool: "limits",
-	toolActivity: "tools",
 } satisfies Readonly<Record<BoxRequiredSegmentId, string>>;
 
 function requiredSegmentLabels(): string[] {
@@ -723,107 +722,7 @@ describe("AnimationsBoxController — rate-limit tidepool state wiring", () => {
 	});
 });
 
-describe("AnimationsBoxController — tool activity state wiring", () => {
-	it("starts on the resting row and ignores headless tool events", () => {
-		const scheduler = manualScheduler();
-		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
-		controller.mount(ctx);
-		const widget = buildWidget(calls[0] as SetWidgetCall);
-		expect(widget.renderFrame(120).find(row => row.includes("tools"))).toContain("—");
-
-		controller.onToolCall(toolCall("read"), { hasUI: false });
-		controller.onToolExecutionStart(toolExecutionStart("read"), { hasUI: false });
-		expect(widget.renderFrame(120).find(row => row.includes("tools"))).toContain("—");
-		widget.dispose();
-	});
-
-	it("renders exact active execution latency from the controller clock", () => {
-		const scheduler = manualScheduler();
-		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
-		controller.mount(ctx);
-		const widget = buildWidget(calls[0] as SetWidgetCall);
-
-		controller.onToolCall(toolCall("bash", {}, "verify"), ctx);
-		controller.onToolExecutionStart(toolExecutionStart("bash", "verify"), ctx);
-		scheduler.advance(4_800);
-		const active = widget.renderFrame(160).find(row => row.includes("tools"));
-		expect(active).toContain("bash · 4.8s active · 1 call");
-		expect(active).not.toContain("VERIFY");
-
-		controller.onToolExecutionEnd(toolExecutionEnd("bash", "verify"), ctx);
-		const settled = widget.renderFrame(160).find(row => row.includes("tools"));
-		expect(settled).toContain("1 call · bash (1)");
-		widget.dispose();
-	});
-
-	it("shows the active tool first without duplicating file tools in the category breakdown", () => {
-		const scheduler = manualScheduler();
-		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
-		controller.mount(ctx);
-		const widget = buildWidget(calls[0] as SetWidgetCall);
-
-		for (const [id, toolName] of [
-			["write-1", "write"],
-			["verify", "bash"],
-		] as const) {
-			controller.onToolCall(toolCall(toolName, {}, id), ctx);
-			controller.onToolExecutionStart(toolExecutionStart(toolName, id), ctx);
-			scheduler.advance(10);
-			controller.onToolExecutionEnd(toolExecutionEnd(toolName, id), ctx);
-		}
-		controller.onToolCall(toolCall("write", {}, "write-2"), ctx);
-		controller.onToolExecutionStart(toolExecutionStart("write", "write-2"), ctx);
-		const toolsRow = widget.renderFrame(160).find(row => row.includes("tools"));
-		expect(toolsRow).toContain("write · 0ms active · 3 calls · bash (1)");
-		expect(toolsRow).not.toContain("write (");
-		expect(toolsRow).not.toContain("BUILD");
-		widget.dispose();
-	});
-
-	it("keeps the settled tool row compact across build and verification work", () => {
-		const scheduler = manualScheduler();
-		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
-		controller.mount(ctx);
-		const widget = buildWidget(calls[0] as SetWidgetCall);
-
-		controller.onToolCall(toolCall("write", {}, "write"), ctx);
-		controller.onToolExecutionStart(toolExecutionStart("write", "write"), ctx);
-		controller.onToolExecutionEnd(toolExecutionEnd("write", "write"), ctx);
-		controller.onTurnEnd(turnEnd(0), ctx);
-		expect(widget.renderFrame(160).find(row => row.includes("tools"))).toContain("1 call");
-
-		controller.onToolCall(toolCall("bash", {}, "verify"), ctx);
-		controller.onToolExecutionStart(toolExecutionStart("bash", "verify"), ctx);
-		controller.onToolExecutionEnd(toolExecutionEnd("bash", "verify"), ctx);
-		controller.onTurnEnd(turnEnd(1), ctx);
-		const settled = widget.renderFrame(160).find(row => row.includes("tools"));
-		expect(settled).toContain("2 calls · bash (1)");
-		expect(settled).not.toContain("HANDOFF");
-		widget.dispose();
-	});
-
-	it("resets the ledger on agent_start and session_switch without remounting", () => {
-		const scheduler = manualScheduler();
-		const { ctx, calls } = recordingContext();
-		const controller = new AnimationsBoxController({ scheduler, initialConfig: resolveAnimationsBoxConfig({}) });
-		controller.mount(ctx);
-		const widget = buildWidget(calls[0] as SetWidgetCall);
-
-		controller.onToolCall(toolCall("bash"), ctx);
-		controller.onAgentStart(agentStart(), ctx);
-		expect(widget.renderFrame(120).find(row => row.includes("tools"))).toContain("—");
-
-		controller.onToolCall(toolCall("bash"), ctx);
-		controller.onSessionSwitch(undefined, ctx);
-		expect(widget.renderFrame(120).find(row => row.includes("tools"))).toContain("—");
-		expect(calls).toHaveLength(1);
-		widget.dispose();
-	});
-
+describe("AnimationsBoxController — verify sidecar wiring", () => {
 	it("feeds the verify sidecar row when writes settle", () => {
 		const scheduler = manualScheduler();
 		const { ctx, calls } = recordingContext();
@@ -976,7 +875,6 @@ describe("AnimationsBoxController — grouped Audit Box composition", () => {
 				cacheMeter: false,
 				auditTrailBox: false,
 				rateLimitTidepool: false,
-				toolActivity: false,
 			}),
 		});
 		controller.mount(ctx);

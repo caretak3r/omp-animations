@@ -21,7 +21,6 @@ describe("Audit Box segment groups", () => {
 			"cacheMeter",
 			"auditTrailBox",
 			"rateLimitTidepool",
-			"toolActivity",
 			"filesLive",
 		]);
 		expect(BOX_SEGMENT_IDS).toEqual(BOX_REQUIRED_SEGMENT_IDS);
@@ -66,7 +65,6 @@ describe("resolveAnimationsBoxConfig — defaults and validation", () => {
 			cacheMeter: false,
 			auditTrailBox: false,
 			rateLimitTidepool: false,
-			toolActivity: false,
 			palimpsest: false,
 		});
 		expect(config).toEqual(resolveAnimationsBoxConfig({}));

@@ -30,7 +30,7 @@ import {
 import { CACHE_METER_COLORS, type CacheMeterColors, type CacheMeterState, formatCost } from "../cache-meter";
 import { ageText } from "../duration";
 import { getContextUsageLevel, getContextUsageThemeColor } from "../host/runtime";
-import type { ContextUsageLevel, SymbolPreset, Theme, ThemeColor } from "../host/types";
+import type { ContextUsageLevel, SymbolPreset, Theme } from "../host/types";
 import { renderProgressBar } from "../progress-bar";
 import {
 	classifyStatus,
@@ -44,7 +44,6 @@ import {
 import type { ContextGaugeState } from "./context-gauge";
 import { BOX_SEGMENT_IDS, type BoxSegmentId } from "./settings";
 import type { PhraseSpan, SegmentLine, StatusDot } from "./status-line";
-import type { ToolActivityState } from "./tool-activity";
 
 /** The slice of {@link Theme} every segment builder needs — foreground coloring, plus color hex for gradients and bold for flash emphasis where available. */
 export type BoxTheme = Pick<Theme, "fg"> & Partial<Pick<Theme, "getColorHex" | "bold">>;
@@ -487,82 +486,6 @@ export function buildRateLimitTidepoolSegment(
 	};
 }
 
-/**
- * The `tools` row's single accent. Tool Constellation's seven-way per-category
- * rainbow died with it — one row, one color, like every other segment.
- */
-const TOOL_ACTIVITY_ACCENT: ThemeColor = "syntaxKeyword";
-
-function formatToolDuration(elapsedMs: number): string {
-	const roundedMs = Math.round(Math.max(0, elapsedMs));
-	if (roundedMs < 1_000) return `${roundedMs}ms`;
-	const seconds = roundedMs / 1_000;
-	return seconds < 10 ? `${seconds.toFixed(1)}s` : `${Math.round(seconds)}s`;
-}
-
-/** Tool activity segment metadata for legend. */
-export const TOOL_ACTIVITY_SEGMENT = {
-	id: "toolActivity" as const,
-	label: "tools",
-	description: "Tool call volume, active category, and elapsed execution time",
-} satisfies { id: BoxSegmentId; label: string; description: string };
-
-/**
- * Tool activity segment. One row owns all tool telemetry. While a tool runs,
- * the active category and elapsed time lead and the whole row pulses. At rest,
- * the row collapses to total calls plus the two busiest non-file categories.
- */
-export function buildToolActivitySegment(
-	state: ToolActivityState,
-	now: number,
-	_theme: BoxTheme,
-	_preset: SymbolPreset = "unicode",
-): SegmentSample {
-	const priority = priorityOf("toolActivity");
-	const summary = state.summary(now);
-	if (summary.total === 0) {
-		return {
-			id: "toolActivity",
-			priority,
-			...INACTIVE,
-			line: { dot: "idle", label: "tools", accent: "dim", spans: IDLE_SPANS },
-		};
-	}
-
-	const total = `${summary.total} call${summary.total === 1 ? "" : "s"}`;
-	const running = summary.activeCategory !== null;
-	const activitySpans: PhraseSpan[] = running
-		? [
-				{ key: "active", text: summary.activeCategory },
-				{ key: "elapsed", text: `${formatToolDuration(summary.activeElapsedMs)} active`, flash: false },
-				{ key: "total", text: total },
-			]
-		: [{ key: "total", text: total }];
-	const categorySpans: PhraseSpan[] = summary.top
-		.filter(({ category }) => !running || category !== summary.activeCategory)
-		.map(({ category, count }) => ({
-			key: `cat:${category}`,
-			text: `${category} (${count})`,
-		}));
-	const spans = [...activitySpans, ...categorySpans];
-	const full = spans.map(span => span.text).join(" · ");
-	const variants = dedupe([full, activitySpans.map(span => span.text).join(" · "), total]);
-
-	return {
-		id: "toolActivity",
-		priority,
-		active: true,
-		variants,
-		line: {
-			dot: "live",
-			label: "tools",
-			accent: TOOL_ACTIVITY_ACCENT,
-			spans,
-			activity: running,
-		},
-	};
-}
-
 /** Live Files metadata for the legend. Its builder lives in `../live-files`. */
 export const LIVE_FILES_SEGMENT = {
 	id: "filesLive" as const,
@@ -576,6 +499,5 @@ export const SEGMENT_REGISTRY = [
 	CACHE_METER_SEGMENT,
 	AUDIT_TRAIL_SEGMENT,
 	RATE_LIMIT_TIDEPOOL_SEGMENT,
-	TOOL_ACTIVITY_SEGMENT,
 	LIVE_FILES_SEGMENT,
 ] as const;
