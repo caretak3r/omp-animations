@@ -37,6 +37,12 @@ All notable changes to `@oh-my-pi/animations` are documented here.
   activity/provenance sub-row outright. Whatever the box still can't show,
   from either cap, is named by display name in the trailing `… +N more`
   line, so a failed agent past the visible edge is never silently dropped.
+- The Breathing Border's `subtle` motion tier now softens the perimeter's
+  perceived motion, not only its frame rate: the breath pulse's brightness
+  swing is scaled to 60% of `full`'s, the clockwise gloss head dims to 70%
+  of `full`'s peak, and the gloss trail widens from a short wrapped band to
+  a longer, gentler falloff. The moving head stays visible at `subtle`'s
+  breath peak; `full` is unchanged; `off` and reduced motion remain static.
 - The `limits` row leads with provider response health read from the HTTP
   status of each `after_provider_response`: `http 200 · N ok` while healthy,
   per-class non-2xx counts worst-first plus the newest failure's status and

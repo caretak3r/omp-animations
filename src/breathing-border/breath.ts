@@ -16,7 +16,18 @@ export const EXHALE_DURATION_MS = 2000;
 /** Duration of one clockwise gloss lap, independent of breathing cadence. */
 export const GLOSS_LAP_DURATION_MS = 16_000;
 
-const GLOSS_TRAIL_FRACTION = 0.1;
+/** Trail length (as a fraction of the perimeter) for the `full` motion tier. */
+export const GLOSS_TRAIL_FRACTION = 0.1;
+/**
+ * Wider, gentler trail for the `subtle` motion tier: the same head, a longer
+ * and softer falloff instead of the full tier's short, snappy wrap.
+ */
+export const GLOSS_TRAIL_FRACTION_SUBTLE = 0.22;
+
+/** Breath-pulse amplitude scale the `subtle` motion tier applies so the border's inhale/exhale contrast reads softer than `full`. */
+export const SUBTLE_BREATH_AMPLITUDE_SCALE = 0.6;
+/** Gloss head-brightness scale the `subtle` motion tier applies — dimmer than `full`'s peak, but never fully off. */
+export const SUBTLE_GLOSS_HEAD_SCALE = 0.7;
 
 /**
  * Map a recent turn's wall-clock duration to a breath period: quicker turns
@@ -72,6 +83,7 @@ export function borderGlossIntensity(
 	perimeterLength: number,
 	headProgress: number,
 	strength: number,
+	trailFraction: number = GLOSS_TRAIL_FRACTION,
 ): number {
 	if (
 		!Number.isInteger(cellIndex) ||
@@ -88,12 +100,13 @@ export function borderGlossIntensity(
 	const clampedStrength = Math.min(1, Math.max(0, strength));
 	if (clampedStrength === 0) return 0;
 
+	const fraction = Number.isFinite(trailFraction) && trailFraction > 0 ? trailFraction : GLOSS_TRAIL_FRACTION;
 	const normalizedHead = ((headProgress % 1) + 1) % 1;
 	const cellProgress = cellIndex / perimeterLength;
 	const trailDistance = (normalizedHead - cellProgress + 1) % 1;
-	if (trailDistance >= GLOSS_TRAIL_FRACTION) return 0;
+	if (trailDistance >= fraction) return 0;
 
-	const falloff = 1 - trailDistance / GLOSS_TRAIL_FRACTION;
+	const falloff = 1 - trailDistance / fraction;
 	return clampedStrength * falloff * falloff;
 }
 

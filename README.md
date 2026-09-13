@@ -57,7 +57,10 @@ drop.
 
 **Breathing Border.** Shows a soft pulse along the top of the editor while the
 agent works. The pulse speeds up or slows down with the pace of the last turn.
-It winds down and goes still when the agent finishes.
+It winds down and goes still when the agent finishes. Under the `subtle`
+motion tier the pulse and the clockwise gloss head are dimmer, and the gloss
+trail is wider and gentler, than under `full`; the moving head stays visible
+at either tier.
 
 **Cache Meter.** Shows recent token reuse separately from the session count
 of requests with reuse. The percentage averages the last ten requests'

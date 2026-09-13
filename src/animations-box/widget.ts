@@ -76,6 +76,8 @@ export interface AnimationsBoxBorderFrame {
 	readonly brightness: number;
 	readonly glossProgress: number;
 	readonly glossStrength: number;
+	/** Perimeter gloss trail width, as a fraction of the perimeter. Omitted means the `full`-tier trail. */
+	readonly glossTrailFraction?: number;
 }
 
 interface BorderPaint {
@@ -107,6 +109,7 @@ function borderCell(text: string, perimeterIndex: number, paint: BorderPaint | u
 		paint.perimeterLength,
 		paint.frame.glossProgress,
 		paint.frame.glossStrength,
+		paint.frame.glossTrailFraction,
 	);
 	const glossAlpha = perimeterIndex === headIndex ? paint.frame.glossStrength : trail;
 	const brightness = paint.frame.brightness + (1 - paint.frame.brightness) * glossAlpha;

@@ -1058,6 +1058,63 @@ describe("AnimationsBoxController — breathing border wiring (Decision 2)", () 
 		widget.dispose();
 	});
 
+	it("the subtle motion tier softens the breathing border's amplitude at the same phase full reads brighter at", () => {
+		// Chosen so the unscaled envelope lands in the "border" bucket (>=0.15) while
+		// the subtle tier's 0.6x amplitude scale drops the same phase into "borderMuted" (<0.15).
+		const ENVELOPE_TARGET = 0.2;
+		const elapsedMs = (Math.acos(1 - 2 * ENVELOPE_TARGET) / (2 * Math.PI)) * BASE_BREATH_PERIOD_MS;
+
+		function rowAtTier(motionSetting: "full" | "subtle"): string {
+			const scheduler = manualScheduler();
+			const { ctx, calls } = recordingContext();
+			const controller = new AnimationsBoxController({
+				scheduler,
+				initialConfig: resolveAnimationsBoxConfig({}),
+				motionSetting,
+			});
+			controller.mount(ctx);
+			const widget = buildWidget(calls[0] as SetWidgetCall, taggedTheme);
+			controller.onAgentStart(agentStart(), ctx);
+			scheduler.advance(elapsedMs);
+			const row = widget.renderFrame(20)[0] ?? "";
+			widget.dispose();
+			return row;
+		}
+
+		function tokenCount(row: string, token: string): number {
+			return (row.match(new RegExp(`${token}:`, "gu")) ?? []).length;
+		}
+
+		const fullRow = rowAtTier("full");
+		const subtleRow = rowAtTier("subtle");
+
+		expect(tokenCount(fullRow, BREATHING_BORDER_COLORS.base)).toBeGreaterThan(0);
+		expect(tokenCount(subtleRow, BREATHING_BORDER_COLORS.base)).toBeLessThan(
+			tokenCount(fullRow, BREATHING_BORDER_COLORS.base),
+		);
+		expect(tokenCount(subtleRow, BREATHING_BORDER_COLORS.muted)).toBeGreaterThan(
+			tokenCount(fullRow, BREATHING_BORDER_COLORS.muted),
+		);
+	});
+
+	it("subtle tier keeps a visible moving gloss head at the breath peak, just softer than full", () => {
+		const scheduler = manualScheduler();
+		const { ctx, calls } = recordingContext();
+		const controller = new AnimationsBoxController({
+			scheduler,
+			initialConfig: resolveAnimationsBoxConfig({}),
+			motionSetting: "subtle",
+		});
+		controller.mount(ctx);
+		const widget = buildWidget(calls[0] as SetWidgetCall, taggedTheme);
+
+		controller.onAgentStart(agentStart(), ctx);
+		scheduler.advance(BASE_BREATH_PERIOD_MS / 2); // mid-cycle: the breath envelope peaks here
+		const row = widget.renderFrame(20)[0] ?? "";
+		expect(row).toContain(`${BREATHING_BORDER_COLORS.peak}:`); // head still reads as the brightest token, never vanished
+		widget.dispose();
+	});
+
 	it("breathingBorder disabled in config renders the plain, uncolored chrome even while the agent is actively breathing", () => {
 		const scheduler = manualScheduler();
 		const { ctx, calls } = recordingContext();

@@ -9,6 +9,8 @@ import {
 	EXHALE_DURATION_MS,
 	exhaleEnvelope,
 	GLOSS_LAP_DURATION_MS,
+	GLOSS_TRAIL_FRACTION,
+	GLOSS_TRAIL_FRACTION_SUBTLE,
 	glossLapProgress,
 	MAX_BREATH_PERIOD_MS,
 	MIN_BREATH_PERIOD_MS,
@@ -108,6 +110,27 @@ describe("breathing border pure math", () => {
 			expect(intensity).toBeGreaterThanOrEqual(0);
 			expect(intensity).toBeLessThanOrEqual(1);
 		}
+	});
+
+	it("a wider trailFraction (subtle tier) lights more trailing cells than the default (full tier)", () => {
+		const perimeterLength = 40;
+		const countLit = (trailFraction: number) =>
+			Array.from({ length: perimeterLength }, (_, cellIndex) =>
+				borderGlossIntensity(cellIndex, perimeterLength, 0, 0.8, trailFraction),
+			).filter(intensity => intensity > 0).length;
+
+		const fullCount = countLit(GLOSS_TRAIL_FRACTION);
+		const subtleCount = countLit(GLOSS_TRAIL_FRACTION_SUBTLE);
+
+		expect(subtleCount).toBeGreaterThan(fullCount);
+	});
+
+	it("borderGlossIntensity falls back to the default trail width for a malformed trailFraction", () => {
+		const perimeterLength = 40;
+		const withDefault = borderGlossIntensity(38, perimeterLength, 0, 0.8);
+		expect(borderGlossIntensity(38, perimeterLength, 0, 0.8, Number.NaN)).toBe(withDefault);
+		expect(borderGlossIntensity(38, perimeterLength, 0, 0.8, 0)).toBe(withDefault);
+		expect(borderGlossIntensity(38, perimeterLength, 0, 0.8, -1)).toBe(withDefault);
 	});
 });
 

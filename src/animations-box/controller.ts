@@ -14,7 +14,16 @@ import { projectActivityAgents, projectActivityTitleFiles } from "../activity-ro
 import type { AgentBonsaiController } from "../agent-bonsai";
 import type { AccentColor } from "../appearance";
 import { AuditLedgerState, auditTouchesFromToolResult } from "../audit-trail-box";
-import { BreathingBorderState, breathEnvelope, EXHALE_DURATION_MS, exhaleEnvelope } from "../breathing-border";
+import {
+	BreathingBorderState,
+	breathEnvelope,
+	EXHALE_DURATION_MS,
+	exhaleEnvelope,
+	GLOSS_TRAIL_FRACTION,
+	GLOSS_TRAIL_FRACTION_SUBTLE,
+	SUBTLE_BREATH_AMPLITUDE_SCALE,
+	SUBTLE_GLOSS_HEAD_SCALE,
+} from "../breathing-border";
 import { CacheMeterState, type CacheRequestSample } from "../cache-meter";
 import type {
 	AfterProviderResponseEvent,
@@ -297,6 +306,7 @@ export class AnimationsBoxController {
 		if (!this.#config.breathingBorder) return undefined;
 		const phase = this.#breathingBorderState.phase;
 		const motionNow = this.#mount?.host.motionTime(now) ?? now;
+		const subtle = this.#mount?.host.effectiveTier === "subtle";
 		let brightness: number;
 		switch (phase) {
 			case "idle":
@@ -305,17 +315,20 @@ export class AnimationsBoxController {
 			case "active": {
 				const period = this.#breathingBorderState.breathPeriodMs();
 				brightness = breathEnvelope(this.#breathingBorderState.breathElapsedMs(motionNow), period);
+				if (subtle) brightness *= SUBTLE_BREATH_AMPLITUDE_SCALE;
 				break;
 			}
 			case "exhaling":
 				brightness = exhaleEnvelope(this.#breathingBorderState.exhaleElapsedMs(now), EXHALE_DURATION_MS);
 				break;
 		}
+		const baseGlossStrength = phase === "active" ? 1 : phase === "exhaling" ? brightness : 0;
 		return {
 			phase,
 			brightness,
 			glossProgress: this.#breathingBorderState.glossProgress(motionNow),
-			glossStrength: phase === "active" ? 1 : phase === "exhaling" ? brightness : 0,
+			glossStrength: subtle && phase === "active" ? baseGlossStrength * SUBTLE_GLOSS_HEAD_SCALE : baseGlossStrength,
+			glossTrailFraction: subtle ? GLOSS_TRAIL_FRACTION_SUBTLE : GLOSS_TRAIL_FRACTION,
 		};
 	}
 
