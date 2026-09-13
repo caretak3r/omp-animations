@@ -20,7 +20,12 @@
  * envelope. Both inputs arrive in one `getBorderFrame` sample derived from the
  * shared clock and Phase 4A state. `undefined` (motion tier `off`, checked
  * directly against this widget's policy, or `breathingBorder` disabled in
- * config) falls back to the plain, uncolored chrome.
+ * config) falls back to the plain, uncolored chrome. The four corner cells get
+ * one exemption from the head-only peak rule: while a corner's own gloss
+ * trail (its {@link borderGlossIntensity} falloff, not the ambient breathing
+ * brightness) is still hot enough, it keeps the peak token instead of being
+ * demoted, so a passing gloss head reads as a brief corner flash — still the
+ * same three-token palette, still bounded by the existing falloff.
  */
 
 import { sliceWithWidth, truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
@@ -87,7 +92,23 @@ interface BorderPaint {
 	readonly heavy: boolean;
 	readonly colors: BreathingBorderColors;
 	readonly theme: BoxTheme;
+	/** Perimeter indices of the four corner cells, for the corner-accent exemption in {@link borderCell}. */
+	readonly cornerIndices: ReadonlySet<number>;
 }
+
+/** The four corner perimeter indices for a box this shape, matching the clockwise numbering `borderTop`/`contentLine`/`borderBottom` already use. */
+function cornerPerimeterIndices(width: number, contentRows: number): ReadonlySet<number> {
+	const sideRows = width >= BORDER_COLS ? contentRows : 0;
+	return new Set([0, width - 1, width + sideRows, 2 * width + sideRows - 1]);
+}
+
+/**
+ * Local trail intensity a corner must clear to keep its peak token instead of
+ * being demoted like every other non-head cell. Gated on the gloss's own
+ * falloff (not on ambient breathing brightness) so the corner flash is
+ * bounded to the head actually passing nearby, not to a bright crest alone.
+ */
+const CORNER_ACCENT_MIN_TRAIL = 0.5;
 
 function hasSpatialGloss(paint: BorderPaint | undefined): paint is BorderPaint {
 	return paint !== undefined && paint.frame.glossStrength > 0;
@@ -114,7 +135,17 @@ function borderCell(text: string, perimeterIndex: number, paint: BorderPaint | u
 	const glossAlpha = perimeterIndex === headIndex ? paint.frame.glossStrength : trail;
 	const brightness = paint.frame.brightness + (1 - paint.frame.brightness) * glossAlpha;
 	let token = brightnessToken(brightness);
-	if (perimeterIndex !== headIndex && token === "borderAccent") token = "border";
+	// Every non-head cell is demoted off the peak token so exactly one cell reads as the
+	// gloss head. A corner gets one exemption, gated on the gloss trail itself (not on
+	// ambient breathing brightness, which a bright crest could satisfy from any distance):
+	// while the head has just passed close enough, the corner flashes to peak too.
+	const isCornerFlash =
+		perimeterIndex !== headIndex && paint.cornerIndices.has(perimeterIndex) && trail >= CORNER_ACCENT_MIN_TRAIL;
+	if (isCornerFlash) {
+		token = "borderAccent";
+	} else if (perimeterIndex !== headIndex && token === "borderAccent") {
+		token = "border";
+	}
 	return borderText(paint.theme, colorForToken(token, paint.colors), text, paint.heavy);
 }
 
@@ -392,6 +423,7 @@ export class AnimationsBoxWidget extends AnimatedWidget {
 						heavy: baseToken === "borderAccent",
 						colors,
 						theme: this.#theme,
+						cornerIndices: cornerPerimeterIndices(width, contentRows.length),
 					};
 		const heavy = paint?.heavy ?? false;
 		const rows = [borderTop(width, this.#getCollisionDiffraction(now, width), heavy, paint)];

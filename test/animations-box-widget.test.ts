@@ -648,6 +648,56 @@ describe("AnimationsBoxWidget — border chrome breathing (Decision 2)", () => {
 		expect(renderAt(27)[1]?.startsWith("<borderAccent>│</borderAccent>")).toBe(true); // left, first row
 	});
 
+	it("flashes the top-left corner to peak while the gloss head is still close enough", () => {
+		const width = 120;
+		const perimeterLength = 244; // 120 top + 2 right + 120 bottom + 2 left
+		const renderWithHeadAt = (headIndex: number): readonly string[] =>
+			makeWidget({
+				samples: [ACTIVE, RESTING],
+				theme: cellTaggedTheme,
+				getBorderFrame: () => ({
+					phase: "active",
+					brightness: 0,
+					glossProgress: headIndex / perimeterLength,
+					glossStrength: 1,
+				}),
+			}).render(width);
+
+		// Head 7 cells past the top-left corner: the corner's own trail falloff is
+		// still >= the corner-accent threshold, so it flashes peak alongside the head.
+		const flashing = renderWithHeadAt(7);
+		expect(flashing[0]?.startsWith("<borderAccent>┌</borderAccent>")).toBe(true);
+		const flashingPeaks = flashing.join("\n").match(/<borderAccent>/g) ?? [];
+		expect(flashingPeaks).toHaveLength(2); // the head cell and the flashing corner
+
+		// One cell further on, the same corner's trail has fallen under the threshold
+		// and it reverts to the ordinary non-head demotion.
+		const settled = renderWithHeadAt(8);
+		expect(settled[0]?.startsWith("<borderAccent>┌</borderAccent>")).toBe(false);
+		const settledPeaks = settled.join("\n").match(/<borderAccent>/g) ?? [];
+		expect(settledPeaks).toHaveLength(1); // only the head cell
+	});
+
+	it("does not flash a corner from ambient brightness alone when the gloss head is far away", () => {
+		const width = 120;
+		const rows = makeWidget({
+			samples: [ACTIVE, RESTING],
+			theme: cellTaggedTheme,
+			getBorderFrame: () => ({
+				phase: "active",
+				brightness: 0.9, // ambient brightness alone already buckets to borderAccent
+				glossProgress: 0.5, // head is on the far side of the perimeter from every corner
+				glossStrength: 1,
+			}),
+		}).render(width);
+
+		expect(rows[0]?.startsWith("<borderAccent>┌</borderAccent>")).toBe(false);
+		expect(rows[0]?.endsWith("<borderAccent>┐</borderAccent>")).toBe(false);
+		const last = rows.at(-1);
+		expect(last?.startsWith("<borderAccent>└</borderAccent>")).toBe(false);
+		expect(last?.endsWith("<borderAccent>┘</borderAccent>")).toBe(false);
+	});
+
 	it("keeps one peak head distinct from its falling tail on a long perimeter", () => {
 		const width = 120;
 		const rows = makeWidget({

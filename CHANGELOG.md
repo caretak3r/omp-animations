@@ -43,6 +43,12 @@ All notable changes to `@oh-my-pi/animations` are documented here.
   of `full`'s peak, and the gloss trail widens from a short wrapped band to
   a longer, gentler falloff. The moving head stays visible at `subtle`'s
   breath peak; `full` is unchanged; `off` and reduced motion remain static.
+- A corner cell now flashes to the border's peak color when the moving gloss
+  head's own trail falloff passes close enough, instead of always sharing
+  every other non-head cell's demoted token. The flash uses only the
+  existing three-token palette and is gated on the gloss trail itself, so
+  high ambient breathing brightness alone never triggers it from across the
+  perimeter.
 - The `limits` row leads with provider response health read from the HTTP
   status of each `after_provider_response`: `http 200 · N ok` while healthy,
   per-class non-2xx counts worst-first plus the newest failure's status and

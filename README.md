@@ -60,7 +60,9 @@ agent works. The pulse speeds up or slows down with the pace of the last turn.
 It winds down and goes still when the agent finishes. Under the `subtle`
 motion tier the pulse and the clockwise gloss head are dimmer, and the gloss
 trail is wider and gentler, than under `full`; the moving head stays visible
-at either tier.
+at either tier. When the moving gloss head passes close enough to a corner,
+that corner flashes to the same peak color as the head for a moment — still
+bounded by the head's own trail falloff, not by ambient brightness alone.
 
 **Cache Meter.** Shows recent token reuse separately from the session count
 of requests with reuse. The percentage averages the last ten requests'
