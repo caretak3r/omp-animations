@@ -24,6 +24,7 @@ const SIMPLE_BUDGET = /(?:^| · )(?:\[?[\u2588-\u258f\u2591#….-]*\]?(?:…|\.{
 const AGENT_ROW = /^[\s│┃├└╰┌┬─|+`-]*[○◐●◆◇•▪✓✗×!]\s+(?:M|A[\d?]+)\s+\S+(?: \(inferred\))?(?=\s{2,}|$)/u;
 const AGENT_MODEL =
 	/^[\s│┃├└╰┌┬─|+`-]*[○◐●◆◇•▪✓✗×!]\s+(?:M|A[\d?]+)\s+\S+(?: \(inferred\))?\s{2,}(?<model>[\w-]+\/[\w.-]+(?::\w+)?)(?=\s{2,}|$)/u;
+const AGENT_DETAIL_ROW = /^↳/u;
 const BAR_RUN = /\[?[\u2588-\u258f\u2591#-]+(?:…|\.{3})?\]?(?:…|\.{3})?|\[(?:…|\.{3})?\]?|\]/gu;
 const COMPLETE_BAR = new RegExp(`^\\[[\\u2588-\\u258f\\u2591#-]{${PROGRESS_BAR_CELLS}}\\]$`, "u");
 
@@ -101,7 +102,9 @@ function parseRow(line: string): Row {
 	if (SIMPLE_BUDGET.test(body)) return { line, kind: "summary", dot, label: "", value: body, body };
 	const labeled = LABEL.exec(rest);
 	// A lone word with no glyph and no value is a group heading ("agents"), not a data row.
-	if (dot === null && /^\S+$/.test(rest)) return { line, kind: "header", dot, label: rest, value: "", body };
+	// The heading may carry a " · <model>" suffix when every visible node shares one model.
+	const heading = dot === null ? /^(?<label>\S+)(?: · .+)?$/u.exec(rest) : null;
+	if (heading) return { line, kind: "header", dot, label: heading.groups?.label ?? rest, value: "", body };
 	if (labeled && rest.length > 0) {
 		return {
 			line,
@@ -287,6 +290,7 @@ export const RULES: Rule[] = [
 					if (row.kind === "header") agents = row.label === "agents";
 					else if (row.body.length === 0) agents = false;
 					const agentRow = agents && AGENT_ROW.test(row.body);
+					const agentDetailRow = agents && AGENT_DETAIL_ROW.test(row.body);
 					const model = agentRow ? AGENT_MODEL.exec(row.body) : null;
 					const modelStart = model ? model[0].length - (model.groups?.model?.length ?? 0) : -1;
 					for (const hit of row.body.matchAll(/\b[\w-]+\/[\w.-]+(?::\w+)?\b/g)) {
@@ -294,7 +298,7 @@ export const RULES: Rule[] = [
 						if (hit[0] === model?.groups?.model) {
 							duplicates.push(`${hit[0]} repeated within agent row`);
 						}
-						if (agentRow) continue;
+						if (agentRow || agentDetailRow) continue;
 						seen.set(hit[0], (seen.get(hit[0]) ?? 0) + 1);
 					}
 				}

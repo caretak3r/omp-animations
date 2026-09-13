@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { visibleWidth } from "@oh-my-pi/pi-tui";
-import type { AgentBonsaiSnapshot } from "../src/agent-bonsai";
+import type { AgentBonsaiCaches, AgentBonsaiRef, AgentBonsaiSnapshot } from "../src/agent-bonsai";
+import { buildAgentBonsai, MAX_BONSAI_ROWS } from "../src/agent-bonsai";
 import { type AnimationsBoxContext, AnimationsBoxController } from "../src/animations-box/controller";
 import type { SegmentSample } from "../src/animations-box/segments";
 import { resolveAnimationsBoxConfig } from "../src/animations-box/settings";
@@ -848,5 +849,97 @@ describe("AnimationsBoxWidget — border chrome breathing (Decision 2)", () => {
 				for (const row of rows) expect(row.length).toBe(width);
 			}
 		}
+	});
+});
+
+describe("AnimationsBoxWidget — bounded Agent Bonsai height (mg5.4)", () => {
+	/**
+	 * One main plus eight subagents — one over MAX_BONSAI_ROWS. Every subagent
+	 * carries both an activity step and a provenance event so an unbounded
+	 * renderer would spend 3 rows per node; the last-created subagent is the
+	 * one `buildAgentBonsai` pushes past the cap, and it is the one carrying
+	 * the error, so it doubles as the "never silently drop a failure" case.
+	 */
+	function nineAgentSnapshot(): AgentBonsaiSnapshot {
+		const refs: AgentBonsaiRef[] = [
+			{ id: "main", displayName: "Main", kind: "main", status: "running", createdAt: 0 },
+		];
+		const activitySteps = new Map<
+			string,
+			readonly { id: string; kind: "tool"; label: string; status: "active"; startedAt: number }[]
+		>();
+		const provenance = new Map<
+			string,
+			readonly { id: string; kind: "skill"; label: string; status: "active"; startedAt: number }[]
+		>();
+		for (let index = 1; index <= 8; index++) {
+			const id = `sub${index}`;
+			const status = index === 8 ? "aborted" : "running";
+			refs.push({ id, displayName: `worker-${index}`, kind: "sub", parentId: "main", status, createdAt: index });
+			activitySteps.set(id, [
+				{ id: `${id}-act`, kind: "tool", label: `tool-${index}`, status: "active", startedAt: index },
+			]);
+			provenance.set(id, [
+				{ id: `${id}-prov`, kind: "skill", label: `skill-${index}`, status: "active", startedAt: index },
+			]);
+		}
+		// buildAgentBonsai only renders a parked/aborted subagent that was actually
+		// observed at least once — mark every subagent seen so the aborted one
+		// (sub8) participates in the cap instead of being silently excluded
+		// upstream of it.
+		const seen = new Set(refs.map(ref => ref.id));
+		const caches: AgentBonsaiCaches = { activitySteps, provenance, seen };
+		return buildAgentBonsai(refs, caches);
+	}
+
+	it("caps visible nodes at MAX_BONSAI_ROWS and names the dropped, aborted agent in the omitted line", () => {
+		const snapshot = nineAgentSnapshot();
+		expect(snapshot.nodes.length).toBeLessThanOrEqual(MAX_BONSAI_ROWS);
+		expect(snapshot.hiddenCount).toBe(1);
+		expect(snapshot.hiddenAgentIds).toEqual(["worker-8"]);
+
+		for (const detail of ["detailed", "simple"] as const) {
+			for (const width of [45, 69, 120]) {
+				const rows = makeWidget({ samples: [ACTIVE], detail, agentBonsai: snapshot }).render(width);
+				const text = rows.join("\n");
+				expect(text).toContain("worker-8");
+			}
+		}
+	});
+
+	it("keeps total height strictly below the unbounded per-node-3-row baseline, in both modes at 45/69/120", () => {
+		const snapshot = nineAgentSnapshot();
+		// Unbounded would render 3 lines (main + activity + provenance) for each
+		// of the up to 8 visible nodes, plus a header and a separator: an upper
+		// bound no bounded render should reach regardless of width.
+		const unboundedCeiling = snapshot.nodes.length * 3 + 2;
+
+		for (const detail of ["detailed", "simple"] as const) {
+			for (const width of [45, 69, 120]) {
+				const first = makeWidget({ samples: [ACTIVE], detail, agentBonsai: snapshot }).render(width);
+				const second = makeWidget({ samples: [ACTIVE], detail, agentBonsai: snapshot }).render(width);
+				expect(first.length).toBeLessThan(unboundedCeiling);
+				// Identical input renders identical row counts across repeated frames — no jitter.
+				expect(second).toHaveLength(first.length);
+			}
+		}
+	});
+
+	it("simple mode never adds activity or provenance sub-rows, even for the detail-eligible nodes", () => {
+		const snapshot = nineAgentSnapshot();
+		const rows = makeWidget({ samples: [ACTIVE], detail: "simple", agentBonsai: snapshot }).render(69);
+		const text = rows.join("\n");
+		for (let index = 1; index <= 7; index++) {
+			expect(text).not.toContain(`tool-${index}`);
+			expect(text).not.toContain(`skill-${index}`);
+		}
+	});
+
+	it("detailed mode budgets activity/provenance sub-rows to at most MAX_BONSAI_DETAIL_ROWS nodes", () => {
+		const snapshot = nineAgentSnapshot();
+		const rows = makeWidget({ samples: [ACTIVE], detail: "detailed", agentBonsai: snapshot }).render(120);
+		const text = rows.join("\n");
+		const nodesWithActivityRow = [1, 2, 3, 4, 5, 6, 7].filter(index => text.includes(`tool-${index}`));
+		expect(nodesWithActivityRow.length).toBeLessThanOrEqual(3);
 	});
 });

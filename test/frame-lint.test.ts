@@ -252,6 +252,17 @@ describe("frame linter", () => {
 		}
 	});
 
+	test("allows sibling agents' activity/file-evidence sub-rows to name the same path", () => {
+		const agents = [
+			"agents",
+			"├─ ● A1 North",
+			"     ↳ [T read ✓] → [F /tmp/omp-anim-sandbox/project ✓]",
+			"└─ ● A2 East",
+			"     ↳ [T read ✓] → [F /tmp/omp-anim-sandbox/project ✓]",
+		];
+		expect(firedRules(auditBox(agents))).not.toContain("repeated-chip");
+	});
+
 	test("rejects duplicate summary chips outside model cells, including inside the agents group", () => {
 		const chip = "openai-codex/gpt-6-astra:high";
 		expect(firedRules(auditBox([`●  tools  ${chip}`, `●  timing  ${chip}`]))).toContain("repeated-chip");
@@ -265,6 +276,25 @@ describe("frame linter", () => {
 	test("a group heading is not graded as a data row missing its value", () => {
 		const heading = parseFrame("f.txt", BROKEN).boxes[0]?.rows.find(row => row.label === "agents");
 		expect(heading?.kind).toBe("header");
+	});
+
+	test("a group heading with a collapsed shared-model suffix is still a header, not a data row", () => {
+		const text = auditBox(["agents · claude-fable-5-1", "● M Main"]);
+		const heading = parseFrame("f.txt", text).boxes[0]?.rows.find(row => row.label === "agents");
+		expect(heading?.kind).toBe("header");
+		// Rules gated on finding the "agents" header must still see it, e.g. duplicate-agent-source.
+		const inferredOnly = auditBox([
+			"agents · claude-fable-5-1",
+			"● M Main (inferred)  gpt-5.5",
+			"└─ ● A1 SpecReview (inferred)  openai-codex/gpt-5.5:high",
+		]);
+		const duplicateSources = auditBox([
+			"agents · claude-fable-5-1",
+			"● M main             gpt-5.5  hub",
+			"● M Main (inferred)  gpt-5.5",
+		]);
+		expect(firedRules(inferredOnly)).not.toContain("duplicate-agent-source");
+		expect(firedRules(duplicateSources)).toContain("duplicate-agent-source");
 	});
 
 	test("flags a fractional boundary glyph in the context bar but accepts whole cells", () => {

@@ -30,6 +30,13 @@ All notable changes to `@oh-my-pi/animations` are documented here.
   wrong row is gone.
 
 ### Changed
+- Agent Bonsai bounds its own height instead of expanding without limit: at
+  most 8 nodes render per frame, and of those, at most 3 keep their
+  activity/provenance sub-rows — running and aborted agents claim both
+  budgets before idle or completed ones. Simple detail mode drops every
+  activity/provenance sub-row outright. Whatever the box still can't show,
+  from either cap, is named by display name in the trailing `… +N more`
+  line, so a failed agent past the visible edge is never silently dropped.
 - The `limits` row leads with provider response health read from the HTTP
   status of each `after_provider_response`: `http 200 · N ok` while healthy,
   per-class non-2xx counts worst-first plus the newest failure's status and

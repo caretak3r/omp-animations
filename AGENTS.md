@@ -22,6 +22,7 @@ The Audit Box holds five core rows in this order:
 5. `filesLive` — paths that an edit or write call currently owns
 
 Agent Bonsai is an optional group in the Audit Box.
+Agent Bonsai caps at 8 visible nodes (`MAX_BONSAI_ROWS`) and, of those, at most 3 keep their activity/provenance sub-rows (`MAX_BONSAI_DETAIL_ROWS`) — running and aborted agents claim both budgets first. Simple detail mode drops all activity/provenance sub-rows regardless of node count. Any node the box cannot show, whether from the node cap or the detail-row cap, is named by its display name in the trailing `… +N more (...)` line — an aborted agent never disappears without a name.
 Breathing Border is not a row. It colors the Audit Box border.
 
 Signal extras are optional groups below the core rows.

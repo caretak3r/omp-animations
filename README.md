@@ -39,6 +39,16 @@ The `seen-skill` chip identifies an inferred skill reference, not proof of appli
 or a successful load. Resource summaries distinguish successful reads, active attempts,
 and failures. Their counts cover retained recent observations, not lifetime use.
 
+Agent Bonsai bounds its own height. At most 8 nodes are visible at once,
+regardless of how many agents actually ran; running and aborted agents keep
+their seats over idle or completed ones when the roster is over that limit.
+Of the visible nodes, at most 3 keep their activity/provenance sub-rows —
+running and aborted agents again claim that budget first. Simple detail mode
+drops every activity and provenance sub-row, keeping one line per agent.
+Whatever the box cannot show — whether cut by the node cap or the detail-row
+cap — is still named, by display name, in the trailing `… +N more (...)` line,
+so a failed agent past the visible edge is never silently dropped.
+
 **Audit Trail Box.** Shows which files the agent still trusts. It marks every
 file the agent has touched as FRESH, DIRTY, POISONED, REDUNDANT, or COLD. Run
 `/audit-trail` to open the full list. Run `/audit-trail remedy` to re-read

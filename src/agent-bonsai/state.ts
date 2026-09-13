@@ -83,6 +83,8 @@ export interface AgentBonsaiSnapshot {
 }
 
 export const MAX_BONSAI_ROWS = 8;
+/** Nodes beyond this many, per frame, keep their compact row only — activity/provenance sub-rows are the first thing a bounded box sheds. */
+export const MAX_BONSAI_DETAIL_ROWS = 3;
 export const GIST_MAX_CHARS = 200;
 const EMPTY_SNAPSHOT: AgentBonsaiSnapshot = { nodes: [], hiddenCount: 0, visible: false };
 
@@ -171,7 +173,11 @@ export function buildAgentBonsai(refs: readonly AgentBonsaiRef[], caches: AgentB
 		const visible = new Set([root.id]);
 		for (const ref of ordered) {
 			if (visible.size === MAX_BONSAI_ROWS) break;
-			if (ref.status === "running" || ref.status === "pending" || ref.status === "idle") visible.add(ref.id);
+			// An error is at least as actionable as an agent that's merely waiting —
+			// "aborted" keeps its seat alongside running/pending/idle so a failure
+			// never loses to a quiet placeholder for one of the last visible rows.
+			if (ref.status === "running" || ref.status === "pending" || ref.status === "idle" || ref.status === "aborted")
+				visible.add(ref.id);
 		}
 		for (const ref of ordered) {
 			if (visible.size === MAX_BONSAI_ROWS) break;

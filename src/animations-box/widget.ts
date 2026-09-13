@@ -304,6 +304,7 @@ export class AnimationsBoxWidget extends AnimatedWidget {
 		const borderFrame = this.#resolveBorderFrame(now);
 		// Optional emphasis follows the governor without changing semantic status.
 		const flashTier: FlashTier = this.#policy.reducedMotion ? "off" : this.#motionHost.effectiveTier;
+		const detail = this.#getDetail();
 		const bonsaiSnapshot = this.#getAgentBonsai();
 		const bonsaiRows = renderAgentBonsaiRows(bonsaiSnapshot, inner, {
 			theme,
@@ -313,13 +314,14 @@ export class AnimationsBoxWidget extends AnimatedWidget {
 			flash: this.#bonsaiFlash,
 			seenIds: this.#bonsaiSeen,
 			hyperlinks: this.#hyperlinks,
+			detail,
 		});
 		// Every visible agent on one model: state it once here rather than on
 		// each row, where it would repeat without distinguishing anything.
 		const sharedModel = sharedBonsaiModel(bonsaiSnapshot.nodes);
 		const bonsaiHeader = sharedModel === undefined ? "agents" : `agents · ${sharedModel}`;
 
-		if (this.#getDetail() === "detailed") {
+		if (detail === "detailed") {
 			const contentRows: string[] = [];
 			const appendSample = (sample: SegmentSample): void => {
 				contentRows.push(

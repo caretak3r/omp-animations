@@ -11,12 +11,14 @@ import type { GlyphKey } from "../glyph-presets";
 import { resolveGlyph } from "../glyph-presets";
 import type { SymbolPreset, Theme, ThemeColor } from "../host/types";
 import { hyperlinksSupported, osc8Hyperlink } from "./hyperlinks";
-import type {
-	AgentActivityStep,
-	AgentBonsaiNode,
-	AgentBonsaiSnapshot,
-	AgentBonsaiStatus,
-	AgentProvenanceEvent,
+import {
+	type AgentActivityStep,
+	type AgentBonsaiNode,
+	type AgentBonsaiSnapshot,
+	type AgentBonsaiStatus,
+	type AgentProvenanceEvent,
+	MAX_BONSAI_DETAIL_ROWS,
+	MAX_BONSAI_ROWS,
 } from "./state";
 
 export type AgentBonsaiTheme = Pick<Theme, "fg"> & Partial<Pick<Theme, "bold" | "symbol">>;
@@ -84,6 +86,13 @@ export interface AgentBonsaiRenderContext {
 	 * the plugin-local capability gate, since the host's own gate is inert from a plugin.
 	 */
 	readonly hyperlinks?: boolean;
+	/**
+	 * `simple` renders the compact one-line-per-agent overview only — no activity or
+	 * provenance sub-rows, at any node count. `detailed` (the default) adds those
+	 * sub-rows back for up to {@link MAX_BONSAI_DETAIL_ROWS} nodes, so height stays
+	 * bounded even when every visible agent is mid-task.
+	 */
+	readonly detail?: "simple" | "detailed";
 }
 
 function modelLabel(node: AgentBonsaiNode): string {
@@ -526,32 +535,64 @@ function renderNode(
 	return visibleWidth(base) <= width ? base : truncateToWidth(base, width, ellipsis);
 }
 
+/**
+ * Nodes whose activity/provenance sub-rows still render, capped at
+ * {@link MAX_BONSAI_DETAIL_ROWS} regardless of how many visible nodes have
+ * such data. Running and aborted nodes claim the budget first — a quiet
+ * completed or idle agent's history is the least actionable thing on screen —
+ * then any remainder fills from the rest in the existing DFS order.
+ */
+function detailEligibleIds(nodes: readonly AgentBonsaiNode[]): ReadonlySet<string> {
+	const eligible = new Set<string>();
+	for (const node of nodes) {
+		if (eligible.size === MAX_BONSAI_DETAIL_ROWS) break;
+		if (node.status === "running" || node.status === "aborted") eligible.add(node.id);
+	}
+	for (const node of nodes) {
+		if (eligible.size === MAX_BONSAI_DETAIL_ROWS) break;
+		eligible.add(node.id);
+	}
+	return eligible;
+}
+
 export function renderAgentBonsaiRows(
 	snapshot: AgentBonsaiSnapshot,
 	width: number,
 	ctx: AgentBonsaiRenderContext,
 ): readonly string[] {
 	if (!snapshot.visible || width <= 0) return [];
+	// Defensive: a caller-built snapshot that bypasses buildAgentBonsai's own
+	// MAX_BONSAI_ROWS cap must still render bounded — the overflow folds into
+	// the same omitted line as the snapshot's own hidden agents.
+	const overflow = snapshot.nodes.length > MAX_BONSAI_ROWS ? snapshot.nodes.slice(MAX_BONSAI_ROWS) : [];
+	const nodes = overflow.length > 0 ? snapshot.nodes.slice(0, MAX_BONSAI_ROWS) : snapshot.nodes;
 	const spansById = observeRows(snapshot, ctx);
-	const widths = nameWidths(snapshot.nodes);
-	const showModel = sharedBonsaiModel(snapshot.nodes) === undefined;
+	const widths = nameWidths(nodes);
+	const showModel = sharedBonsaiModel(nodes) === undefined;
+	const detailEligible = ctx.detail === "simple" ? undefined : detailEligibleIds(nodes);
 	const rows: string[] = [];
 	// Sibling-run dedupe is order-local: a row repeats its predecessor's task
 	// tail or model chip only while the same depth continues. Main never dedupes.
 	let prev: { depth: number; task: string; model: string } | undefined;
-	for (const node of snapshot.nodes) {
+	for (const node of nodes) {
 		const spans = spansById.get(node.id) as AgentBonsaiRowSpans;
 		const sibling = node.depth > 0 && prev?.depth === node.depth ? prev : undefined;
 		const dedupedTask = spans.task.text.length > 0 && spans.task.text === sibling?.task;
 		const dedupedModel = showModel && spans.model.text.length > 0 && spans.model.text === sibling?.model;
 		prev = { depth: node.depth, task: spans.task.text, model: spans.model.text };
 		rows.push(renderNode(node, spans, width, widths.get(node.depth) ?? 0, ctx, showModel, dedupedTask, dedupedModel));
+		if (detailEligible?.has(node.id) !== true) continue;
 		const activity = renderActivityRow(node, width, ctx);
 		if (activity !== undefined) rows.push(activity);
 		const provenance = renderProvenanceRow(node, width, ctx);
 		if (provenance !== undefined) rows.push(provenance);
 	}
-	if (snapshot.hiddenCount > 0)
-		rows.push(ctx.theme.fg("dim", truncateToWidth(`… +${snapshot.hiddenCount} more`, width)));
+	const hiddenCount = snapshot.hiddenCount + overflow.length;
+	if (hiddenCount > 0) {
+		const hiddenNames = [...(snapshot.hiddenAgentIds ?? []), ...overflow.map(node => node.name)];
+		const label =
+			hiddenNames.length > 0 ? `… +${hiddenCount} more (${hiddenNames.join(", ")})` : `… +${hiddenCount} more`;
+		rows.push(ctx.theme.fg("dim", truncateToWidth(label, width)));
+	}
 	return rows;
 }
