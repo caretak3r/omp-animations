@@ -382,10 +382,10 @@ describe("AnimationsBoxController + AnimationsBoxWidget — full-box frames (Dec
 			}
 			expect(rows[5]).toMatch(/○\s+files\s+—/);
 			if (width >= 69) {
-				expect(rows[1]).toContain("120K/200K window");
+				expect(rows[1]).toContain("40K left of 160K");
 				expect(rows[3]).toContain("widget.ts");
 			} else {
-				expect(rows[1]).not.toContain("120K/200K");
+				expect(rows[1]).not.toContain("40K left of 160K");
 				expect(rows[3]).not.toContain("widget.ts");
 			}
 			if (width === 120) {
@@ -564,8 +564,8 @@ describe("renderStatusLine — no required row ever draws a label with a blank v
 describe("renderStatusLine — context bars stay whole at every width", () => {
 	it.each(["ascii", "unicode"] as const)("%s keeps the percentage when the fixed bar cannot fit", preset => {
 		const readings = [
-			{ percent: 40, used: "64K", bar: preset === "ascii" ? "[####------]" : "[████░░░░░░]" },
-			{ percent: 95, used: "152K", bar: preset === "ascii" ? "[##########]" : "[██████████]" },
+			{ percent: 40, headroom: "96K left of 160K", bar: preset === "ascii" ? "[####------]" : "[████░░░░░░]" },
+			{ percent: 95, headroom: "8K left of 160K", bar: preset === "ascii" ? "[##########]" : "[██████████]" },
 		].map(reading => {
 			const state = new ContextGaugeState();
 			state.observe({ tokens: 1600 * reading.percent, contextWindow: 200_000, percent: reading.percent * 0.8 });
@@ -595,9 +595,9 @@ describe("renderStatusLine — context bars stay whole at every width", () => {
 			else expect(phrases[0]).toBe(phrases[1]);
 		}
 
-		for (const { line, bar, percent, used } of readings) {
+		for (const { line, bar, percent, headroom } of readings) {
 			expect(renderStatusLine(line, 120, ctx).slice(STATUS_LINE_PREFIX_COLS)).toBe(
-				`${bar} ${percent}% budget · ${used}/200K window`,
+				`${bar} ${percent}% budget · ${headroom}`,
 			);
 		}
 	});

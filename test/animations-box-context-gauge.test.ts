@@ -223,8 +223,11 @@ describe("buildContextGaugeSegment — live line", () => {
 			const state = new ContextGaugeState(quota);
 			state.observe(usage(120_000, 200_000));
 			const sample = buildContextGaugeSegment(state, 0, idTheme);
+			const snapshot = state.snapshot();
 			expect(spanText(sample.line.spans, "pct")).toBe(`${fill}% budget`);
-			expect(spanText(sample.line.spans, "used")).toBe(`${formatNumber(120_000)}/${formatNumber(200_000)} window`);
+			expect(spanText(sample.line.spans, "headroom")).toBe(
+				`${formatNumber(snapshot.headroomTokens)} left of ${formatNumber(snapshot.quotaTokens)}`,
+			);
 			for (const variant of sample.variants) expect(variant).toContain(`${fill}% budget`);
 		}
 	});
@@ -237,7 +240,7 @@ describe("buildContextGaugeSegment — live line", () => {
 		state.noteCompaction();
 		state.observe(usage(120_000, 200_000));
 		const spans = buildContextGaugeSegment(state, 0, idTheme).line.spans;
-		for (const key of ["compactions"]) {
+		for (const key of ["headroom", "compactions"]) {
 			expect(spans.find(span => span.key === key)?.wideOnly).toBe(true);
 		}
 	});

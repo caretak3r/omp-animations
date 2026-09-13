@@ -116,10 +116,10 @@ export const CONTEXT_GAUGE_SEGMENT = {
  *
  * The live line states the same fact three ways, narrowing as the pane does:
  * the selected visual shows quota fill at a glance, `pct` names it, and
- * `used` gives the raw tokens against the real window. The tail carries what
- * a wide pane can afford — the turn forecast, the compactions that reset it,
- * and the ceiling itself, shed in that order right-to-left, so the last thing
- * to go is the most actionable.
+ * `headroom` gives the tokens left before the quota ceiling. The tail carries
+ * what a wide pane can afford — the turn forecast and the compactions that
+ * reset it, shed in that order right-to-left, so the last thing to go is the
+ * most actionable.
  *
  * Both the accent and the dot come from `getContextUsageLevel` against the
  * WINDOW percentage, not the quota fill: the quota is this plugin's own
@@ -162,7 +162,7 @@ export function buildContextGaugeSegment(
 		preset === "ascii" ? "ascii" : "unicode",
 	);
 	const pct = `${Math.round(snapshot.quotaRatio * 100)}% budget`;
-	const used = `${formatNumber(snapshot.tokens)}/${formatNumber(snapshot.contextWindow)} window`;
+	const headroom = `${formatNumber(snapshot.headroomTokens)} left of ${formatNumber(snapshot.quotaTokens)}`;
 	const turnsLeft = snapshot.turnsLeft;
 
 	return {
@@ -192,8 +192,8 @@ export function buildContextGaugeSegment(
 				{ key: "pct", text: pct, sep: " ", priority: 0 },
 				// Narrow priority inverted: bar+pct is one reading of fill, `turns` is
 				// the only *forecast* (the differentiator against the status line), and
-				// `used` restates fill in raw tokens (detail-width tail can afford it, 45 cols cannot).
-				{ key: "used", text: used, wideOnly: true },
+				// `headroom` restates fill as tokens left of the quota ceiling (detail-width tail can afford it, 45 cols cannot).
+				{ key: "headroom", text: headroom, wideOnly: true },
 				...(turnsLeft !== null && turnsLeft <= 99
 					? [
 							{

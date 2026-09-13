@@ -608,7 +608,7 @@ describe("AnimationsBoxWidget motion governor", () => {
 		expect(widget.render(160).find(row => row.includes("retry"))).toContain("2s");
 		percent = 90;
 		scheduler.advance(scheduler.cadenceMs);
-		expect(widget.render(160).find(row => row.includes("context"))).toContain("180K/200K");
+		expect(widget.render(160).find(row => row.includes("context"))).toContain("0 left of 160K");
 		expect(widget.render(160)[0]).toBe(activeBorder);
 		controller.onAgentEnd({ type: "agent_end", messages: [] }, ctx);
 		widget.render(160);

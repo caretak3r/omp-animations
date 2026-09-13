@@ -38,6 +38,8 @@ All notable changes to `@oh-my-pi/animations` are documented here.
   session on providers that send no rate-limit headers.
 - The context row drops the `configured budget` span and hides a turns
   forecast above 99; the turns span survives 45 columns before the used span.
+- The context row's wide-only tail restates fill as tokens left of the quota
+  ceiling (`40K left of 160K`) instead of raw tokens against the model window.
 - The rewrite row activates only once the host stripped 512 tokens or more,
   measures `sent` from the latest assistant `message_end` usage, and no longer
   paints `stripped ~0`. Audit read/write spans appear only above zero, and

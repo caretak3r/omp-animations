@@ -337,7 +337,7 @@ describe("AnimationsBoxController — mount lifecycle", () => {
 		const widget = buildWidget(calls[0] as SetWidgetCall);
 		const initial = widget.renderFrame(120).find(row => row.includes("context"));
 		expect(initial).toContain("[████████░░]");
-		expect(initial).toContain("120K/200K");
+		expect(initial).toContain("40K left of 160K");
 		scheduler.advance(600);
 		expect(widget.renderFrame(120).find(row => row.includes("context"))).toBe(initial);
 		widget.dispose();
