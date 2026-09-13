@@ -4,7 +4,108 @@ All notable changes to `@oh-my-pi/animations` are documented here.
 
 ## [Unreleased]
 
+### Added
+- `verify` row shows writes newer than the last successful bash; it
+  disappears when the count reaches zero and never claims positive verification.
+- `authBeacon` row names credentials the host disabled this session;
+  the error row lists truncated replies, dropped features, and provider
+  reroutes, and a retry fallback shows as `fallback <from>→<to>` until it
+  succeeds. The box border holds the error palette while a beacon is up.
+- Agent Bonsai now distinguishes a completed agent from a pending one, flashes
+  once through the shared status span, then settles to a dim grey row and
+  evicts after `animationsBonsaiSettleSeconds` (default `300`). The sweep runs
+  on render, so eviction still happens with `animations: off`. A running
+  agent is never evicted; over the row cap, settled agents hide before
+  running ones. Failed and aborted agents keep their error color through the
+  grey phase instead of dimming into a false success look.
+- The phylogeny row shows `off-path $X.XX` when the session tree has spent at
+  least half a cent on entries outside the current branch. The figure is the
+  host's tree total minus the branch total and is never eased.
+- The `files` row marks a path that two or more agents are writing at once
+  with the alert tone and appends `N writers`; each colliding agent's Bonsai
+  row carries a `write-clash` chip. Both derive from active roster
+  operations and clear the moment one writer finishes.
+- Agent Bonsai joins the roster on the exact allocated agent name; the
+  fallback-name lookup that could attach a second agent's progress to the
+  wrong row is gone.
+
 ### Changed
+- The `limits` row leads with provider response health read from the HTTP
+  status of each `after_provider_response`: `http 200 · N ok` while healthy,
+  per-class non-2xx counts worst-first plus the newest failure's status and
+  age once anything went wrong. The header-derived headroom is a wide-only
+  tail. The row stays idle until the first response instead of for the whole
+  session on providers that send no rate-limit headers.
+- The context row drops the `configured budget` span and hides a turns
+  forecast above 99; the turns span survives 45 columns before the used span.
+- The rewrite row activates only once the host stripped 512 tokens or more,
+  measures `sent` from the latest assistant `message_end` usage, and no longer
+  paints `stripped ~0`. Audit read/write spans appear only above zero, and
+  memory readiness that is merely stale by age renders muted.
+- Agent Bonsai suppresses a sibling's task tail and model chip when they
+  repeat the previous row at the same depth; `(completed)` still renders.
+- The `jobs` row is on by default and appends `oldest Ns`/`Nm` from the
+  longest-running background job's start time.
+- Every host subpath import now routes through `src/host/types.ts` or
+  `src/host/runtime.ts`; a Biome `noRestrictedImports` override rejects any
+  other `@oh-my-pi/pi-coding-agent/*` import under `src/`. A differential
+  test spawns the installed host resolver against fixture homes and asserts
+  the plugin's settings mirror matches it, including the corrupt-lockfile
+  divergence where the host throws and the mirror falls through to project
+  overrides.
+- Agent Bonsai extracts short task summaries before truncation. Line breaks
+  retain spaces, and roster projection preserves literal text in summaries.
+- Narrow context rows keep each bar whole or omit it. The percentage takes
+  precedence over the bar when both cannot fit.
+- Frame grading rejects context bars with missing brackets, incorrect cell
+  counts, or ellipsis truncation. Agent activity cells remain separate.
+- Frame probes retain raw synchronization evidence in unique run directories.
+  Captures taken during synchronized output no longer count as completed frames.
+- Frame grading distinguishes Audit Boxes from tool output. Separate agents
+  can share model labels and assignment text without duplicate-chip errors.
+  Incomplete borders and malformed settled frames still fail.
+- Cache summaries distinguish recent token reuse from session requests with
+  reuse. Cold workloads no longer imply that a provider cannot cache.
+- Context labels distinguish the configured budget from the model window.
+  Rewrite token estimates carry `~`; compaction counts describe ordinary reads.
+- Narrow agent rows preserve current work before model metadata. Compact
+  resource trails name their owner once and retain outcomes and omission cues.
+- Context quota fill now uses the standard progress bar as its only visual.
+  Unicode and Nerd presets retain the existing whole-cell rendering contract.
+- Audit Box details now stay in one evenly spaced, middle-dot-separated phrase
+  instead of jumping to a distant tail column. The `tools` summary leads with
+  the active tool and elapsed time, then settles to total calls and the busiest
+  categories. Internal latency and work-phase diagnostics no longer compete
+  with the operator signal.
+- Full motion now pulses the Audit Box's whole square perimeter through a
+  heavier crest. Active status markers pulse while agent names and resource
+  labels stay steady. Actual fact changes retain a short flash, and failed
+  or aborted status markers keep their error emphasis.
+- Repeated tool sequences now appear only after a real repeat and say
+  `same tools as previous turn`; the opaque loop/orbit vocabulary is gone.
+- Agent Bonsai now renders recent tool, skill, and file activity as an
+  indented chain beneath the owning agent. The primary row keeps agent context
+  separate. Active status markers pulse in place; completed and failed cells keep
+  stable success and error colors. Settled activity expires after eight
+  seconds, and narrow layouts discard the oldest cells first.
+- The `skills` and `memory` summaries distinguish successful reads, active
+  attempts, and failures from catalog availability and backend readiness.
+  Counts describe retained recent observations, not lifetime use.
+  Failed outcomes take precedence when narrow layouts omit details.
+- The `seen-skill` label identifies an inferred reference, not proof of
+  application. Selector-bearing reads preserve resource ownership, including
+  literal filenames that resemble selectors.
+- Signal extras now use one fixed-capacity, caller-clocked evidence store.
+  Each frame uses one immutable snapshot. Strict adapters retain only
+  allowlisted scalar facts and keep unsupported effects hidden.
+- Memory Backend Tide now labels count changes as observed deltas. It keeps
+  the last good observation after a poll failure and does not claim writes.
+- Goal Heading no longer keeps goal text. Session Phylogeny no longer keeps
+  labels or session identifiers. Error Isotope now reports only an aggregate
+  count of tool failures.
+- Live-frame grading now selects the plugin-owned box and ignores unrelated
+  bordered tool output. Burn forecasts stop at `>99 turns left`, detail rows
+  use one separator, and wide tails start in one column.
 - Default Unicode progress bars now round to whole cells, avoiding intermittent
   font fallback and width seams from fractional eighth-block boundary glyphs.
   The Nerd glyph preset retains sub-cell resolution as an explicit opt-in.
@@ -14,7 +115,7 @@ All notable changes to `@oh-my-pi/animations` are documented here.
   `cache`, `audit`, `limits`, `tools`) plus independently optional groups.
   Live Files replaced the historical Palimpsest row and reports current edit
   and write ownership only. It does not preserve edit history or heat.
-  Cadence and Reflection render after one conditional blank separator.
+  Reflection Ripple renders after one conditional blank separator.
 - Consolidated Audit Trail into the Box. One headless service now owns the
   ledger, disk probe, and remedy command. Probe alarms render in the Box's
   `audit` summary; the duplicate standalone row and footer status are absent.
@@ -26,26 +127,31 @@ All notable changes to `@oh-my-pi/animations` are documented here.
   counts instead of drifting to the border, and a compact pane keeps the hit
   state. `formatCost` is now shared with `/cache`, so both surfaces print one
   money format.
-- Vendored Cadence Equalizer's own copy of the tok/s bucket classification
-  and color-ramp module it used to share with Token Tide, since Token Tide is
-  no longer part of this package.
 - Reworked the test suite for the curated set. Removed assertions and fixtures
   for excluded animations and derived expected counts from `ANIMATIONS`.
-- Adapted to stock oh-my-pi API surface: dropped core edits are read defensively so the
-  plugin builds against `@oh-my-pi/pi-coding-agent@16` / `pi-tui@16` and degrades
-  gracefully (`renderUnderPressure` backpressure; Context Weather compaction forecast).
+- The plugin accepts older v17 hosts defensively for rendering backpressure,
+  compaction forecasts, and session-resource metadata. Current hosts provide
+  exact discovered skills and context-file metadata through the public
+  extension context.
 
 ### Added
 - **Optional operational signals.** Added Live Files, Recurrence Strip,
   Context Rewrite Shadow, Compaction Scar, Consent Lock, Session Phylogeny,
-  Think/Act Lissajous, Error Isotope, Queue Fog, Skill Chromatograph, Retry
-  Radar, Goal Heading, TTFT Split, Memory Backend Tide, and Darkroom Title.
-  Together with Agent Bonsai, these are the 16 approved signals. Each signal
-  has an independent setting. The row settings default to enabled.
-  The sidecar uses a second widget on the existing `AnimationHost` and returns
-  zero rows when it has no meaningful state. Darkroom Title uses the terminal
-  title instead of a widget row. No second package or omp-core change is
-  required.
+  Think/Act Lissajous, Error Isotope, Skill Chromatograph, Retry Radar, Goal
+  Heading, TTFT Split, Memory Backend Tide, and Darkroom Title. Together with
+  Agent Bonsai, these are the 15 approved signals. Each signal has an
+  independent setting. The curated defaults keep Think/Act Lissajous, Goal
+  Heading, and Darkroom Title disabled.
+  The signal rows use the existing `AnimationsBoxWidget` and use zero rows
+  when they have no meaningful state. Darkroom Title uses the terminal title
+  instead of a widget row. No second package is required.
+- **Bounded evidence replay and effect kernels.** Added deterministic replay,
+  strict payload normalization, finite lifecycle kernels, and capability
+  fixtures for Unicode, ASCII, color, no-color, reduced motion, and pane
+  width. Effects stay hidden when the host does not supply exact evidence.
+- **Collision diffraction.** Two or more live evidence classes can add one
+  finite diffraction token to the existing top border. The token uses the
+  same immutable frame snapshot and does not replace a signal row.
 - **Live-frame grading loop.** `bun run probe` samples the Audit Box out of a
   running tmux session into `.frames/run-<timestamp>/`, keeping one file per
   distinct box state; `bun run probe:lint` grades those captures against the
@@ -98,11 +204,11 @@ All notable changes to `@oh-my-pi/animations` are documented here.
 - **T2 — Vendored kit.** The `pi-animation` kit (`AnimationHost`, `MotionPolicy`,
   `AnimatedWidget`, `backpressureFromTui`) vendored under `src/kit/`, consumed via a
   repo-internal relative path — never as an external `@oh-my-pi/pi-animation` dependency.
-- **T3 — Wave 2 (15).** Tool Constellation, Token Tide, Session Bonsai, Todo Meteors,
+- **T3 — Wave 2 (14).** Tool Constellation, Token Tide, Session Bonsai, Todo Meteors,
   Breathing Border, Agent Fleet, Cost Candle, Reflection Ripple, Memory Crystals,
-  Context Constellation, Diff Bloom, Cadence Equalizer, Goal Horizon, Model Weather Vane,
-  Prompt Charge — extracted with a mechanical import rewrite and a uniform factory
-  refactor to an injected `motionSetting` tier.
+  Context Constellation, Diff Bloom, Goal Horizon, Model Weather Vane, and
+  Prompt Charge. These animations use mechanical import rewrites and an
+  injected `motionSetting` tier.
 - **T4 — Wave 1 (3).** Context Weather (mountable extension), Spinner Packs and
   Compaction Vacuum (library modules). Retry Radar excluded.
 - **T5 — Registrar.** One config-driven plugin entry (`src/registrar.ts`, declared in
@@ -120,6 +226,12 @@ All notable changes to `@oh-my-pi/animations` are documented here.
   fixture reset and the frame clock in the same fabricated time base.
 
 ### Removed
+- **Cadence Equalizer.** Deleted the token-throughput row, its settings and
+  environment keys, package exports, and tests. The Audit Box no longer
+  subscribes to message updates for this display.
+- Removed the rejected quota-metaphor branch, including the
+  `animationsContextStyle` setting and the `lightning`, `storm`, and `arc`
+  renderers.
 - **Tool Constellation.** Deleted the standalone animation, its settings key
   (`toolConstellation`), its glyph-preset keys, and its tests. The star map,
   comet, per-tool particles, and the seven-way category rainbow are gone.
@@ -128,27 +240,21 @@ All notable changes to `@oh-my-pi/animations` are documented here.
   never names reads or writes, because the `audit` row owns the file metrics
   from the ledger, and one number must have one owner.
 - **The `display` setting, with its `rows` and `both` modes.** The plugin now
-  mounts the Audit Box and signal sidecar through one controller. A stale
-  `display` of `rows` or `both`, in a settings file or as
-  `OMP_ANIMATIONS_DISPLAY` in a shell profile, logs one migration warning at
-  wire time and mounts both widgets anyway. A `display` of `box` stays silent.
-  No removed value throws.
+  mounts one complete Animations Box through one controller. A stale `display`
+  value of `rows` or `both` logs one migration warning at wire time and still
+  mounts the box. A `display` value of `box` stays silent. No removed value
+  throws.
 - The legacy `auditTrailBox`, `cacheMeter`, `palimpsest`, and
   `rateLimitTidepool` booleans. Audit, cache, and rate-limit summaries are
   structural parts of the box. Live Files replaces Palimpsest and has the new
-  `liveFiles` setting. `agentBonsai`, `breathingBorder`, `cadenceEqualizer`,
-  and `reflectionRipple` keep their existing booleans.
+  `liveFiles` setting. `agentBonsai`, `breathingBorder`, and
+  `reflectionRipple` keep their existing booleans.
 - **Every standalone widget and controller behind the curated animations.**
-  Animation directories are pure state plus renderers. The headless Audit
-  Trail service retains its ledger and probe. The shared controller owns two
-  widget registrations on one host and scheduler. `/cache` is registered by
-  the registrar against the controller's cache ledger.
+  Animation directories contain pure state and renderers. The headless Audit
+  Trail service retains its ledger and probe. The shared controller owns one
+  widget registration, host, and scheduler. `/cache` uses the controller's
+  cache ledger.
 
 ### Validation
-- `bun run fix && bun run lint && bun run check && bun test` passed with
-  1041 tests, 3607 assertions, and 0 failures across 40 files.
-- The isolated `/tmp/omp-anim-sandbox` live TUI showed the signal sidecar
-  above the editor and the Audit Box below it. Live Files showed
-  `live-signal-smoke.txt` only while the write was active, then returned to
-  idle. Darkroom Title projected `omp ctx 3`.
-- `bun run probe:lint` passed the stable live frame with 0 violations.
+- `bun run fix && bun run check && bun run lint && bun test && bun run probe:lint`
+  passes with 1201 tests, 4367 assertions, and 0 failures across 52 files.

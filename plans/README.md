@@ -164,6 +164,34 @@ the manifest, which 018 no longer touches after its S4). Re-scopes the retired p
 `agent-fleet` is not in this package's keep-set, so 019 is a fresh standalone animation.
 ---
 
+# Round 5 — /uplift 2026-09-12 (plans 020–026)
+
+A read-only `/uplift` advisor pass (written against `e2e78cd`, intentionally dirty tree):
+signal-honesty audit of every shipped row against the installed host (`^17`), a 368-frame
+sandbox corpus, and five structural probes. Seven bundles approved by the maintainer.
+
+| Plan | Title | Effort | Risk | Verdict |
+|------|-------|--------|------|---------|
+| [020](020-earn-the-line-silent-rows.md) | Earn the line — silent/dishonest permanent rows (S1+S2+S3+S4+S7+S8): provider HTTP health row, context-rewrite truth, memory staleness tone, quota trims, `budget NN%` rename, conditional audit spans | M | LOW-MED | **CONFIRMED** — corpus-provable flips; goldens move deliberately in five named categories; S1 lands as a `ProviderHealthState` sibling, not inside the memoryless tidepool state |
+| [021](021-message-end-retry-auth-beacons.md) | Beacons for `message_end` integrity, retry fallback, and disabled credentials (A2+A3+A4) | S | LOW | **CONFIRMED** — all three consume host events that already fire; render nothing when healthy; zero re-goldens is an acceptance criterion |
+| [022](022-verification-freshness-seal.md) | Verification Freshness Seal row + tools-row doc truth (A1+S6) | S | LOW | **CONFIRMED** — renders only unverified state (`N writes since green bash`), never a positive "verified" claim; MUST land before bead `omp-animations-747` deletes the tools row |
+| [023](023-host-fences.md) | Host fences — subprocess differential settings test + import adapter (P4+P1) | S+M | LOW | **CONFIRMED** — 23 host-import sites collapse behind `src/host/{types,runtime}.ts` with a Biome fence; differential test is subprocess-shaped (host resolver latches `HOME` at module init); zero behavior change, zero re-goldens |
+| [024](024-row-registry-fanout-order.md) | Core-row registry + deterministic event fan-out (P5+P3) | M | MED | **DONE** — exhaustive `CORE_ROWS: Record<BoxSegmentId, CoreRowSpec>` replaces the hand-built controller array; AGENTS.md six-file contract shrinks accordingly; fan-out order pinned by characterization tests before extraction |
+| [025](025-row-content-bonsai-jobs-spend.md) | Row content — Bonsai sibling dedupe, async-job age, off-path spend (S5+A6+A5) | S+S+M | LOW | **CONFIRMED (premise corrected)** — `(completed)` is NOT redundant with the dot (completed and idle share a glyph) and stays; dedupe is render-time and content-only (geometry owned by mg5.4/mg5.6); off-path spend = tree-wide `getUsageStatistics().cost` minus a plugin-side `entryUsage` mirror over `getBranch()` |
+| [026](026-canonical-agent-key-collision-guard.md) | Canonical agent join key + in-session multi-writer collision guard (P2+A8) | M+M | MED | **CONFIRMED** — Bonsai keys collapse to the allocated agent name (`fallbackAgentKeys` deleted); proof is zero visual diff plus a three-case adversarial matrix; A8's filesLive alert + Bonsai chip are gated on P2 landing |
+
+**Dependency notes (Round 5):** execute in order **020 → 021 → 022 → 023 → 024 → 025 → 026**.
+Two hard dependencies: **022 must land before bead `omp-animations-747`'s tools-row deletion
+phase** (the generation counters move into the seal before the row dies), and **026's A8 half
+(phases D–E) must not start until its P2 half (phases A–C) is merged and green** (a collision
+alert over a lossy agent join would be fabricated telemetry). Softer ordering: 023 lands after
+022 (its import sweep absorbs 022's one new host import); 024 lands after 020–023 (020 changes
+a builder signature the registry wraps); 026 lands after 025 (its zero-visual-diff gate is
+taken against post-025 Bonsai goldens). Numbering note: 008 and 010–016 have no file on disk —
+pre-existing and fine; never renumber.
+
+---
+
 ## Status
 
 | Plan | Status |
@@ -187,3 +215,10 @@ the manifest, which 018 no longer touches after its S4). Re-scopes the retired p
 | 017 | DONE — Animations Box shipped; live acceptance completed before the status-line redesign |
 | 018 | DONE — Status-Lines redesign verified at 1204 pass / 0 fail before Plan 019 |
 | 019 | DONE — Agent Tree implemented and field-tested with parallel and nested live subagents (2026-08-12); final gate 1220 pass / 0 fail |
+| 020 | DONE — Earn the line: health-fed `limits`, rewrite/context/audit/memory silence fixes (1232 pass / 0 fail in lane) |
+| 021 | DONE — `message_end` integrity, retry fallback, and `authBeacon` beacons (1226 pass / 0 fail in lane) |
+| 022 | DONE — Verification freshness seal and tools-row doc truth (1241 pass / 0 fail) |
+| 023 | DONE — Host fences: differential test + `src/host/` adapter + Biome fence (1289 pass / 0 fail in lane) |
+| 024 | DONE — `CORE_ROWS` registry + `wireEventFanout` order test (lane 1302/0; integrated 1304/0/53 after restoring the `turn_end` subscription the lane dropped) |
+| 025 | DONE — Bonsai sibling dedupe, `jobs` age default-on, off-path spend (1241 pass / 0 fail in lane; 1272 integrated) |
+| 026 | DONE — A–B canonical agent key (live-proven with four siblings), D–E multi-writer collision guard on `files` row + Bonsai chip (2026-09-12) |
