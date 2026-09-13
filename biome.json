@@ -59,5 +59,27 @@
 			"!**/node_modules",
 			"!**/dist"
 		]
-	}
+	},
+	"overrides": [
+		{
+			"includes": ["src/**", "!src/host/**"],
+			"linter": {
+				"rules": {
+					"style": {
+						"noRestrictedImports": {
+							"level": "error",
+							"options": {
+								"patterns": [
+									{
+										"group": ["@oh-my-pi/pi-coding-agent/**"],
+										"message": "Host subpaths carry no semver commitment. Import via src/host/types.ts or src/host/runtime.ts (plan 023)."
+									}
+								]
+							}
+						}
+					}
+				}
+			}
+		}
+	]
 }

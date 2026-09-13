@@ -13,15 +13,23 @@
  */
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import type { TemporalEvidenceStage } from "../src/animations-box/temporal-evidence";
+import { PROGRESS_BAR_CELLS } from "../src/progress-bar";
 
 const BORDERED = /^\s*[│┃|](?<body>.*)[│┃|]\s*$/u;
 const DOT = /^(?<dot>[○◐●◆◇•▪])\s+(?<rest>.*)$/u;
 const TREE = /^[\s│]*[├└╰┌┬─]/u;
 const LABEL = /^(?<label>\S+)(?:\s{2,}(?<value>.*))?$/u;
+const SIMPLE_BUDGET = /(?:^| · )(?:\[?[\u2588-\u258f\u2591#….-]*\]?(?:…|\.{3})? )?\d+% budget(?: · |$)/u;
+const AGENT_ROW = /^[\s│┃├└╰┌┬─|+`-]*[○◐●◆◇•▪✓✗×!]\s+(?:M|A[\d?]+)\s+\S+(?: \(inferred\))?(?=\s{2,}|$)/u;
+const AGENT_MODEL =
+	/^[\s│┃├└╰┌┬─|+`-]*[○◐●◆◇•▪✓✗×!]\s+(?:M|A[\d?]+)\s+\S+(?: \(inferred\))?\s{2,}(?<model>[\w-]+\/[\w.-]+(?::\w+)?)(?=\s{2,}|$)/u;
+const BAR_RUN = /\[?[\u2588-\u258f\u2591#-]+(?:…|\.{3})?\]?(?:…|\.{3})?|\[(?:…|\.{3})?\]?|\]/gu;
+const COMPLETE_BAR = new RegExp(`^\\[[\\u2588-\\u258f\\u2591#-]{${PROGRESS_BAR_CELLS}}\\]$`, "u");
 
 interface Row {
 	line: string;
-	kind: "labeled" | "tree" | "header" | "other";
+	kind: "labeled" | "tree" | "header" | "summary" | "other";
 	dot: string | null;
 	label: string;
 	value: string;
@@ -31,6 +39,7 @@ interface Row {
 interface Box {
 	rows: Row[];
 	widths: number[];
+	completeBorder: boolean;
 }
 
 interface Frame {
@@ -39,7 +48,36 @@ interface Frame {
 	text: string;
 }
 
-interface Violation {
+export type FrameLintCapability = "supported" | "unsupported" | "unknown";
+
+export interface FrameLintMetadata {
+	semanticStage?: TemporalEvidenceStage | "expired" | "none";
+	motionFrameCount?: number;
+	directionalConnectorCount?: number;
+	explicitRelationCount?: number;
+	observedDeltaCount?: number;
+	writeLabelCount?: number;
+	staleObservationCount?: number;
+	retainedObservationCount?: number;
+	lifecycleStateCount?: number;
+	textualLifecycleMarkerCount?: number;
+	pendingCount?: number;
+	completedCount?: number;
+	distinctLifecycleProjectionCount?: number;
+	privateContentFieldCount?: number;
+	sourceProjectionCount?: number;
+	capability?: FrameLintCapability;
+	placeholderRowCount?: number;
+	idleOptionalRowCount?: number;
+	inferredRetryCount?: number;
+	inferredCancellationCount?: number;
+	contentWidth?: number;
+	availableWidth?: number;
+	requiredRowCount?: number;
+	renderedRequiredRowCount?: number;
+}
+
+export interface Violation {
 	rule: string;
 	bead: string;
 	file: string;
@@ -50,20 +88,21 @@ interface Rule {
 	id: string;
 	bead: string;
 	says: string;
-	check: (frame: Frame) => string[];
+	check: (frame: Frame, metadata?: Readonly<FrameLintMetadata>) => string[];
 }
 
 function parseRow(line: string): Row {
 	const bordered = BORDERED.exec(line);
-	const body = (bordered?.groups?.body ?? line).trim();
+	const body = (bordered?.groups?.body ?? line.replace(/^\s*[│┃|]\s?/, "").replace(/[│┃|]\s*$/u, "")).trim();
 	const dotted = DOT.exec(body);
 	const dot = dotted?.groups?.dot ?? null;
 	const rest = dotted?.groups?.rest ?? body;
 	if (TREE.test(body)) return { line, kind: "tree", dot, label: "", value: rest, body };
+	if (SIMPLE_BUDGET.test(body)) return { line, kind: "summary", dot, label: "", value: body, body };
 	const labeled = LABEL.exec(rest);
 	// A lone word with no glyph and no value is a group heading ("agents"), not a data row.
 	if (dot === null && /^\S+$/.test(rest)) return { line, kind: "header", dot, label: rest, value: "", body };
-	if (bordered && labeled && rest.length > 0) {
+	if (labeled && rest.length > 0) {
 		return {
 			line,
 			kind: "labeled",
@@ -78,23 +117,37 @@ function parseRow(line: string): Row {
 
 export function parseFrame(file: string, text: string): Frame {
 	const boxes: Box[] = [];
-	let rows: Row[] = [];
-	let widths: number[] = [];
+	let lines: string[] = [];
+	const finish = (): void => {
+		if (lines.length === 0) return;
+		const rows = lines.filter(line => !/^\s*[╭┌╰└─━]/u.test(line)).map(parseRow);
+		const labels = new Set(rows.filter(row => row.kind === "labeled").map(row => row.label));
+		const detailed =
+			rows.some(row => row.label === "context" && (row.dot !== null || /% (?:budget|quota)\b/u.test(row.value))) ||
+			["context", "cache", "audit", "limits", "tools", "files"].filter(label => labels.has(label)).length >= 3;
+		// Text can identify surviving status rows, not an empty or wholly erased widget.
+		if (detailed || rows.some(row => row.kind === "summary")) {
+			boxes.push({
+				rows,
+				widths: lines.map(line => Bun.stringWidth(line.trimEnd())),
+				completeBorder:
+					/^\s*[╭┌].*[╮┐]\s*$/u.test(lines[0] ?? "") &&
+					/^\s*[╰└].*[╯┘]\s*$/u.test(lines.at(-1) ?? "") &&
+					rows.every(row => BORDERED.test(row.line)),
+			});
+		}
+		lines = [];
+	};
 	for (const line of text.split("\n")) {
-		if (/^\s*[╭┌]/.test(line)) {
-			rows = [];
-			widths = [Bun.stringWidth(line.trimEnd())];
-			continue;
+		if (/^\s*[╭┌]/u.test(line)) finish();
+		if (/^\s*[╭┌╰└│┃|─━]/u.test(line) || /^\s*[╭┌]/u.test(lines[0] ?? "")) {
+			lines.push(line);
+			if (/^\s*[╰└]/u.test(line)) finish();
+		} else {
+			finish();
 		}
-		if (widths.length === 0) continue;
-		widths.push(Bun.stringWidth(line.trimEnd()));
-		if (/^\s*[╰└]/.test(line)) {
-			boxes.push({ rows, widths });
-			widths = [];
-			continue;
-		}
-		rows.push(parseRow(line));
 	}
+	finish();
 	return { file, boxes, text };
 }
 
@@ -176,9 +229,12 @@ export const RULES: Rule[] = [
 		bead: "daw.7",
 		says: "one frame does not use read/write for both cache tokens and file operations",
 		check: frame => {
-			const tokens = /[\d.]+[KMG]\s+(read|write)\b/.exec(frame.text);
+			const text = allRows(frame)
+				.map(row => row.body)
+				.join("\n");
+			const tokens = /[\d.]+[KMG]\s+(read|write)\b/.exec(text);
 			// Only the plural/edited forms count as file operations; "0 write" is a cache token count.
-			const files = /\b\d+\s+(?:reads|writes|edited)\b/.exec(frame.text);
+			const files = /\b\d+\s+(?:reads|writes|edited)\b/.exec(text);
 			if (!tokens || !files) return [];
 			return [`${JSON.stringify(tokens[0])} and ${JSON.stringify(files[0])} in one frame`];
 		},
@@ -221,15 +277,32 @@ export const RULES: Rule[] = [
 	{
 		id: "repeated-chip",
 		bead: "daw.4",
-		says: "a value identical on every row is a header, not per-row detail",
+		says: "summary chips are not duplicated; each agent may identify its own model",
 		check: frame => {
 			const seen = new Map<string, number>();
-			for (const row of allRows(frame)) {
-				for (const hit of row.body.matchAll(/\b[\w-]+\/[\w.-]+(?::\w+)?\b/g)) {
-					seen.set(hit[0], (seen.get(hit[0]) ?? 0) + 1);
+			const duplicates: string[] = [];
+			for (const box of frame.boxes) {
+				let agents = false;
+				for (const row of box.rows) {
+					if (row.kind === "header") agents = row.label === "agents";
+					else if (row.body.length === 0) agents = false;
+					const agentRow = agents && AGENT_ROW.test(row.body);
+					const model = agentRow ? AGENT_MODEL.exec(row.body) : null;
+					const modelStart = model ? model[0].length - (model.groups?.model?.length ?? 0) : -1;
+					for (const hit of row.body.matchAll(/\b[\w-]+\/[\w.-]+(?::\w+)?\b/g)) {
+						if (hit.index === modelStart) continue;
+						if (hit[0] === model?.groups?.model) {
+							duplicates.push(`${hit[0]} repeated within agent row`);
+						}
+						if (agentRow) continue;
+						seen.set(hit[0], (seen.get(hit[0]) ?? 0) + 1);
+					}
 				}
 			}
-			return [...seen].filter(([, count]) => count > 1).map(([chip, count]) => `${chip} repeated on ${count} rows`);
+			return [
+				...duplicates,
+				...[...seen].filter(([, count]) => count > 1).map(([chip, count]) => `${chip} repeated ${count} times`),
+			];
 		},
 	},
 	{
@@ -249,6 +322,20 @@ export const RULES: Rule[] = [
 			}),
 	},
 	{
+		id: "broken-bar",
+		bead: "4qn.1",
+		says: "a context bar is complete at its configured cell count or absent, never sliced",
+		check: frame =>
+			allRows(frame)
+				.filter(row => row.label === "context" || row.kind === "summary" || /^\S\s+context\s{2,}/u.test(row.body))
+				.filter(row => !AGENT_ROW.test(row.body))
+				.flatMap(row =>
+					[...(row.body.split(" · ", 1)[0] ?? "").matchAll(BAR_RUN)]
+						.filter(match => !COMPLETE_BAR.test(match[0]))
+						.map(match => `incomplete context bar ${JSON.stringify(match[0])} — ${JSON.stringify(row.body)}`),
+				),
+	},
+	{
 		id: "fractional-bar",
 		bead: "4qn.2",
 		says: "the live context bar uses whole cells, never fallback-prone eighth-block boundaries",
@@ -256,6 +343,156 @@ export const RULES: Rule[] = [
 			allRows(frame)
 				.filter(row => /\[[^\]]*[\u2589-\u258f][^\]]*\]/u.test(row.body))
 				.map(row => `fractional boundary glyph — ${JSON.stringify(row.body)}`),
+	},
+	{
+		id: "motion-after-ttl",
+		bead: "zko.5.8",
+		says: "an expired temporal fact cannot continue producing motion frames",
+		check: (_frame, metadata) =>
+			metadata?.semanticStage === "expired" && (metadata.motionFrameCount ?? 0) > 0
+				? [`${metadata.motionFrameCount} motion frame(s) remain after expiry`]
+				: [],
+	},
+	{
+		id: "unproven-directional-connector",
+		bead: "zko.5.6",
+		says: "every directional connector is backed by an explicit relation",
+		check: (_frame, metadata) => {
+			const connectorCount = metadata?.directionalConnectorCount ?? 0;
+			const relationCount = metadata?.explicitRelationCount ?? 0;
+			return connectorCount > relationCount
+				? [`${connectorCount - relationCount} directional connector(s) lack explicit relation evidence`]
+				: [];
+		},
+	},
+	{
+		id: "observed-delta-labeled-write",
+		bead: "zko.5.4",
+		says: "an observed count delta is never labeled as a confirmed write",
+		check: (_frame, metadata) =>
+			(metadata?.observedDeltaCount ?? 0) > 0 && (metadata?.writeLabelCount ?? 0) > 0
+				? [`${metadata?.writeLabelCount ?? 0} write label(s) over observed deltas`]
+				: [],
+	},
+	{
+		id: "stale-observation-erased",
+		bead: "zko.5.4",
+		says: "a stale poll preserves the bounded last-good observation",
+		check: (_frame, metadata) => {
+			const staleCount = metadata?.staleObservationCount ?? 0;
+			const retainedCount = metadata?.retainedObservationCount ?? 0;
+			return staleCount > retainedCount ? [`${staleCount - retainedCount} stale observation(s) erased`] : [];
+		},
+	},
+	{
+		id: "color-only-lifecycle",
+		bead: "zko.5.8",
+		says: "lifecycle meaning has a glyph or text marker independent of color",
+		check: (_frame, metadata) => {
+			const lifecycleCount = metadata?.lifecycleStateCount ?? 0;
+			const markerCount = metadata?.textualLifecycleMarkerCount ?? 0;
+			return lifecycleCount > markerCount
+				? [`${lifecycleCount - markerCount} lifecycle state(s) communicate through color alone`]
+				: [];
+		},
+	},
+	{
+		id: "pending-completed-collapse",
+		bead: "zko.5.9",
+		says: "simultaneous pending and completed lifecycle facts remain distinguishable",
+		check: (_frame, metadata) =>
+			(metadata?.pendingCount ?? 0) > 0 &&
+			(metadata?.completedCount ?? 0) > 0 &&
+			(metadata?.distinctLifecycleProjectionCount ?? 0) < 2
+				? ["pending and completed facts collapse into one projection"]
+				: [],
+	},
+	{
+		id: "private-content",
+		bead: "zko.5.4",
+		says: "render metadata confirms that no private content field entered the frame",
+		check: (_frame, metadata) =>
+			(metadata?.privateContentFieldCount ?? 0) > 0
+				? [`${metadata?.privateContentFieldCount ?? 0} private content field(s) entered the frame`]
+				: [],
+	},
+	{
+		id: "duplicate-source-projection",
+		bead: "zko.5.13",
+		says: "one authoritative fact has exactly one visible source projection",
+		check: (_frame, metadata) =>
+			(metadata?.sourceProjectionCount ?? 0) > 1
+				? [`one fact renders through ${metadata?.sourceProjectionCount ?? 0} source projections`]
+				: [],
+	},
+	{
+		id: "unsupported-placeholder",
+		bead: "zko.5.11",
+		says: "an unsupported optional capability occupies zero rows",
+		check: (_frame, metadata) =>
+			metadata?.capability === "unsupported" && (metadata.placeholderRowCount ?? 0) > 0
+				? [`${metadata.placeholderRowCount} placeholder row(s) render for an unsupported capability`]
+				: [],
+	},
+	{
+		id: "idle-row-leak",
+		bead: "zko.5.13",
+		says: "an irrelevant optional signal occupies zero height",
+		check: (_frame, metadata) =>
+			(metadata?.idleOptionalRowCount ?? 0) > 0
+				? [`${metadata?.idleOptionalRowCount ?? 0} idle optional row(s) consume height`]
+				: [],
+	},
+	{
+		id: "retry-cancel-inference",
+		bead: "zko.5.9",
+		says: "retry and cancellation states require authoritative evidence",
+		check: (_frame, metadata) => {
+			const retryCount = metadata?.inferredRetryCount ?? 0;
+			const cancellationCount = metadata?.inferredCancellationCount ?? 0;
+			return retryCount + cancellationCount > 0
+				? [`${retryCount} inferred retry and ${cancellationCount} inferred cancellation state(s)`]
+				: [];
+		},
+	},
+	{
+		id: "width-overflow",
+		bead: "zko.5.20",
+		says: "an effect projection stays within its admitted width",
+		check: (_frame, metadata) => {
+			const contentWidth = metadata?.contentWidth ?? 0;
+			const availableWidth = metadata?.availableWidth ?? 0;
+			return availableWidth > 0 && contentWidth > availableWidth
+				? [`projection is ${contentWidth - availableWidth} column(s) over its admitted width`]
+				: [];
+		},
+	},
+	{
+		id: "required-row-displacement",
+		bead: "zko.5.13",
+		says: "optional effects never displace required Audit Box rows",
+		check: (frame, metadata) => {
+			const requiredCount = metadata?.requiredRowCount ?? 0;
+			const renderedCount = frame.boxes.length === 0 ? 0 : (metadata?.renderedRequiredRowCount ?? requiredCount);
+			return renderedCount < requiredCount
+				? [`${requiredCount - renderedCount} required row(s) were displaced or not captured`]
+				: [];
+		},
+	},
+	{
+		id: "opaque-repeat-copy",
+		bead: "omp-animations-44w",
+		says: "repeated tool sequences use plain repeat wording, never internal orbit terminology",
+		check: frame =>
+			allRows(frame)
+				.filter(row => /\borbit\b/i.test(row.body))
+				.map(row => `opaque repeat copy — ${JSON.stringify(row.body)}`),
+	},
+	{
+		id: "incomplete-border",
+		bead: "omp-animations-mg5",
+		says: "an owned Audit Box has both border caps and closed body rows",
+		check: frame => frame.boxes.filter(box => !box.completeBorder).map(() => "Audit Box border is incomplete"),
 	},
 	{
 		id: "ragged-width",
@@ -268,6 +505,21 @@ export const RULES: Rule[] = [
 			}),
 	},
 ];
+
+/** Pure lint seam used by fixtures and replay: callers provide safe counts/enums, never provenance tokens. */
+export function lintFrame(file: string, text: string, metadata: Readonly<FrameLintMetadata> = {}): Violation[] {
+	return lintParsedFrame(parseFrame(file, text), metadata);
+}
+
+function lintParsedFrame(frame: Frame, metadata: Readonly<FrameLintMetadata>): Violation[] {
+	const violations: Violation[] = [];
+	for (const rule of RULES) {
+		for (const evidence of rule.check(frame, metadata)) {
+			violations.push({ rule: rule.id, bead: rule.bead, file: frame.file, evidence });
+		}
+	}
+	return violations;
+}
 
 async function newestRun(root: string): Promise<string | null> {
 	const entries = await fs.readdir(root, { withFileTypes: true }).catch(() => []);
@@ -303,18 +555,17 @@ async function main(): Promise<void> {
 
 	const files = await collect(targets);
 	const violations: Violation[] = [];
+	let gradedFrames = 0;
 	for (const file of files) {
 		const frame = parseFrame(file, await Bun.file(file).text());
-		for (const rule of RULES) {
-			for (const evidence of rule.check(frame)) {
-				violations.push({ rule: rule.id, bead: rule.bead, file, evidence });
-			}
-		}
+		if (frame.boxes.length > 0) gradedFrames++;
+		violations.push(...lintParsedFrame(frame, {}));
 	}
+	const exitCode = violations.length > 0 ? 1 : gradedFrames === 0 ? 2 : 0;
 
 	if (json) {
-		process.stdout.write(`${JSON.stringify({ files: files.length, violations }, null, 2)}\n`);
-		process.exit(violations.length > 0 ? 1 : 0);
+		process.stdout.write(`${JSON.stringify({ files: files.length, gradedFrames, violations }, null, 2)}\n`);
+		process.exit(exitCode);
 	}
 
 	const byRule = new Map<string, Violation[]>();
@@ -325,6 +576,7 @@ async function main(): Promise<void> {
 	}
 
 	process.stdout.write(`lint: ${files.length} frame(s), ${violations.length} violation(s)\n`);
+	if (gradedFrames === 0) process.stderr.write("lint: inconclusive; no identifiable Audit Box frames were graded\n");
 	for (const rule of RULES) {
 		const hits = byRule.get(rule.id);
 		if (!hits) continue;
@@ -333,7 +585,7 @@ async function main(): Promise<void> {
 		for (const evidence of unique) process.stdout.write(`    ${evidence}\n`);
 		process.stdout.write(`    seen in ${new Set(hits.map(hit => hit.file)).size} frame(s)\n`);
 	}
-	process.exit(violations.length > 0 ? 1 : 0);
+	process.exit(exitCode);
 }
 
 if (import.meta.main) await main();

@@ -130,7 +130,7 @@ start() {
 	# HOME isolation only. Do not wrap this TUI in sandbox-exec.
 	tmux new-session -d -s "$SESSION_NAME" \
 		-c "$SANDBOX_PROJECT" -x 200 -y 50 \
-		"env HOME=$SANDBOX_HOME OMP_ANIMATIONS=full OMP_ANIMATIONS_CADENCE_EQUALIZER=true OMP_ANIMATIONS_REFLECTION_RIPPLE=true omp --cwd $SANDBOX_PROJECT --no-session"
+		"env HOME=$SANDBOX_HOME OMP_ANIMATIONS=full omp --cwd $SANDBOX_PROJECT"
 
 	printf 'sandbox-omp: started tmux session %s\n' "$SESSION_NAME"
 	printf '  attach: tmux attach -t %s\n' "$SESSION_NAME"
