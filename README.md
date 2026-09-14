@@ -149,15 +149,29 @@ The plugin does not mount a duplicate Audit Trail row or footer status.
 
 ## Install
 
-Install the plugin into an oh-my-pi profile from a local path:
+Install from a local checkout:
 
 ```bash
-omp plugin install ./path/to/omp-animations
+git clone git@github.com:caretak3r/omp-animations.git
+cd omp-animations
+bun install     # required once: a local install links the checkout as-is,
+                # it does not resolve dependencies for you
+omp plugin install .
 ```
 
-The package declares one plugin entry (`package.json#omp.extensions`, pointing
-at `src/registrar.ts`). The registrar reads the plugin settings synchronously.
-It mounts the complete Animations Box through one controller.
+Install straight from git, without a manual clone:
+
+```bash
+omp plugin install git+ssh://git@github.com/caretak3r/omp-animations.git
+```
+
+This form runs its own dependency resolution — no separate `bun install` step.
+While the repository stays private, this path needs the installing machine's
+own git credentials (SSH key or token) for `github.com`.
+
+Either form registers one plugin entry (`package.json#omp.extensions`,
+pointing at `src/registrar.ts`). The registrar reads the plugin settings
+synchronously. It mounts the complete Animations Box through one controller.
 
 ## Turn animations on and off
 

@@ -5,6 +5,13 @@
 	"private": true,
 	"description": "Ambient animated TUI widgets for omp, as a single config-driven package.",
 	"license": "MIT",
+	"author": "Rohit Gudi",
+	"homepage": "https://github.com/caretak3r/omp-animations#readme",
+	"bugs": "https://github.com/caretak3r/omp-animations/issues",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/caretak3r/omp-animations.git"
+	},
 	"keywords": [
 		"tui",
 		"animation",
@@ -43,7 +50,8 @@
 	"files": [
 		"src",
 		"README.md",
-		"CHANGELOG.md"
+		"CHANGELOG.md",
+		"LICENSE"
 	],
 	"omp": {
 		"name": "oh-my-pi animations",

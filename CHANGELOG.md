@@ -7,6 +7,11 @@ All notable changes to `@oh-my-pi/animations` are documented here.
 ### Added
 - `verify` row shows writes newer than the last successful bash; it
   disappears when the count reaches zero and never claims positive verification.
+- `package.json` now declares `repository`, `homepage`, `bugs`, and `author`,
+  and ships `LICENSE` in the published `files` allowlist. The README documents
+  a git-spec install (`omp plugin install git+ssh://…`) alongside the existing
+  local-path install, and notes that a local install needs one `bun install`
+  the source checkout does not run for you.
 - `authBeacon` row names credentials the host disabled this session;
   the error row lists truncated replies, dropped features, and provider
   reroutes, and a retry fallback shows as `fallback <from>→<to>` until it
@@ -253,6 +258,9 @@ All notable changes to `@oh-my-pi/animations` are documented here.
   row printed the epoch as an ETA (`resets 29779368m`). Both now share one
   wall-clock base. Tests never saw it, because an injected scheduler puts the
   fixture reset and the frame clock in the same fabricated time base.
+- `bun.lock` had pinned exact versions (`17.3.4`) for deps that `package.json`
+  declares as ranges (`^17`), so a fresh `bun install` silently rewrote the
+  lockfile on every clean checkout. Regenerated it to match `package.json`.
 
 ### Removed
 - **Cadence Equalizer.** Deleted the token-throughput row, its settings and
