@@ -4,6 +4,14 @@ All notable changes to `@oh-my-pi/animations` are documented here.
 
 ## [Unreleased]
 
+### Docs
+- Rewrote `README.md` with a table of contents, a captured VHS demo GIF
+  (`.media/demo.tape` records three parallel scout subagents against a live
+  Audit Box), and settings/signal-extra tables in place of prose. Fixed
+  three factual bugs the rewrite surfaced: the `verify`, `authBeacon`, and
+  `asyncJobHarbor` signal extras were shipped but never documented, and
+  `agentRosterDetail` had no settings-table entry.
+
 ### Added
 - `verify` row shows writes newer than the last successful bash; it
   disappears when the count reaches zero and never claims positive verification.
