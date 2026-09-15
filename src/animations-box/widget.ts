@@ -5,10 +5,12 @@
  * costs 2 rows and 4 columns (`"│ "` + `" │"`). Each content line uses
  * `width - 4` columns. The widget pads or truncates each line to this width.
  *
- * `simple` draws one composed row from active segments. `detailed` draws the
- * required rows and then the active optional rows. It draws one separator
- * when both groups have rows. An idle required segment draws its dim resting
- * line. An optional segment with no meaningful state uses no row.
+ * `simple` draws one composed row from active segments. `readable` and
+ * `detailed` both draw the required rows and then the active optional rows;
+ * they differ only in how the Agent Bonsai optional group renders its own
+ * rows. It draws one separator when both groups have rows. An idle required
+ * segment draws its dim resting line. An optional segment with no meaningful
+ * state uses no row.
  *
  * `status-line.ts` renders the plain spans that each segment source emits.
  * This widget applies dot tone, span tones, gradient percentages, and change
@@ -359,7 +361,7 @@ export class AnimationsBoxWidget extends AnimatedWidget {
 		const sharedModel = sharedBonsaiModel(bonsaiSnapshot.nodes);
 		const bonsaiHeader = sharedModel === undefined ? "agents" : `agents · ${sharedModel}`;
 
-		if (detail === "detailed") {
+		if (detail !== "simple") {
 			const contentRows: string[] = [];
 			const appendSample = (sample: SegmentSample): void => {
 				contentRows.push(
@@ -463,6 +465,6 @@ export class AnimationsBoxWidget extends AnimatedWidget {
 	}
 }
 
-/** Fixed border cost. Detailed mode adds one row per segment and one separator when optionals exist. */
+/** Fixed border cost. Readable and detailed modes add one row per segment and one separator when optionals exist. */
 export const BOX_BORDER_ROWS = BORDER_ROWS;
 export const BOX_BORDER_COLS = BORDER_COLS;

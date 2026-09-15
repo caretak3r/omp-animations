@@ -1460,7 +1460,7 @@ describe("Agent Bonsai observer and renderer", () => {
 		expect(rows).toHaveLength(3);
 		expect(rows[1]).toContain("implementing the renderer");
 		expect(rows[1]).not.toContain("[T ");
-		expect(rows[2]).toContain("[T read ✓] → [S tdd ✓] → [T bash ×] → [T edit ●] → [F src/state.ts ●]");
+		expect(rows[2]).toContain("read ✓ → tdd skill ✓ → bash × → edit ● → src/state.ts ●");
 		expect(rows[2]).not.toContain("implementing the renderer");
 
 		const crest = renderMotion(snapshot, 1_200)[2] ?? "";
@@ -1477,8 +1477,8 @@ describe("Agent Bonsai observer and renderer", () => {
 
 		const narrow = render(snapshot, 36);
 		const narrowActivity = narrow[2] ?? "";
-		expect(narrowActivity).toContain("… → [F src/state.ts ●]");
-		expect(narrowActivity).not.toContain("[T read ✓]");
+		expect(narrowActivity).toContain("… → edit ● → src/state.ts ●");
+		expect(narrowActivity).not.toContain("read ✓");
 		for (const row of narrow) expect(Bun.stringWidth(row)).toBeLessThanOrEqual(36);
 	});
 
@@ -1512,29 +1512,25 @@ describe("Agent Bonsai observer and renderer", () => {
 
 		const rows = render(snapshot);
 		expect(rows).toHaveLength(6);
-		expect(rows[2]).toContain("[T read ✓]");
+		expect(rows[2]).toContain("read ✓");
 		const provenanceRow = rows[3] ?? "";
-		expect(provenanceRow).toContain("A1:");
-		expect(provenanceRow.match(/\bA1\b/g)).toHaveLength(1);
-		const cells = ["[S review ✓]", "[C AGENTS.md ×]", "[M recall ✓]", "[Q QMD query ●]"];
-		let previous = provenanceRow.indexOf("A1");
+		const cells = ["read review skill ✓", "read AGENTS.md ×", "recalled memory ✓", "qmd query ●"];
+		let previous = -1;
 		for (const cell of cells) {
 			const position = provenanceRow.indexOf(cell);
 			expect(position).toBeGreaterThan(previous);
 			previous = position;
 		}
-		expect(rows[1]).not.toContain("[S review ✓]");
-		expect(rows[2]).not.toContain("[S review ✓]");
+		expect(rows[1]).not.toContain("read review skill");
+		expect(rows[2]).not.toContain("read review skill");
 		expect(rows[4]).toContain("A2 peer");
-		expect(rows[5]).toMatch(/A2:.*\[Q peer query ×\]/u);
-		expect(rows[5]).not.toContain("QMD query");
+		expect(rows[5]).toContain("peer query ×");
+		expect(rows[5]).not.toContain("qmd query");
 		expect(provenanceRow).not.toContain("peer query");
 
 		const ascii = renderAscii(snapshot)[3] ?? "";
-		expect(ascii).toContain("A1:");
-		expect(ascii.match(/\bA1\b/g)).toHaveLength(1);
-		previous = ascii.indexOf("A1");
-		for (const cell of ["[S review +]", "[C AGENTS.md !]", "[M recall +]", "[Q QMD query *]"]) {
+		previous = -1;
+		for (const cell of ["read review skill +", "read AGENTS.md !", "recalled memory +", "qmd query *"]) {
 			const position = ascii.indexOf(cell);
 			expect(position).toBeGreaterThan(previous);
 			previous = position;
@@ -1564,7 +1560,7 @@ describe("Agent Bonsai observer and renderer", () => {
 			expect(stylesFor(row, "review")).toEqual(["32/false"]);
 			expect(stylesFor(row, "AGENTS.md")).toEqual(["31/true"]);
 			expect(stylesFor(row, "recall")).toEqual(["32/false"]);
-			expect(stylesFor(row, "QMD query")).toEqual(["36/false"]);
+			expect(stylesFor(row, "qmd query")).toEqual(["36/false"]);
 		}
 		expect(stylesFor(crest, "●")).toEqual(["36/true"]);
 		expect(stylesFor(rest, "●")).toEqual(["36/false"]);
@@ -1572,16 +1568,16 @@ describe("Agent Bonsai observer and renderer", () => {
 
 		for (const width of [120, 69, 45]) {
 			const row = render(snapshot, width)[2] ?? "";
-			expect(row).toContain("[Q QMD query ●]");
+			expect(row).toContain("qmd query ●");
 			expect(Bun.stringWidth(row)).toBeLessThanOrEqual(width);
 		}
 		const medium = render(snapshot, 69)[2] ?? "";
-		expect(medium).toContain("[M recall ✓]");
-		expect(medium).not.toContain("[S review ✓]");
-		expect(medium).toContain("[C AGENTS.md ×]");
+		expect(medium).toContain("recalled memory ✓");
+		expect(medium).not.toContain("read review skill");
+		expect(medium).toContain("read AGENTS.md ×");
 		const narrow = render(snapshot, 45)[2] ?? "";
-		expect(narrow).toMatch(/A1:.*….*\[M recall ✓\].*\[Q QMD query ●\]/u);
-		expect(narrow).not.toContain("[C AGENTS.md ×]");
+		expect(narrow).toMatch(/….*recalled memory ✓.*qmd query ●/u);
+		expect(narrow).not.toContain("read AGENTS.md");
 	});
 
 	it("keeps narrow provenance truncation inside the ASCII glyph set", () => {
@@ -1604,10 +1600,10 @@ describe("Agent Bonsai observer and renderer", () => {
 		});
 
 		const row = renderAscii(snapshot, 45)[2] ?? "";
-		expect(row).toMatch(/A1:.*\[Q /u);
+		expect(row).toContain("a deliberately long provenance");
 		expect(row).toContain("...");
 		expect(row).not.toContain("…");
-		expect(row).toEndWith(" *]");
+		expect(row).toEndWith(" *");
 		expect(Bun.stringWidth(row)).toBeLessThanOrEqual(45);
 	});
 
@@ -1632,9 +1628,9 @@ describe("Agent Bonsai observer and renderer", () => {
 		});
 
 		const row = render(snapshot, 45)[2] ?? "";
-		expect(row).toMatch(/A1:.*….*\[Q /u);
-		expect(row).toEndWith(" ●]");
-		expect(row).not.toContain("[S review ✓]");
+		expect(row).toMatch(/….*a deliberately long provenance/u);
+		expect(row).toEndWith(" ●");
+		expect(row).not.toContain("read review skill");
 		expect(Bun.stringWidth(row)).toBeLessThanOrEqual(45);
 	});
 
@@ -1663,12 +1659,12 @@ describe("Agent Bonsai observer and renderer", () => {
 				],
 			]),
 		});
-		const outcome = status === "active" ? "●]" : "×]";
+		const outcome = status === "active" ? "●" : "×";
 		for (const width of [20, 45, 69, 120]) {
 			const rows = render(snapshot, width);
-			expect(rows[2]).toMatch(/….*\[F/u);
+			expect(rows[2]).toMatch(/….*→/u);
 			expect(rows[2]).toEndWith(outcome);
-			expect(rows[3]).toMatch(/A1:.*….*\[Q/u);
+			expect(rows[3]).toMatch(/….*resour/u);
 			expect(rows[3]).toEndWith(outcome);
 			for (const row of rows) expect(Bun.stringWidth(row)).toBeLessThanOrEqual(width);
 		}
@@ -1676,10 +1672,10 @@ describe("Agent Bonsai observer and renderer", () => {
 		expect(ascii).toHaveLength(4);
 		const asciiActivity = ascii[2] ?? "";
 		const asciiProvenance = ascii[3] ?? "";
-		expect(asciiActivity).toMatch(/\.\.\..*\[F/u);
-		expect(asciiProvenance).toMatch(/A1:.*\.\.\..*\[Q/u);
+		expect(asciiActivity).toMatch(/\.\.\..*->/u);
+		expect(asciiProvenance).toMatch(/\.\.\..*reso/u);
 		for (const row of [asciiActivity, asciiProvenance]) {
-			expect(row).toEndWith(status === "active" ? "*]" : "!]");
+			expect(row).toEndWith(status === "active" ? "*" : "!");
 			expect(row).not.toContain("…");
 			expect(Bun.stringWidth(row)).toBeLessThanOrEqual(22);
 		}

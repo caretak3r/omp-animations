@@ -43,16 +43,19 @@ const STATUS_COLORS: Readonly<Record<AgentBonsaiStatus, ThemeColor>> = {
 const SPAWN_FRAME_MS = 180;
 const SPAWN_GLYPHS = ["○", "◐", "●"] as const;
 const ASCII_SPAWN_GLYPHS = ["o", "*", "*"] as const;
-const ACTIVITY_KIND_LABELS: Readonly<Record<AgentActivityStep["kind"], string>> = {
-	tool: "T",
-	skill: "S",
-	file: "F",
+const MEMORY_PROVENANCE_LABELS: Readonly<Record<string, string>> = {
+	read: "read memory",
+	recall: "recalled memory",
+	reflect: "reflected on memory",
+	retain: "retained memory",
+	learn: "learned memory",
+	"memory edit": "edited memory",
 };
-const PROVENANCE_KIND_LABELS: Readonly<Record<AgentProvenanceEvent["kind"], string>> = {
-	skill: "S",
-	"context-file": "C",
-	memory: "M",
-	qmd: "Q",
+const QMD_PROVENANCE_LABELS: Readonly<Record<string, string>> = {
+	"QMD query": "qmd query",
+	"QMD get": "qmd get",
+	"QMD multi-get": "qmd multi-get",
+	"QMD status": "qmd status",
 };
 
 const ACTIVITY_STATUS_GLYPHS: Readonly<
@@ -86,12 +89,12 @@ export interface AgentBonsaiRenderContext {
 	 */
 	readonly hyperlinks?: boolean;
 	/**
-	 * `simple` renders the compact one-line-per-agent overview only — no activity or
-	 * provenance sub-rows, at any node count. `detailed` (the default) adds those
-	 * sub-rows back for up to {@link MAX_BONSAI_DETAIL_ROWS} nodes, so height stays
-	 * bounded even when every visible agent is mid-task.
+	 * `simple` and `readable` render the compact one-line-per-agent overview only —
+	 * no activity or provenance sub-rows, at any node count. `detailed` (the default)
+	 * adds those sub-rows back for up to {@link MAX_BONSAI_DETAIL_ROWS} nodes, so
+	 * height stays bounded even when every visible agent is mid-task.
 	 */
-	readonly detail?: "simple" | "detailed";
+	readonly detail?: "simple" | "readable" | "detailed";
 }
 
 function modelLabel(node: AgentBonsaiNode): string {
@@ -263,10 +266,13 @@ function activityStatusGlyph(
 	return glyph;
 }
 
+function activityLabelText(step: Pick<AgentActivityStep, "kind" | "label">): string {
+	return step.kind === "skill" ? `${step.label} skill` : step.label;
+}
+
 function activityCellText(step: AgentActivityStep, glyphPreset: SymbolPreset, ctx?: AgentBonsaiRenderContext): string {
-	const kind = ACTIVITY_KIND_LABELS[step.kind];
 	const status = activityStatusGlyph(step, glyphPreset, ctx);
-	return `[${kind} ${step.label} ${status}]`;
+	return `${activityLabelText(step)} ${status}`;
 }
 
 function fittedActivityCellText(
@@ -275,13 +281,12 @@ function fittedActivityCellText(
 	width: number,
 	ctx: AgentBonsaiRenderContext,
 ): string {
-	const kind = ACTIVITY_KIND_LABELS[step.kind];
 	const status = activityStatusGlyph(step, glyphPreset, ctx);
-	const fixed = `[${kind}  ${status}]`;
-	const labelWidth = width - visibleWidth(fixed);
+	const label = activityLabelText(step);
+	const labelWidth = width - visibleWidth(status) - 1;
 	const ellipsis = glyphPreset === "ascii" ? Ellipsis.Ascii : Ellipsis.Unicode;
-	if (labelWidth <= 0) return width >= 5 ? `[${kind} ${status}]` : "";
-	return `[${kind} ${truncateToWidth(step.label, labelWidth, ellipsis)} ${status}]`;
+	if (labelWidth <= 0) return width >= visibleWidth(status) ? status : "";
+	return `${truncateToWidth(label, labelWidth, ellipsis)} ${status}`;
 }
 
 function renderActivityCell(step: AgentActivityStep, text: string, ctx: AgentBonsaiRenderContext): string {
@@ -335,14 +340,20 @@ function renderActivityRow(node: AgentBonsaiNode, width: number, ctx: AgentBonsa
 	return `${renderedPrefix}${renderedOmitted}${renderedSteps.join(renderedArrow)}`;
 }
 
+function provenanceLabelText(event: Pick<AgentProvenanceEvent, "kind" | "label">): string {
+	if (event.kind === "context-file") return `read ${event.label}`;
+	if (event.kind === "skill") return `read ${event.label} skill`;
+	if (event.kind === "qmd") return QMD_PROVENANCE_LABELS[event.label] ?? event.label;
+	return MEMORY_PROVENANCE_LABELS[event.label] ?? event.label;
+}
+
 function provenanceCellText(
 	event: AgentProvenanceEvent,
 	glyphPreset: SymbolPreset,
 	ctx?: AgentBonsaiRenderContext,
 ): string {
-	const kind = PROVENANCE_KIND_LABELS[event.kind];
 	const status = activityStatusGlyph(event, glyphPreset, ctx);
-	return `[${kind} ${event.label} ${status}]`;
+	return `${provenanceLabelText(event)} ${status}`;
 }
 
 function fittedProvenanceCellText(
@@ -351,13 +362,12 @@ function fittedProvenanceCellText(
 	width: number,
 	ctx: AgentBonsaiRenderContext,
 ): string {
-	const kind = PROVENANCE_KIND_LABELS[event.kind];
 	const status = activityStatusGlyph(event, glyphPreset, ctx);
-	const fixed = `[${kind}  ${status}]`;
-	const labelWidth = width - visibleWidth(fixed);
+	const label = provenanceLabelText(event);
+	const labelWidth = width - visibleWidth(status) - 1;
 	const ellipsis = glyphPreset === "ascii" ? Ellipsis.Ascii : Ellipsis.Unicode;
-	if (labelWidth <= 0) return width >= 5 ? `[${kind} ${status}]` : "";
-	return `[${kind} ${truncateToWidth(event.label, labelWidth, ellipsis)} ${status}]`;
+	if (labelWidth <= 0) return width >= visibleWidth(status) ? status : "";
+	return `${truncateToWidth(label, labelWidth, ellipsis)} ${status}`;
 }
 
 function renderProvenanceCell(event: AgentProvenanceEvent, text: string, ctx: AgentBonsaiRenderContext): string {
@@ -372,7 +382,7 @@ function renderProvenanceCell(event: AgentProvenanceEvent, text: string, ctx: Ag
 function renderProvenanceRow(node: AgentBonsaiNode, width: number, ctx: AgentBonsaiRenderContext): string | undefined {
 	const events = node.provenance ?? [];
 	if (events.length === 0) return undefined;
-	const prefix = `${activityPrefix(node, ctx)}${node.cohortLabel}: `;
+	const prefix = activityPrefix(node, ctx);
 	const available = width - visibleWidth(prefix);
 	if (available < 5) return undefined;
 
@@ -564,7 +574,7 @@ export function renderAgentBonsaiRows(
 	const spansById = observeRows(snapshot, ctx);
 	const widths = nameWidths(nodes);
 	const showModel = sharedBonsaiModel(nodes) === undefined;
-	const detailEligible = ctx.detail === "simple" ? undefined : detailEligibleIds(nodes);
+	const detailEligible = ctx.detail === "simple" || ctx.detail === "readable" ? undefined : detailEligibleIds(nodes);
 	const rows: string[] = [];
 	// Sibling-run dedupe is order-local: a row repeats its predecessor's task
 	// tail or model chip only while the same depth continues. Main never dedupes.

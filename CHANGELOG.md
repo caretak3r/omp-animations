@@ -4,6 +4,15 @@ All notable changes to `@oh-my-pi/animations` are documented here.
 
 ## [Unreleased]
 
+### Changed
+- Agent Bonsai's activity and provenance rows now render plain-language
+  phrases (`read review skill ✓`, `recalled memory ✓`) instead of
+  letter-code bracket chains (`[S review ✓]`, `[M recall ✓]`); the row no
+  longer prefixes each agent's provenance with its own name. `simple` and
+  `readable` both keep Agent Bonsai to one line per agent; only `detailed`
+  adds the activity/provenance sub-rows. `animationsBoxDetail` gains this
+  new `readable` value and becomes the default in place of `detailed`.
+
 ### Docs
 - Rewrote `README.md` with a table of contents, a captured VHS demo GIF
   (`.media/demo.tape` records three parallel scout subagents against a live
@@ -11,6 +20,10 @@ All notable changes to `@oh-my-pi/animations` are documented here.
   three factual bugs the rewrite surfaced: the `verify`, `authBeacon`, and
   `asyncJobHarbor` signal extras were shipped but never documented, and
   `agentRosterDetail` had no settings-table entry.
+- Documented the `display.shimmer` / Agent Bonsai boundary in `README.md`
+  and `AGENTS.md`: the transcript's name-shimmer is host UI the plugin
+  cannot see or suppress; pair `omp config set display.shimmer disabled`
+  with `agentBonsai: true` instead.
 
 ### Added
 - `verify` row shows writes newer than the last successful bash; it

@@ -73,12 +73,13 @@
 			},
 			"animationsBoxDetail": {
 				"type": "enum",
-				"description": "How much the Animations Box shows per enabled segment. 'detailed' gives one labeled row per segment. 'simple' composes everything into a single line. Applied at wire time (restart to change).",
+				"description": "How much the Animations Box shows per enabled segment. 'readable' (default) gives one labeled row per required segment and keeps Agent Bonsai to one line per agent. 'detailed' adds Agent Bonsai's activity/provenance chains. 'simple' composes everything into a single line. Applied at wire time (restart to change).",
 				"values": [
 					"simple",
+					"readable",
 					"detailed"
 				],
-				"default": "detailed",
+				"default": "readable",
 				"env": "OMP_ANIMATIONS_BOX_DETAIL"
 			},
 			"animationsBoxPlacement": {

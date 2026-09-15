@@ -128,7 +128,7 @@ each with an `OMP_*` environment fallback (stored settings win).
 | Setting | Values | Default | Env fallback |
 | --- | --- | --- | --- |
 | `animations` | `off` \| `subtle` \| `full` | `subtle` | `OMP_ANIMATIONS` |
-| `animationsBoxDetail` | `simple` \| `detailed` | `detailed` | `OMP_ANIMATIONS_BOX_DETAIL` |
+| `animationsBoxDetail` | `simple` \| `readable` \| `detailed` | `readable` | `OMP_ANIMATIONS_BOX_DETAIL` |
 | `animationsBoxPlacement` | `aboveEditor` \| `belowEditor` | `belowEditor` | `OMP_ANIMATIONS_BOX_PLACEMENT` |
 | `animationsContextQuota` | `5`–`100` | `80` | `OMP_ANIMATIONS_CONTEXT_QUOTA` |
 | `agentBonsai` | boolean | `true` | `OMP_ANIMATIONS_AGENT_BONSAI` |
@@ -140,6 +140,12 @@ each with an `OMP_*` environment fallback (stored settings win).
 
 `animationsBonsaiSettleSeconds` keeps completed agents visible for that many
 seconds; the minimum announcement window is `800ms` regardless of tier.
+
+The main transcript's shimmer on a running subagent's name is host UI
+(`display.shimmer`), not this plugin — the plugin only mounts widgets, it
+has no hook into the host's own text rendering. Pair
+`omp config set display.shimmer disabled` with `agentBonsai: true` to make
+the Audit Box the one place that reports "an agent is working."
 
 Read and change settings with:
 

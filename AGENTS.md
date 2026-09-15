@@ -105,7 +105,7 @@ Precedence is stored settings, then `OMP_*` environment, then the default.
 Use these names and no others:
 
 - `animations` — motion tier: `off`, `subtle`, `full`. Default `subtle`.
-- `animationsBoxDetail` — `simple` or `detailed`. Default `detailed`.
+- `animationsBoxDetail` — `simple`, `readable`, or `detailed`. Default `readable`. `simple` and `readable` render one line per agent in Agent Bonsai; `detailed` adds activity/provenance sub-rows.
 - `animationsBoxPlacement` — `aboveEditor` or `belowEditor`. Default `belowEditor`.
 - `animationsContextQuota` — quota percent, `5` to `100`. Default `80`.
 - `agentBonsai`, `breathingBorder` — default `true`.
@@ -151,6 +151,12 @@ Read subagent progress from `tool_execution_update` / `tool_execution_end`.
 `WidgetPlacement` is only `aboveEditor` or `belowEditor`.
 The plugin cannot pin chrome to the true top of the omp viewport.
 A pulsing header as the first TUI child sits in scrollback and re-anchors every frame.
+
+The main transcript's shimmer on a running subagent's name is `display.shimmer`,
+a host setting the plugin cannot see or suppress — a plugin mounts widgets, it has
+no hook into the host's own text rendering. Point users at
+`omp config set display.shimmer disabled` paired with `agentBonsai: true` instead
+of building a plugin-side override.
 
 Do not change omp core to remove these limits.
 

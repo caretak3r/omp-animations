@@ -46,9 +46,14 @@ const BREATHING_BORDER_ID = "breathingBorder";
 export const REMOVED_DISPLAY_KEY = "display";
 export const REMOVED_DISPLAY_ENV = "OMP_ANIMATIONS_DISPLAY";
 
-/** How much each Audit Box segment shows. */
-export type BoxDetail = "simple" | "detailed";
-const BOX_DETAIL_VALUES: readonly BoxDetail[] = ["simple", "detailed"];
+/**
+ * How much each Audit Box segment shows. `simple` composes one line for the
+ * whole box. `readable` (the default) draws the full required-row layout but
+ * keeps the Agent Bonsai group to one line per agent, no activity/provenance
+ * chains. `detailed` adds those chains back, opt-in.
+ */
+export type BoxDetail = "simple" | "readable" | "detailed";
+const BOX_DETAIL_VALUES: readonly BoxDetail[] = ["simple", "readable", "detailed"];
 
 const BOX_PLACEMENT_VALUES: readonly WidgetPlacement[] = ["aboveEditor", "belowEditor"];
 
@@ -87,7 +92,7 @@ export const BOX_SETTING_ENV = {
 } as const;
 
 export const BOX_DEFAULTS: Pick<AnimationsBoxConfig, "detail" | "placement" | "contextQuota"> = {
-	detail: "detailed",
+	detail: "readable",
 	placement: "belowEditor",
 	contextQuota: CONTEXT_QUOTA_DEFAULT_PERCENT,
 };
