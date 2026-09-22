@@ -46,7 +46,7 @@ export type {
 	WriteToolResultEvent,
 } from "@oh-my-pi/pi-coding-agent/extensibility/extensions/types";
 export type { GoalUpdatedEvent } from "@oh-my-pi/pi-coding-agent/extensibility/shared-events";
-export type { ContextUsageLevel } from "@oh-my-pi/pi-coding-agent/modes/components/status-line/context-thresholds";
-export type { SymbolPreset, Theme, ThemeColor } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 export type { AsyncJobSnapshot } from "@oh-my-pi/pi-coding-agent/session/agent-session-types";
 export type { SessionEntry } from "@oh-my-pi/pi-coding-agent/session/session-entries";
+export type { ContextUsageLevel } from "@oh-my-pi/pi-tui/chrome/context-thresholds";
+export type { SymbolPreset, Theme, ThemeColor } from "@oh-my-pi/pi-tui/theme/theme";

@@ -4,6 +4,18 @@ All notable changes to `@oh-my-pi/animations` are documented here.
 
 ## [Unreleased]
 
+### Fixed
+- Extension load failure on host v18 (`export 'splitPathAndSel' not found in
+  'omp-legacy-pi-bundled:@oh-my-pi/pi-coding-agent/tools/path-utils'`):
+  `splitInternalUrlSel`/`splitPathAndSel` moved to
+  `@oh-my-pi/pi-tui/tools/read`, and `getContextUsageLevel`/
+  `getContextUsageThemeColor`/`ContextUsageLevel`/`SymbolPreset`/`Theme`/
+  `ThemeColor` moved to `@oh-my-pi/pi-tui/chrome/context-thresholds` and
+  `@oh-my-pi/pi-tui/theme/theme` between host v17 and v18. Repointed both
+  fence files (`src/host/runtime.ts`, `src/host/types.ts`) and bumped the
+  `@oh-my-pi/pi-coding-agent`/`@oh-my-pi/pi-tui` pins to the v18 line so a
+  fresh install works against the currently-shipping host.
+
 ### Changed
 - Agent Bonsai's activity and provenance rows now render plain-language
   phrases (`read review skill ✓`, `recalled memory ✓`) instead of

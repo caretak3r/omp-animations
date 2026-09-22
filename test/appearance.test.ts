@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import * as path from "node:path";
-import type { Theme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
+import type { Theme } from "@oh-my-pi/pi-tui/theme/theme";
 import {
 	ACCENT_SETTING_VALUES,
 	accentColorKey,

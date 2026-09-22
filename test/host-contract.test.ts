@@ -2,23 +2,16 @@ import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import {
-	getContextUsageLevel,
-	getContextUsageThemeColor,
-} from "@oh-my-pi/pi-coding-agent/modes/components/status-line/context-thresholds";
 import { normalizeToolName } from "@oh-my-pi/pi-coding-agent/tools/builtin-names";
-import {
-	expandPath,
-	resolveReadPath,
-	splitInternalUrlSel,
-	splitPathAndSel,
-} from "@oh-my-pi/pi-coding-agent/tools/path-utils";
+import { expandPath, resolveReadPath } from "@oh-my-pi/pi-coding-agent/tools/path-utils";
+import { getContextUsageLevel, getContextUsageThemeColor } from "@oh-my-pi/pi-tui/chrome/context-thresholds";
+import { splitInternalUrlSel, splitPathAndSel } from "@oh-my-pi/pi-tui/tools/read";
 import { installedHostVersion } from "./installed-host-harness";
 
 describe("host contract", () => {
-	test("installedHostVersion starts with 17.", () => {
+	test("installedHostVersion starts with 18.", () => {
 		const version = installedHostVersion();
-		expect(version.startsWith("17.")).toBe(true);
+		expect(version.startsWith("18.")).toBe(true);
 	});
 
 	test("normalizeToolName on known builtin aliases", () => {
@@ -48,10 +41,7 @@ describe("host contract", () => {
 	});
 
 	test("getContextUsageLevel at threshold boundaries", () => {
-		const thresholdsPath = path.join(
-			process.cwd(),
-			"node_modules/@oh-my-pi/pi-coding-agent/src/modes/components/status-line/context-thresholds.ts",
-		);
+		const thresholdsPath = path.join(process.cwd(), "node_modules/@oh-my-pi/pi-tui/src/chrome/context-thresholds.ts");
 		const source = fs.readFileSync(thresholdsPath, "utf-8");
 
 		const warningMatch = source.match(/CONTEXT_WARNING_PERCENT_THRESHOLD\s*=\s*(\d+)/);

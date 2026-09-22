@@ -7,14 +7,10 @@
  * See plan 023 and the Biome fence at biome.json (noRestrictedImports override).
  */
 
-export {
-	getContextUsageLevel,
-	getContextUsageThemeColor,
-} from "@oh-my-pi/pi-coding-agent/modes/components/status-line/context-thresholds";
 export { normalizeToolName } from "@oh-my-pi/pi-coding-agent/tools/builtin-names";
-export {
-	expandPath,
-	resolveReadPath,
-	splitInternalUrlSel,
-	splitPathAndSel,
-} from "@oh-my-pi/pi-coding-agent/tools/path-utils";
+export { expandPath, resolveReadPath } from "@oh-my-pi/pi-coding-agent/tools/path-utils";
+export { getContextUsageLevel, getContextUsageThemeColor } from "@oh-my-pi/pi-tui/chrome/context-thresholds";
+// splitInternalUrlSel/splitPathAndSel moved from pi-coding-agent/tools/path-utils to
+// pi-tui/tools/read between host v17 and v18; pi-coding-agent's own path-utils now
+// imports them from here too. Track the host's current location, not the historical one.
+export { splitInternalUrlSel, splitPathAndSel } from "@oh-my-pi/pi-tui/tools/read";

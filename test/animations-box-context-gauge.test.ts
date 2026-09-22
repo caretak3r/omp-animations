@@ -4,7 +4,7 @@ import {
 	type ContextUsageLevel,
 	getContextUsageLevel,
 	getContextUsageThemeColor,
-} from "@oh-my-pi/pi-coding-agent/modes/components/status-line/context-thresholds";
+} from "@oh-my-pi/pi-tui/chrome/context-thresholds";
 import { formatNumber } from "@oh-my-pi/pi-utils";
 import {
 	BURN_MIN_TURNS,

@@ -1015,6 +1015,8 @@ describe("ActivityTelemetryBus", () => {
 					{ path: "AGENTS.md:raw", kind: "context-file", label: "AGENTS.md:raw" },
 					{ path: "AGENTS.md:20", kind: "context-file", label: "AGENTS.md:20" },
 					{ path: "CLAUDE.md:raw", kind: "skill", label: "literal" },
+					{ path: "AGENTS.md:-60", kind: "context-file", label: "AGENTS.md" },
+					{ path: "AGENTS.md:img", kind: "context-file", label: "AGENTS.md" },
 				] as const;
 				for (const [index, read] of reads.entries()) {
 					now++;
@@ -1027,8 +1029,6 @@ describe("ActivityTelemetryBus", () => {
 					"AGENTS.md:2-10",
 					"AGENTS.md:unrecognized",
 					"AGENTS.md:conflicts:raw",
-					"AGENTS.md:-60",
-					"AGENTS.md:img",
 					"SKILL.md:raw:raw",
 				]) {
 					root.startTool({ toolCallId: `literal-${target}`, toolName: "read", args: { path: target } });
