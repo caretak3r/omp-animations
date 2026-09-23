@@ -451,6 +451,10 @@ function renderPlainSpan(
 	const flashing = flashText(node, key, text, ctx);
 	if (flashing !== undefined) return flashing;
 	if (key === "name") return ctx.theme.fg(statusColor(node, ctx), text);
+	if (key === "model") {
+		const colored = ctx.theme.fg("accent", text);
+		return ctx.theme.bold?.(colored) ?? colored;
+	}
 	return ctx.theme.fg("dim", text);
 }
 
@@ -502,9 +506,13 @@ function renderNode(
 	const task =
 		spans.gist.text.length > 0 && spans.gist.text !== spans.task.text && !dedupedTask ? spans.task.text : "";
 
-	// Lead with the differentiator (gist), then the skill chip, then the model
-	// chip — the part most likely to be identical across every visible row and
-	// so the one dropped first when width is tight.
+	// Lead with the model chip — highlighted, since which model (and effort,
+	// embedded as its `:thinkingLevel` suffix) an agent is running is the one
+	// fact a reader wants before anything else — then the skill chip, then the
+	// differentiator (gist/task description). Width pressure still drops the
+	// task tail first, then the model chip, then the skill chip: model is
+	// visually prominent when there's room, but the least informative of the
+	// three under narrow width, since sibling agents usually share one model.
 	const assemble = (
 		fittedGist: string,
 		includeSkill: boolean,
@@ -513,6 +521,8 @@ function renderNode(
 		paddedName = true,
 	): string => {
 		let row = base + (paddedName ? namePadding : "") + collisionChip;
+		if (includeModel && model.length > 0) row += `  ${renderPlainSpan(node, "model", model, ctx)}`;
+		if (includeSkill && skill.length > 0) row += `  ${renderSkill(node, skill, ctx)}`;
 		if (fittedGist.length > 0) {
 			const work =
 				spans.gist.text.length > 0
@@ -520,8 +530,6 @@ function renderNode(
 					: renderPlainSpan(node, "task", fittedGist, ctx);
 			row += `  ${work}`;
 		}
-		if (includeSkill && skill.length > 0) row += `  ${renderSkill(node, skill, ctx)}`;
-		if (includeModel && model.length > 0) row += `  ${renderPlainSpan(node, "model", model, ctx)}`;
 		if (includeTask && task.length > 0)
 			row += `  ${ctx.theme.fg("dim", "·")} ${renderPlainSpan(node, "task", task, ctx)}`;
 		return row.trimEnd();

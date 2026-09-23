@@ -739,7 +739,7 @@ describe("Agent Bonsai observer and renderer", () => {
 		expect(rows).toContain("openai/gpt-5");
 	});
 
-	it("leads each row with the differentiator ahead of the skill and model chips (daw.4)", () => {
+	it("leads each row with the highlighted model chip, then the skill chip, then the differentiator (daw.4)", () => {
 		const refs = [bonsaiRef("Main"), bonsaiRef("worker", { activity: "Verifying boundary contract" })];
 		const snapshot = buildAgentBonsai(refs, {
 			cohort: new Map([["worker", 1]]),
@@ -747,12 +747,22 @@ describe("Agent Bonsai observer and renderer", () => {
 			activeSkill: new Map([["worker", { name: "beads-discipline", path: "skill://beads-discipline" }]]),
 		});
 		const row = render(snapshot)[1] ?? "";
-		const gistIndex = row.indexOf("Verifying boundary contract");
-		const skillIndex = row.indexOf("seen-skill:beads-discipline");
 		const modelIndex = row.indexOf("anthropic/sonnet");
-		expect(gistIndex).toBeGreaterThan(0);
-		expect(skillIndex).toBeGreaterThan(gistIndex);
-		expect(modelIndex).toBeGreaterThan(skillIndex);
+		const skillIndex = row.indexOf("seen-skill:beads-discipline");
+		const gistIndex = row.indexOf("Verifying boundary contract");
+		expect(modelIndex).toBeGreaterThan(0);
+		expect(skillIndex).toBeGreaterThan(modelIndex);
+		expect(gistIndex).toBeGreaterThan(skillIndex);
+	});
+
+	it("highlights the model chip in bold accent instead of dim (daw.4)", () => {
+		const refs = [bonsaiRef("Main"), bonsaiRef("worker", { activity: "Verifying boundary contract" })];
+		const snapshot = buildAgentBonsai(refs, {
+			cohort: new Map([["worker", 1]]),
+			model: new Map([["worker", "anthropic/sonnet"]]),
+		});
+		const row = renderMotion(snapshot, 1_000, 200, "off")[1] ?? "";
+		expect(stylesFor(row, "anthropic/sonnet")).toEqual(["36/true"]);
 	});
 
 	it("sprouts fixed-width glyphs, then pulses only the live marker", () => {

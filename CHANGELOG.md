@@ -24,6 +24,10 @@ All notable changes to `@oh-my-pi/animations` are documented here.
   `readable` both keep Agent Bonsai to one line per agent; only `detailed`
   adds the activity/provenance sub-rows. `animationsBoxDetail` gains this
   new `readable` value and becomes the default in place of `detailed`.
+- Agent Bonsai's model chip (`provider/id[:thinkingLevel]`) now leads each
+  row right after the agent name, in bold accent, instead of trailing in
+  dim after the skill chip and task description — the model and effort an
+  agent is running are the first thing a reader sees.
 
 ### Docs
 - Rewrote `README.md` with a table of contents, a captured VHS demo GIF
