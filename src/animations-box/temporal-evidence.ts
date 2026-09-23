@@ -455,11 +455,27 @@ export class TemporalEvidenceStore {
 
 	snapshot(now: number): TemporalEvidenceSnapshot {
 		if (this.#disposed) return this.#snapshot;
-		if (!isNonNegativeFinite(now) || now < this.#lastSnapshotNow) {
-			throw new RangeError("Temporal evidence snapshot time must be finite and monotonic");
+		if (!isNonNegativeFinite(now)) {
+			throw new RangeError("Temporal evidence snapshot time must be a non-negative finite number");
+		}
+		let changed = this.#dirty;
+		if (now < this.#lastSnapshotNow) {
+			// The shared clock is wall-clock epoch ms (see FrameScheduler), which
+			// steps backward on NTP correction or sleep/wake. Real elapsed time did
+			// not move backward, so shift every entry by the step to keep its age;
+			// throwing here would surface as an uncaught exception in the host's
+			// frame timer and take the whole session down.
+			const step = this.#lastSnapshotNow - now;
+			for (const entry of this.#entries) {
+				entry.observedAt -= step;
+				entry.freshUntil -= step;
+				entry.recentUntil -= step;
+				entry.expiresAt -= step;
+				entry.publishedEntry = undefined;
+			}
+			if (this.#entries.length > 0) changed = true;
 		}
 		this.#lastSnapshotNow = now;
-		let changed = this.#dirty;
 		for (let index = this.#entries.length - 1; index >= 0; index--) {
 			const entry = this.#entries[index];
 			if (now >= entry.expiresAt) {

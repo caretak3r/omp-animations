@@ -5,6 +5,13 @@ All notable changes to `@oh-my-pi/animations` are documented here.
 ## [Unreleased]
 
 ### Fixed
+- Uncaught `RangeError: Temporal evidence snapshot time must be finite and
+  monotonic` thrown from the frame timer, taking the whole omp session down.
+  The shared clock is `Date.now()` (wall-clock epoch ms, required for
+  provider `resetAt` instants), which steps backward on NTP correction or
+  sleep/wake; the evidence store asserted monotonic time on it. It now
+  rebases every stored entry by the step so ages are preserved, and only
+  throws on a non-finite or negative time.
 - Extension load failure on host v18 (`export 'splitPathAndSel' not found in
   'omp-legacy-pi-bundled:@oh-my-pi/pi-coding-agent/tools/path-utils'`):
   `splitInternalUrlSel`/`splitPathAndSel` moved to

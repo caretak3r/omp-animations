@@ -80,6 +80,26 @@ describe("TemporalEvidenceStore", () => {
 		expect(Object.isFrozen(fresh.entries[0].payload)).toBeTrue();
 	});
 
+	it("survives a backward wall-clock step by rebasing entry ages instead of throwing", () => {
+		const store = new TemporalEvidenceStore({ scope: { root: 0, session: 0 }, policy: policy() });
+		store.observe(numeric(0, 1_000));
+		expect(store.snapshot(1_005).entries[0]).toMatchObject({ stage: "fresh", observedAt: 1_000 });
+
+		// NTP correction / sleep-wake: Date.now() steps back 500ms. The entry was
+		// 5ms old and must stay 5ms old — not become 495ms in the future.
+		const rebased = store.snapshot(505);
+		expect(rebased.entries[0]).toMatchObject({ stage: "fresh", observedAt: 500, expiresAt: 560 });
+		expect(store.snapshot(509).entries[0].stage).toBe("fresh");
+		expect(store.snapshot(510).entries[0].stage).toBe("recent");
+
+		// A fresh observation on the post-step clock is newer than the rebased entry, so it coalesces.
+		expect(store.observe(numeric(0, 520, 7))).toBeTrue();
+		expect(store.snapshot(520).entries[0]).toMatchObject({ observedAt: 520, payload: { value: 7 } });
+
+		expect(() => store.snapshot(Number.NaN)).toThrow(RangeError);
+		expect(() => store.snapshot(-1)).toThrow(RangeError);
+	});
+
 	it("switches root/session atomically without exposing either key", () => {
 		const store = new TemporalEvidenceStore({ scope: { root: 41, session: 8 }, policy: policy() });
 		store.observe(numeric(0, 0));
