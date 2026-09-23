@@ -88,6 +88,12 @@ It adapts host events into the `*State` objects.
 The breathing border settles through this seam. Retry Radar and evidence expiry read `now` at render time.
 All signals read `now` from the shared scheduler.
 Do not add a second clock.
+That clock is `Date.now()` and can step backward on NTP correction or sleep/wake.
+State must tolerate a backward step. Do not assert monotonic time on it.
+
+A throw from `renderFrame` or `onFrame` never reaches the host.
+`AnimatedWidget` detaches from the clock, reports the error once through `api.logger`, and renders one `✕ animations box disabled · <error>` line for the rest of the session.
+Do not catch render errors lower down to keep the box alive on stale numbers.
 
 Reuse each animation's exported renderer and `*State` class.
 Do not invent a second string for the same fact.

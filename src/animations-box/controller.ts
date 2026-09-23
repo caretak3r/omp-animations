@@ -165,6 +165,8 @@ export interface AnimationsBoxControllerOptions {
 	accentColor?: AccentColor;
 	auditTrailState?: AuditLedgerState;
 	agentBonsai?: AgentBonsaiController;
+	/** Receives the first error the box's frame loop or paint throws; the widget is already disabled by then. */
+	onRenderError?: (error: unknown) => void;
 }
 
 /** Drives the complete Animations Box. See the module documentation above for its lifecycle contract. */
@@ -204,6 +206,7 @@ export class AnimationsBoxController {
 	#temporalEvidenceSnapshot: TemporalEvidenceSnapshot | undefined;
 	#temporalEvidenceSession = 0;
 	#motionPolicy: MotionPolicy | undefined;
+	#onRenderError: ((error: unknown) => void) | undefined;
 
 	constructor(options: AnimationsBoxControllerOptions) {
 		this.#scheduler = options.scheduler ?? DEFAULT_FRAME_SCHEDULER;
@@ -217,6 +220,7 @@ export class AnimationsBoxController {
 		this.#ownsAuditTrailState = options.auditTrailState === undefined;
 		this.#temporalEvidenceStore = new TemporalEvidenceStore({ scope: { root: 0, session: 0 } });
 		this.#agentBonsai = options.agentBonsai;
+		this.#onRenderError = options.onRenderError;
 	}
 
 	get config(): AnimationsBoxConfig {
@@ -252,6 +256,7 @@ export class AnimationsBoxController {
 					tui,
 					host,
 					policy,
+					onRenderError: this.#onRenderError,
 					theme,
 					clock: scheduler,
 					onTick: now => this.#onTick(now),

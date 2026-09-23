@@ -488,6 +488,11 @@ function mountAnimationsBox(
 		accentColor: config.appearance.breathingBorder.accentColor,
 		auditTrailState,
 		agentBonsai,
+		onRenderError: error => {
+			const detail =
+				error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : { error };
+			api.logger.error("@oh-my-pi/animations: Audit Box render threw; widget disabled for this session", detail);
+		},
 		// glyphPreset is NOT threaded through `AnimationsBoxControllerOptions` here (unlike
 		// accentColor) — it isn't resolvable at this synchronous wire-time call. Instead
 		// `toAnimationsBoxContext` reads the live `ctx.ui.theme.getSymbolPreset()` fresh on

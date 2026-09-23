@@ -476,6 +476,41 @@ describe("AnimationsBoxWidget — lifecycle and per-tick hook", () => {
 		expect(host.subscriberCount).toBe(0);
 	});
 
+	it("collapses to one error line and reports once when building samples throws mid-session", () => {
+		const scheduler = manualScheduler();
+		const policy = new MotionPolicy(fullEnv, "full");
+		const host = new AnimationHost({ policy, scheduler });
+		const errors: unknown[] = [];
+		let broken = false;
+		const widget = new AnimationsBoxWidget({
+			tui: noopTui,
+			host,
+			policy,
+			theme: idTheme,
+			clock: scheduler,
+			onTick: () => {},
+			buildSampleGroups: () => {
+				if (broken) throw new RangeError("Temporal evidence snapshot time must be finite and monotonic");
+				return { required: [ACTIVE], optional: [] };
+			},
+			getDetail: () => "detailed",
+			getBorderFrame: () => undefined,
+			onRenderError: error => errors.push(error),
+		});
+
+		expect(widget.render(69).length).toBeGreaterThan(1);
+		broken = true;
+		expect(() => scheduler.advance(host.cadenceMs * 2 + 1)).not.toThrow();
+
+		const rows = widget.render(69);
+		expect(rows).toHaveLength(1);
+		expect(rows[0]).toContain("animations box disabled");
+		expect(rows[0]).toContain("RangeError: Temporal evidence");
+		expect(Bun.stringWidth(rows[0])).toBeLessThanOrEqual(69);
+		expect(errors).toHaveLength(1);
+		expect(host.subscriberCount).toBe(0);
+	});
+
 	it("calls onTick with the shared clock's current time on every frame", () => {
 		const scheduler = manualScheduler();
 		const seen: number[] = [];

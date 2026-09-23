@@ -410,6 +410,14 @@ export class AnimationsBoxWidget extends AnimatedWidget {
 		return this.#renderBox(contentRows, width, now, borderFrame);
 	}
 
+	/** One line naming the failure — stale rows would read as live telemetry. */
+	renderFailure(width: number, error: unknown): readonly string[] {
+		const reason = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+		const mark = this.#preset === "ascii" ? "x" : "✕";
+		const line = `${this.#theme.fg("error", mark)} ${this.#theme.fg("dim", `animations box disabled · ${reason}`)}`;
+		return [truncateToWidth(line, width)];
+	}
+
 	#renderBox(
 		contentRows: readonly string[],
 		width: number,

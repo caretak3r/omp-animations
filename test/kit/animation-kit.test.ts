@@ -505,6 +505,19 @@ class ClockWidget extends AnimatedWidget {
 	}
 }
 
+class ThrowingWidget extends AnimatedWidget {
+	throwOnRender = false;
+
+	renderFrame(): readonly string[] {
+		if (this.throwOnRender) throw new RangeError("boom");
+		return ["ok"];
+	}
+
+	override renderFailure(_width: number, error: unknown): readonly string[] {
+		return [`failed: ${error instanceof Error ? error.message : String(error)}`];
+	}
+}
+
 describe("AnimatedWidget lifecycle", () => {
 	it("subscribes on mount and returns the host to zero subscribers on dispose", () => {
 		const scheduler = new FakeScheduler();
@@ -580,6 +593,53 @@ describe("AnimatedWidget lifecycle", () => {
 
 		scheduler.advance(TIER_CADENCE_MS.full * 5 + 1);
 		expect(tui.renders).toBe(0);
+	});
+
+	it("contains a frame-loop throw: detaches from the clock, reports once, and shows the failure rows", () => {
+		const scheduler = new FakeScheduler();
+		const policy = fullPolicy();
+		const host = new AnimationHost({ policy, scheduler });
+		const tui = new CountingHost();
+		const errors: unknown[] = [];
+		const widget = new ThrowingWidget({ tui, host, policy, onRenderError: error => errors.push(error) });
+
+		expect(widget.render(80)).toEqual(["ok"]);
+		widget.throwOnRender = true;
+		// The host's tick must not propagate the throw into the scheduler's timer.
+		expect(() => scheduler.advance(TIER_CADENCE_MS.full * 3 + 1)).not.toThrow();
+
+		expect(errors).toHaveLength(1);
+		expect(errors[0]).toBeInstanceOf(RangeError);
+		expect(widget.animating).toBe(false);
+		expect(host.subscriberCount).toBe(0);
+		expect(scheduler.activeTimers).toBe(0);
+		expect(widget.render(80)).toEqual(["failed: boom"]);
+		expect(widget.render(40)).toEqual(["failed: boom"]);
+		// A later tier change no longer reaches the failed widget.
+		policy.setSetting("off");
+		policy.setSetting("full");
+		expect(widget.animating).toBe(false);
+		expect(tui.renders).toBeGreaterThan(0);
+	});
+
+	it("contains a throw from the TUI paint path the same way", () => {
+		const scheduler = new FakeScheduler();
+		const policy = new MotionPolicy(interactiveEnv(), "off");
+		const host = new AnimationHost({ policy, scheduler });
+		const errors: unknown[] = [];
+		const widget = new ThrowingWidget({
+			tui: new CountingHost(),
+			host,
+			policy,
+			onRenderError: error => errors.push(error),
+		});
+
+		widget.throwOnRender = true;
+		expect(widget.render(80)).toEqual(["failed: boom"]);
+		widget.throwOnRender = false;
+		widget.requestRender();
+		expect(widget.render(80)).toEqual(["failed: boom"]);
+		expect(errors).toHaveLength(1);
 	});
 });
 

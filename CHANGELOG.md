@@ -12,6 +12,12 @@ All notable changes to `@oh-my-pi/animations` are documented here.
   sleep/wake; the evidence store asserted monotonic time on it. It now
   rebases every stored entry by the step so ages are preserved, and only
   throws on a non-finite or negative time.
+- A throw from the Audit Box's frame loop or paint no longer escapes into
+  the host's timer as an uncaught exception. `AnimatedWidget` now detaches
+  from the frame clock and the motion policy, reports the error once
+  through `api.logger.error`, and renders a single
+  `✕ animations box disabled · <error>` line for the rest of the session
+  instead of freezing on stale telemetry.
 - Extension load failure on host v18 (`export 'splitPathAndSel' not found in
   'omp-legacy-pi-bundled:@oh-my-pi/pi-coding-agent/tools/path-utils'`):
   `splitInternalUrlSel`/`splitPathAndSel` moved to
