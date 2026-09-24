@@ -8,10 +8,12 @@ under `NO_COLOR`, or under render pressure.
 
 ## Demo
 
-![Animations Box demo: three parallel scout subagents run inside omp while the Audit Box tracks context, cache, audit, rate limits, and jobs live](.media/demo.gif)
+![Animations Box demo: three parallel scout subagents run inside omp while the Audit Box tracks context, cache, audit, rate limits, verify, and jobs live](.media/demo.gif)
 
-Three parallel scout subagents run inside a live `omp` session. Agent Bonsai
-tracks each subagent's lifecycle while the Audit Box updates context budget,
+A bash call, two file reads, three parallel scout subagents, and a file
+write, followed by a second turn that reuses the prompt cache — all inside
+one live `omp` session. Agent Bonsai tracks each subagent's lifecycle with
+its model leading the row, while the Audit Box updates context budget,
 cache reuse, file audit, rate-limit headroom, and job/verify state in real
 time — recorded with [VHS](https://github.com/charmbracelet/vhs)
 (`.media/demo.tape`, regenerate with `vhs .media/demo.tape`).

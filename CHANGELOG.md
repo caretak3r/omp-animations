@@ -4,6 +4,16 @@ All notable changes to `@oh-my-pi/animations` are documented here.
 
 ## [Unreleased]
 
+### Docs
+- Refilmed `.media/demo.gif`: VHS now renders with a locally installed Nerd
+  Font (`Agave Nerd Font Mono`) instead of its default font, which had no
+  glyph coverage for the box's chrome icons and rendered them as tofu
+  boxes. The recording itself grew from one prompt to two turns — a bash
+  call, two reads, three parallel scouts, and a write, then a second turn
+  that reuses the prompt cache — so the same take now shows cache reuse,
+  file audit, rate limits, verify, jobs, and Agent Bonsai's leading model
+  chip together instead of only the opening idle frame plus subagents.
+
 ### Fixed
 - Uncaught `RangeError: Temporal evidence snapshot time must be finite and
   monotonic` thrown from the frame timer, taking the whole omp session down.
