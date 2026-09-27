@@ -4,6 +4,13 @@ All notable changes to `@oh-my-pi/animations` are documented here.
 
 ## [Unreleased]
 
+### Changed
+- Agent Bonsai's model chip now sweeps a brighter head side to side across
+  its own text while an agent's status is `running`, then settles to the
+  plain bold-accent chip — the border chrome's traveling gloss, applied to
+  a line of text. Gated the same way as every other decorative motion in
+  the box: animates at the `full` motion tier only.
+
 ### Docs
 - Refilmed `.media/demo.gif`: VHS now renders with a locally installed Nerd
   Font (`Agave Nerd Font Mono`) instead of its default font, which had no

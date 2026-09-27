@@ -95,6 +95,14 @@ A throw from `renderFrame` or `onFrame` never reaches the host.
 `AnimatedWidget` detaches from the clock, reports the error once through `api.logger`, and renders one `✕ animations box disabled · <error>` line for the rest of the session.
 Do not catch render errors lower down to keep the box alive on stale numbers.
 
+Agent Bonsai's model chip sweeps a brighter head side to side across its own
+text while, and only while, that agent's status is `running` — a plain
+bold-accent chip otherwise. It never inserts or removes a character, so the
+row's column alignment never shifts. Like every other decorative motion in
+this box, the sweep animates only at the `full` motion tier; render pressure
+or the `subtle`/`off` tier settles it to the static chip, same as the
+running-pulse status dot and the rate-limit shimmer.
+
 Reuse each animation's exported renderer and `*State` class.
 Do not invent a second string for the same fact.
 

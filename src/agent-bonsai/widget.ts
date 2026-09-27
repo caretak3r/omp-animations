@@ -442,19 +442,62 @@ function renderGist(node: AgentBonsaiNode, text: string, ctx: AgentBonsaiRenderC
 		.join("");
 }
 
+/** One full side-to-side sweep and back across the model chip, in ms. */
+const MODEL_GLOSS_PERIOD_MS = 2_400;
+/** Characters on each side of the gloss head that still catch light, so the sweep reads as a band, not one blinking cell. */
+const MODEL_GLOSS_TRAIL_CHARS = 1;
+
+/**
+ * Side-to-side (ping-pong, not wrap-around) head position across `length`
+ * characters — the same triangle-wave idea as the breathing border's
+ * perimeter gloss, but along a line of text instead of a closed loop.
+ * `length <= 1` has nowhere to travel.
+ */
+function modelGlossHeadIndex(now: number, length: number): number {
+	if (length <= 1 || !Number.isFinite(now)) return 0;
+	const phase = ((now % MODEL_GLOSS_PERIOD_MS) + MODEL_GLOSS_PERIOD_MS) % MODEL_GLOSS_PERIOD_MS;
+	const t = phase / MODEL_GLOSS_PERIOD_MS;
+	const triangle = t < 0.5 ? t * 2 : 2 - t * 2;
+	return Math.round(triangle * (length - 1));
+}
+
+/**
+ * The model+effort chip: bold accent whenever it's shown, plus a brighter
+ * head sweeping side to side across the text while the agent is actively
+ * `running` at the `full` motion tier — the border chrome's traveling gloss,
+ * applied along a line of text instead of a perimeter. Settles to the plain
+ * bold-accent chip the moment the agent stops running (or the tier drops
+ * below `full`); never inserts or removes a character, so column alignment
+ * never shifts.
+ */
+function renderModelSpan(node: AgentBonsaiNode, text: string, ctx: AgentBonsaiRenderContext): string {
+	const flashing = flashText(node, "model", text, ctx);
+	if (flashing !== undefined) return flashing;
+	const boldAccent = (value: string): string => {
+		const colored = ctx.theme.fg("accent", value);
+		return ctx.theme.bold?.(colored) ?? colored;
+	};
+	if (node.status !== "running" || ctx.flashTier !== "full") return boldAccent(text);
+	const chars = Array.from(text);
+	const head = modelGlossHeadIndex(ctx.now, chars.length);
+	return chars
+		.map((ch, index) =>
+			Math.abs(index - head) <= MODEL_GLOSS_TRAIL_CHARS
+				? (ctx.theme.bold?.(ctx.theme.fg("text", ch)) ?? ctx.theme.fg("text", ch))
+				: boldAccent(ch),
+		)
+		.join("");
+}
+
 function renderPlainSpan(
 	node: AgentBonsaiNode,
-	key: "name" | "model" | "task",
+	key: "name" | "task",
 	text: string,
 	ctx: AgentBonsaiRenderContext,
 ): string {
 	const flashing = flashText(node, key, text, ctx);
 	if (flashing !== undefined) return flashing;
 	if (key === "name") return ctx.theme.fg(statusColor(node, ctx), text);
-	if (key === "model") {
-		const colored = ctx.theme.fg("accent", text);
-		return ctx.theme.bold?.(colored) ?? colored;
-	}
 	return ctx.theme.fg("dim", text);
 }
 
@@ -521,7 +564,7 @@ function renderNode(
 		paddedName = true,
 	): string => {
 		let row = base + (paddedName ? namePadding : "") + collisionChip;
-		if (includeModel && model.length > 0) row += `  ${renderPlainSpan(node, "model", model, ctx)}`;
+		if (includeModel && model.length > 0) row += `  ${renderModelSpan(node, model, ctx)}`;
 		if (includeSkill && skill.length > 0) row += `  ${renderSkill(node, skill, ctx)}`;
 		if (fittedGist.length > 0) {
 			const work =

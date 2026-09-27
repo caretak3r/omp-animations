@@ -765,6 +765,55 @@ describe("Agent Bonsai observer and renderer", () => {
 		expect(stylesFor(row, "anthropic/sonnet")).toEqual(["36/true"]);
 	});
 
+	it("sweeps a bright head side to side across the model chip while the agent is running, at full tier (daw.X)", () => {
+		const refs = [bonsaiRef("Main"), bonsaiRef("worker", { activity: "Verifying boundary contract" })];
+		const snapshot = buildAgentBonsai(refs, {
+			cohort: new Map([["worker", 1]]),
+			model: new Map([["worker", "BCDFG"]]),
+		});
+
+		const atStart = renderMotion(snapshot, 0, 200, "full")[1] ?? "";
+		expect(stylesFor(atStart, "B")).toEqual(["37/true"]);
+		expect(stylesFor(atStart, "C")).toEqual(["37/true"]);
+		expect(stylesFor(atStart, "D")).toEqual(["36/true"]);
+		expect(stylesFor(atStart, "F")).toEqual(["36/true"]);
+		expect(stylesFor(atStart, "G")).toEqual(["36/true"]);
+
+		// Quarter-period: the head has traveled to the middle character, dragging its one-char trail with it.
+		const atMiddle = renderMotion(snapshot, 600, 200, "full")[1] ?? "";
+		expect(stylesFor(atMiddle, "B")).toEqual(["36/true"]);
+		expect(stylesFor(atMiddle, "C")).toEqual(["37/true"]);
+		expect(stylesFor(atMiddle, "D")).toEqual(["37/true"]);
+		expect(stylesFor(atMiddle, "F")).toEqual(["37/true"]);
+		expect(stylesFor(atMiddle, "G")).toEqual(["36/true"]);
+
+		// Half-period: the head has reached the far end — a side-to-side sweep, not a one-way wrap.
+		const atEnd = renderMotion(snapshot, 1_200, 200, "full")[1] ?? "";
+		expect(stylesFor(atEnd, "B")).toEqual(["36/true"]);
+		expect(stylesFor(atEnd, "C")).toEqual(["36/true"]);
+		expect(stylesFor(atEnd, "D")).toEqual(["36/true"]);
+		expect(stylesFor(atEnd, "F")).toEqual(["37/true"]);
+		expect(stylesFor(atEnd, "G")).toEqual(["37/true"]);
+	});
+
+	it("keeps the model chip a static bold-accent chip once the agent is not running or motion drops below full (daw.X)", () => {
+		const idleRefs = [bonsaiRef("Main"), bonsaiRef("worker", { status: "idle" })];
+		const idleSnapshot = buildAgentBonsai(idleRefs, {
+			cohort: new Map([["worker", 1]]),
+			model: new Map([["worker", "BCDFG"]]),
+		});
+		const idleRow = renderMotion(idleSnapshot, 600, 200, "full")[1] ?? "";
+		expect(stylesFor(idleRow, "BCDFG")).toEqual(["36/true"]);
+
+		const runningRefs = [bonsaiRef("Main"), bonsaiRef("worker")];
+		const runningSnapshot = buildAgentBonsai(runningRefs, {
+			cohort: new Map([["worker", 1]]),
+			model: new Map([["worker", "BCDFG"]]),
+		});
+		const subtleRow = renderMotion(runningSnapshot, 600, 200, "subtle")[1] ?? "";
+		expect(stylesFor(subtleRow, "BCDFG")).toEqual(["36/true"]);
+	});
+
 	it("sprouts fixed-width glyphs, then pulses only the live marker", () => {
 		const snapshot = buildAgentBonsai(
 			[bonsaiRef("Main"), bonsaiRef("worker", { createdAt: 100, status: "running" })],
