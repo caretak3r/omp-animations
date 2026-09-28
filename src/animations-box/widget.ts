@@ -344,6 +344,11 @@ export class AnimationsBoxWidget extends AnimatedWidget {
 		const borderFrame = this.#resolveBorderFrame(now);
 		// Optional emphasis follows the governor without changing semantic status.
 		const flashTier: FlashTier = this.#policy.reducedMotion ? "off" : this.#motionHost.effectiveTier;
+		// Pre-pressure tier: what the user/environment actually asked for. Threaded
+		// separately so the model chip's gloss sweep can outlast a momentary
+		// pressure downgrade (see AgentBonsaiRenderContext.configuredTier) without
+		// every other segment doing the same — they stay on `flashTier` alone.
+		const configuredTier: FlashTier = this.#policy.reducedMotion ? "off" : this.#policy.tier;
 		const detail = this.#getDetail();
 		const bonsaiSnapshot = this.#getAgentBonsai();
 		const bonsaiRows = renderAgentBonsaiRows(bonsaiSnapshot, inner, {
@@ -351,6 +356,7 @@ export class AnimationsBoxWidget extends AnimatedWidget {
 			glyphPreset: this.#preset,
 			now,
 			flashTier,
+			configuredTier,
 			flash: this.#bonsaiFlash,
 			seenIds: this.#bonsaiSeen,
 			hyperlinks: this.#hyperlinks,

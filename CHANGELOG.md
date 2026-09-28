@@ -8,8 +8,11 @@ All notable changes to `@oh-my-pi/animations` are documented here.
 - Agent Bonsai's model chip now sweeps a brighter head side to side across
   its own text while an agent's status is `running`, then settles to the
   plain bold-accent chip — the border chrome's traveling gloss, applied to
-  a line of text. Gated the same way as every other decorative motion in
-  the box: animates at the `full` motion tier only.
+  a line of text. Deliberately pressure-immune at the `full` setting: a
+  render-pressure downgrade to `subtle` does not hide it (its own cost is
+  microseconds), but an explicit `animations: subtle` setting or a real
+  `off` still shows the static chip — the one row in the box that reads a
+  narrower motion signal than its siblings.
 
 ### Docs
 - Refilmed `.media/demo.gif`: VHS now renders with a locally installed Nerd

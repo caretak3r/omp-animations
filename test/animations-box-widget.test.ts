@@ -603,6 +603,68 @@ describe("AnimationsBoxWidget motion governor", () => {
 		expect(scheduler.running).toBe(false);
 	});
 
+	it("threads configuredTier so the model chip sweep outlasts a real render-pressure downgrade to subtle", () => {
+		const scheduler = manualScheduler();
+		const policy = new MotionPolicy(fullEnv, "full");
+		const host = new AnimationHost({ policy, scheduler });
+		const bonsai: AgentBonsaiSnapshot = {
+			visible: true,
+			hiddenCount: 0,
+			nodes: [
+				...MAIN_ONLY_BONSAI.nodes,
+				{
+					id: "worker",
+					cohortLabel: "A1",
+					name: "worker",
+					depth: 1,
+					isLast: true,
+					ancestorsLast: [],
+					status: "running",
+					model: "BCDFG",
+					loadedSkills: [],
+				},
+			],
+		};
+		let costMs = 0;
+		const widget = new AnimationsBoxWidget({
+			host,
+			policy,
+			clock: scheduler,
+			tui: noopTui,
+			theme: taggedTheme,
+			onTick: () => {},
+			buildSampleGroups: () => {
+				scheduler.spend(costMs);
+				return { required: [ACTIVE], optional: [] };
+			},
+			getDetail: () => "readable",
+			getBorderFrame: () => undefined,
+			getAgentBonsai: () => bonsai,
+		});
+
+		// Warm up at zero cost so the row's first-seen reveal flash fully decays
+		// (FULL_FLASH_MS = 800ms at the full tier this starts at) before pressure
+		// is measured — otherwise the reveal, not the sweep gate, would explain a
+		// uniform color and the test would prove nothing.
+		widget.render(120);
+		for (let frame = 0; frame < 30; frame++) scheduler.advance(host.cadenceMs);
+
+		costMs = 3;
+		for (let frame = 0; frame < 4; frame++) scheduler.advance(host.cadenceMs);
+		expect(host.effectiveTier).toBe("subtle");
+		expect(policy.tier).toBe("full");
+
+		// The sweep is active: the model text is no longer one contiguous "BCDFG"
+		// run, but interleaved per-character accent/text tokens.
+		const row = widget.render(120).find(line => line.includes("worker"));
+		expect(row).toBeDefined();
+		expect(row).not.toContain("BCDFG");
+		expect(row).toContain("accent:");
+		expect(row).toContain("text:");
+		widget.dispose();
+		host.dispose();
+	});
+
 	it("keeps controller retry deadlines, context risk and terminal lifecycle on real time during freeze", () => {
 		const scheduler = manualScheduler();
 		const widgets: AnimationsBoxWidget[] = [];

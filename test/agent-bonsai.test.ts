@@ -814,6 +814,41 @@ describe("Agent Bonsai observer and renderer", () => {
 		expect(stylesFor(subtleRow, "BCDFG")).toEqual(["36/true"]);
 	});
 
+	it("outlasts a pressure downgrade to subtle when the user configured full, but stays static at a genuine subtle setting (daw.X)", () => {
+		const refs = [bonsaiRef("Main"), bonsaiRef("worker")];
+		const snapshot = buildAgentBonsai(refs, {
+			cohort: new Map([["worker", 1]]),
+			model: new Map([["worker", "BCDFG"]]),
+		});
+		const ctx = (flashTier: FlashTier, configuredTier?: FlashTier) => ({
+			theme: ansiTheme,
+			glyphPreset: "unicode" as const,
+			now: 0,
+			flashTier,
+			configuredTier,
+			flash: new FlashTracker(),
+			seenIds: new Set(snapshot.nodes.map(node => node.id)),
+			hyperlinks: false,
+		});
+
+		// Configured full, downgraded to subtle by render pressure: the sweep still runs.
+		const pressureDowngraded = renderAgentBonsaiRows(snapshot, 200, ctx("subtle", "full"))[1] ?? "";
+		expect(stylesFor(pressureDowngraded, "B")).toEqual(["37/true"]);
+		expect(stylesFor(pressureDowngraded, "D")).toEqual(["36/true"]);
+
+		// Configured subtle outright (no pressure involved): the user's own choice, stays static.
+		const genuinelySubtle = renderAgentBonsaiRows(snapshot, 200, ctx("subtle", "subtle"))[1] ?? "";
+		expect(stylesFor(genuinelySubtle, "BCDFG")).toEqual(["36/true"]);
+
+		// Configured full, but pressure severe enough to force flashTier itself to off: still static.
+		const forcedOff = renderAgentBonsaiRows(snapshot, 200, ctx("off", "full"))[1] ?? "";
+		expect(stylesFor(forcedOff, "BCDFG")).toEqual(["36/true"]);
+
+		// configuredTier omitted: falls back to flashTier, matching every pre-existing call site.
+		const noConfiguredTier = renderAgentBonsaiRows(snapshot, 200, ctx("full", undefined))[1] ?? "";
+		expect(stylesFor(noConfiguredTier, "B")).toEqual(["37/true"]);
+	});
+
 	it("sprouts fixed-width glyphs, then pulses only the live marker", () => {
 		const snapshot = buildAgentBonsai(
 			[bonsaiRef("Main"), bonsaiRef("worker", { createdAt: 100, status: "running" })],

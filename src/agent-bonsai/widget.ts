@@ -81,6 +81,17 @@ export interface AgentBonsaiRenderContext {
 	readonly glyphPreset: SymbolPreset;
 	readonly now: number;
 	readonly flashTier: FlashTier;
+	/**
+	 * The motion tier the user/environment actually asked for — `flashTier`
+	 * before {@link AnimationHost}'s render-pressure governor coarsens it.
+	 * Defaults to `flashTier` (no bypass) when omitted. The model chip's gloss
+	 * sweep reads this instead of `flashTier` so a momentary pressure downgrade
+	 * (subtle-from-full) doesn't silently hide it — its own per-character cost
+	 * is microseconds, not the box's bottleneck — while a real `off` (hard gate,
+	 * reduced motion, or sustained pressure severe enough to force `flashTier`
+	 * itself to `off`) still fully suppresses it.
+	 */
+	readonly configuredTier?: FlashTier;
 	readonly flash?: FlashTracker;
 	readonly seenIds?: Set<string>;
 	/**
@@ -464,11 +475,18 @@ function modelGlossHeadIndex(now: number, length: number): number {
 /**
  * The model+effort chip: bold accent whenever it's shown, plus a brighter
  * head sweeping side to side across the text while the agent is actively
- * `running` at the `full` motion tier — the border chrome's traveling gloss,
- * applied along a line of text instead of a perimeter. Settles to the plain
- * bold-accent chip the moment the agent stops running (or the tier drops
- * below `full`); never inserts or removes a character, so column alignment
- * never shifts.
+ * `running` — the border chrome's traveling gloss, applied along a line of
+ * text instead of a perimeter. Settles to the plain bold-accent chip the
+ * moment the agent stops running; never inserts or removes a character, so
+ * column alignment never shifts.
+ *
+ * Gated on `configuredTier` (falling back to `flashTier`), not `flashTier`
+ * alone: a render-pressure downgrade from `full` to `subtle` does not hide
+ * the sweep — its own per-character cost is microseconds, not whatever
+ * actually earned the downgrade — but a real `off` (hard gate, reduced
+ * motion, or pressure severe enough to force `flashTier` itself to `off`)
+ * still fully suppresses it. A user who explicitly sets `animations: subtle`
+ * still gets the static chip: that is `configuredTier`, not a downgrade.
  */
 function renderModelSpan(node: AgentBonsaiNode, text: string, ctx: AgentBonsaiRenderContext): string {
 	const flashing = flashText(node, "model", text, ctx);
@@ -477,7 +495,8 @@ function renderModelSpan(node: AgentBonsaiNode, text: string, ctx: AgentBonsaiRe
 		const colored = ctx.theme.fg("accent", value);
 		return ctx.theme.bold?.(colored) ?? colored;
 	};
-	if (node.status !== "running" || ctx.flashTier !== "full") return boldAccent(text);
+	const requestedTier = ctx.configuredTier ?? ctx.flashTier;
+	if (node.status !== "running" || requestedTier !== "full" || ctx.flashTier === "off") return boldAccent(text);
 	const chars = Array.from(text);
 	const head = modelGlossHeadIndex(ctx.now, chars.length);
 	return chars

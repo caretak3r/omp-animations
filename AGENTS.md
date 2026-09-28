@@ -98,10 +98,18 @@ Do not catch render errors lower down to keep the box alive on stale numbers.
 Agent Bonsai's model chip sweeps a brighter head side to side across its own
 text while, and only while, that agent's status is `running` — a plain
 bold-accent chip otherwise. It never inserts or removes a character, so the
-row's column alignment never shifts. Like every other decorative motion in
-this box, the sweep animates only at the `full` motion tier; render pressure
-or the `subtle`/`off` tier settles it to the static chip, same as the
-running-pulse status dot and the rate-limit shimmer.
+row's column alignment never shifts. Unlike every other decorative motion in
+this box, the sweep is deliberately pressure-immune at the `full` setting:
+it reads `configuredTier` (the pre-pressure tier), not `flashTier` alone, so
+a render-pressure downgrade to `subtle` does not hide it — its own
+per-character cost is microseconds, not whatever earned the downgrade. A
+user who explicitly sets `animations: subtle` still gets the static chip,
+and real `off` (hard gate, reduced motion, or pressure severe enough to
+force `flashTier` itself to `off`) still fully suppresses it. This is the
+one row that reads a second, narrower motion signal than its siblings —
+do not generalize the pattern to other effects without the same deliberate
+call; the running-pulse status dot and the rate-limit shimmer still obey
+`flashTier` alone.
 
 Reuse each animation's exported renderer and `*State` class.
 Do not invent a second string for the same fact.
